@@ -90,7 +90,7 @@ func run(configPath string) error {
 	ftpSvc := svc.NewFTP(cfg, st)
 	dbSvc := svc.NewDatabases(cfg, st)
 	files := svc.NewFiles(cfg)
-	backupSvc := svc.NewBackup(cfg, st, dbSvc, ftpSvc, webSvc, php, am)
+	backupSvc := svc.NewBackup(cfg, st, dbSvc, ftpSvc, webSvc, php, am, cipher)
 	term := svc.NewTerminal(cfg)
 	cronSvc := svc.NewCron(cfg, st)
 	mailSvc := svc.NewMail(cfg, st, dnsSvc)
@@ -143,6 +143,7 @@ func run(configPath string) error {
 
 	// SSL auto-renew.
 	go sslSvc.AutoRenew(ctx)
+	go backupSvc.AutoBackup(ctx)
 
 	select {
 	case <-ctx.Done():

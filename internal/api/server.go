@@ -210,6 +210,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backups/download", s.withAuth(s.withRole(s.handleBackupsDownload, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/backups/restore", s.withAuth(s.withRole(s.handleBackupsRestore, store.RoleAdmin)))
 	mux.HandleFunc("DELETE /api/backups", s.withAuth(s.withRole(s.handleBackupsDelete, store.RoleAdmin)))
+	mux.HandleFunc("GET /api/backups/targets", s.withAuth(s.withRole(s.handleBackupTargetsList, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/backups/targets", s.withAuth(s.withRole(s.handleBackupTargetsCreate, store.RoleAdmin)))
+	mux.HandleFunc("DELETE /api/backups/targets/{id}", s.withAuth(s.withRole(s.handleBackupTargetsDelete, store.RoleAdmin)))
+	mux.HandleFunc("GET /api/backups/schedule", s.withAuth(s.withRole(s.handleBackupScheduleGet, store.RoleAdmin)))
+	mux.HandleFunc("PATCH /api/backups/schedule", s.withAuth(s.withRole(s.handleBackupSchedule, store.RoleAdmin)))
 
 	// Mail: domain enablement + mailboxes + aliases.
 	mux.HandleFunc("GET /api/mail/domains", s.withAuth(s.handleMailDomainsList))
