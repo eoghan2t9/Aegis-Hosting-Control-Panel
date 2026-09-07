@@ -72,7 +72,7 @@ func (s *Store) ListUsers(ctx context.Context, ownerID int64) ([]*User, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*User
+	out := []*User{}
 	for rows.Next() {
 		u, err := scanUser(rows)
 		if err != nil {
@@ -207,7 +207,7 @@ func (s *Store) ListPackages(ctx context.Context) ([]*Package, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Package
+	out := []*Package{}
 	for rows.Next() {
 		p, err := scanPackage(rows)
 		if err != nil {

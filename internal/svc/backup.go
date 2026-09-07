@@ -186,7 +186,7 @@ func (b *Backup) List() ([]BackupInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []BackupInfo
+	out := []BackupInfo{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tar.gz") {
 			continue

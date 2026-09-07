@@ -93,7 +93,7 @@ func (f *Files) List(user *store.User, rel string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []Entry
+	out := []Entry{}
 	for _, e := range entries {
 		info, err := os.Lstat(filepath.Join(dir, e.Name()))
 		if err != nil {

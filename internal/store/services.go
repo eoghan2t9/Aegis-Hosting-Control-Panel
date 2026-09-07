@@ -63,7 +63,7 @@ func (s *Store) ListSSLOrders(ctx context.Context, domainID int64) ([]*SSLOrder,
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*SSLOrder
+	out := []*SSLOrder{}
 	for rows.Next() {
 		o, err := scanSSLOrder(rows)
 		if err != nil {
@@ -89,7 +89,7 @@ func (s *Store) Renewables(ctx context.Context, days int) ([]*SSLOrder, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*SSLOrder
+	out := []*SSLOrder{}
 	for rows.Next() {
 		o, err := scanSSLOrder(rows)
 		if err != nil {
@@ -144,7 +144,7 @@ func (s *Store) ListFTPAccounts(ctx context.Context, userID int64) ([]*FTPAccoun
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*FTPAccount
+	out := []*FTPAccount{}
 	for rows.Next() {
 		f, err := scanFTP(rows)
 		if err != nil {
@@ -219,7 +219,7 @@ func (s *Store) ListDatabases(ctx context.Context, userID int64) ([]*Database, e
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Database
+	out := []*Database{}
 	for rows.Next() {
 		d, err := scanDatabase(rows)
 		if err != nil {
@@ -277,7 +277,7 @@ func (s *Store) ListProviders(ctx context.Context) ([]*Provider, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Provider
+	out := []*Provider{}
 	for rows.Next() {
 		p, err := scanProvider(rows)
 		if err != nil {
