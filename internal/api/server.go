@@ -347,12 +347,16 @@ func pathIDFromQuery(r *http.Request, name string) (int64, error) {
 	return id, nil
 }
 
+// bearerToken reads the token from the Authorization header, falling back to
+// a "token" query parameter. The fallback exists for WebSocket connections:
+// the browser WebSocket API cannot set custom headers, so the frontend's
+// live-metrics and terminal sockets pass the token in the URL instead.
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
-	return ""
+	return r.URL.Query().Get("token")
 }
 
 func clientIP(r *http.Request) string {

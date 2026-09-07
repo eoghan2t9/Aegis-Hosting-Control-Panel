@@ -1,4 +1,5 @@
 import { addRoute, me } from "../app.js";
+import { api } from "../api.js";
 import { esc, pageHead, toast } from "../ui.js";
 
 addRoute("/terminal", {
@@ -43,7 +44,7 @@ addRoute("/terminal", {
     let ws;
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${proto}://${location.host}/api/terminal`);
+      ws = new WebSocket(`${proto}://${location.host}/api/terminal?token=${encodeURIComponent(api.token)}`);
       term.reset();
       ws.onopen = () => term.write("\r\n\x1b[38;2;198;241;78mAegis terminal connected\x1b[0m — session as " + u.username + "\r\n");
       ws.onmessage = (e) => term.write(e.data);
