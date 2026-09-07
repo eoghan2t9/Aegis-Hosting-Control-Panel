@@ -218,7 +218,6 @@ select { cursor: pointer; }
   text-align: left;
   overflow-wrap: anywhere;
 }
-#screen-app .shell { display: none; }
 
 /* ---------------------------------------------------------------- app shell */
 .shell { display: flex; min-height: 100vh; }
