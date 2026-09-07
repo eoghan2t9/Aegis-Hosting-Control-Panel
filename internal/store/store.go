@@ -260,6 +260,11 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
 	}
+	// ALTER guards: CREATE TABLE IF NOT EXISTS doesn't retrofit columns onto
+	// a table that already existed from an older schema version.
+	if err := s.addColumnIfMissing(ctx, "users", "suspended_by_quota", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate users.suspended_by_quota: %w", err)
+	}
 	// Seed a default package on first run.
 	var n int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM packages").Scan(&n); err == nil && n == 0 {
@@ -270,6 +275,32 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 			 0, 0, 1, 1, 1, 1, 1, ?)`, time.Now().UTC().Format(time.RFC3339))
 	}
 	return nil
+}
+
+// addColumnIfMissing retrofits a column onto an existing table. table and
+// column are always package-internal constants, never user input.
+func (s *Store) addColumnIfMissing(ctx context.Context, table, column, def string) error {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, def))
+	return err
 }
 
 // now returns the canonical timestamp string used across the store.

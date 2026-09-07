@@ -117,6 +117,23 @@ func (s *Store) SetUserStatus(ctx context.Context, id int64, status string) erro
 	return err
 }
 
+// SetSuspendedByQuota marks whether a suspension was caused by quota
+// enforcement (as opposed to an admin's manual suspend) — so quota
+// enforcement only ever auto-unsuspends accounts it suspended itself.
+func (s *Store) SetSuspendedByQuota(ctx context.Context, id int64, v bool) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE users SET suspended_by_quota=? WHERE id=?", v, id)
+	return err
+}
+
+func (s *Store) IsSuspendedByQuota(ctx context.Context, id int64) (bool, error) {
+	var v interface{}
+	err := s.db.QueryRowContext(ctx, "SELECT suspended_by_quota FROM users WHERE id=?", id).Scan(&v)
+	if err != nil {
+		return false, err
+	}
+	return getBool(v), nil
+}
+
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	// Delete dependent rows first (FKs are on by default).
 	tx, err := s.db.BeginTx(ctx, nil)
