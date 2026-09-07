@@ -38,6 +38,7 @@ type Server struct {
 	Tuner    *svc.Tuner
 	Terminal *svc.Terminal
 	Cipher   *svc.Cipher
+	Cron     *svc.Cron
 
 	primaryIPv4 string
 }
@@ -46,11 +47,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -206,6 +207,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backups/download", s.withAuth(s.withRole(s.handleBackupsDownload, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/backups/restore", s.withAuth(s.withRole(s.handleBackupsRestore, store.RoleAdmin)))
 	mux.HandleFunc("DELETE /api/backups", s.withAuth(s.withRole(s.handleBackupsDelete, store.RoleAdmin)))
+
+	// Cron.
+	mux.HandleFunc("GET /api/cron/jobs", s.withAuth(s.handleCronList))
+	mux.HandleFunc("POST /api/cron/jobs", s.withAuth(s.handleCronCreate))
+	mux.HandleFunc("PATCH /api/cron/jobs/{id}", s.withAuth(s.handleCronUpdate))
+	mux.HandleFunc("POST /api/cron/jobs/{id}/toggle", s.withAuth(s.handleCronToggle))
+	mux.HandleFunc("DELETE /api/cron/jobs/{id}", s.withAuth(s.handleCronDelete))
+	mux.HandleFunc("GET /api/cron/jobs/{id}/log", s.withAuth(s.handleCronLog))
 
 	// Terminal.
 	mux.HandleFunc("GET /api/terminal", s.withAuth(s.handleTerminalWS))
