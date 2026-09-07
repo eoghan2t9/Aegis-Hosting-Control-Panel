@@ -204,8 +204,12 @@ async function startPoller() {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) debounced(); });
 }
 
-// Import views (side effects register routes).
-await Promise.all([
+// Import views (side effects register routes). Not awaited at top level:
+// each view imports addRoute/isAdmin/me back from this module, and a
+// top-level await here would deadlock that cycle (this module can't finish
+// evaluating until the views do, but the views can't finish evaluating
+// until this module does).
+Promise.all([
   import("./views/dashboard.js"),
   import("./views/domains.js"),
   import("./views/dns.js"),
@@ -218,8 +222,7 @@ await Promise.all([
   import("./views/system.js"),
   import("./views/terminal.js"),
   import("./views/runtime.js"),
-]);
+]).then(boot);
 
-boot();
 void qs;
 void toast;
