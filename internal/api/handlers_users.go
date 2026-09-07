@@ -94,6 +94,14 @@ func (s *Server) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
 		Username: req.Username, Email: req.Email, PasswordHash: hash, Role: role,
 		PackageID: pkgID, Status: store.StatusActive, OwnerID: actor.ID, HomeDir: home,
 	}
+	// Quota limits come from the package; quota.Enforce only ever acts on
+	// users.quota_disk_bytes, which nothing else in the system sets.
+	if pkgID > 0 {
+		if pkg, err := s.Store.GetPackage(r.Context(), pkgID); err == nil {
+			u.QuotaDiskBytes = pkg.DiskQuotaBytes
+			u.QuotaBandwidthBytes = pkg.BandwidthQuotaBytes
+		}
+	}
 	// System account + home dir.
 	if err := createSystemUser(r, u, req.Password); err != nil {
 		writeErr(w, http.StatusInternalServerError, "system account: "+err.Error())
@@ -165,11 +173,14 @@ func (s *Server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 		u.Role = *req.Role
 	}
 	if req.PackageID != nil {
-		if _, err := s.Store.GetPackage(r.Context(), *req.PackageID); err != nil {
+		pkg, err := s.Store.GetPackage(r.Context(), *req.PackageID)
+		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid package")
 			return
 		}
 		u.PackageID = *req.PackageID
+		u.QuotaDiskBytes = pkg.DiskQuotaBytes
+		u.QuotaBandwidthBytes = pkg.BandwidthQuotaBytes
 	}
 	if req.Status != nil {
 		if *req.Status != store.StatusActive && *req.Status != store.StatusSuspended {
