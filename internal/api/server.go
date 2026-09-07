@@ -41,6 +41,7 @@ type Server struct {
 	Cron     *svc.Cron
 	Mail     *svc.Mail
 	Tokens   *svc.APITokens
+	Security *svc.Security
 
 	primaryIPv4 string
 }
@@ -49,11 +50,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -242,6 +243,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tokens", s.withAuth(s.handleTokensList))
 	mux.HandleFunc("POST /api/tokens", s.withAuth(s.handleTokensCreate))
 	mux.HandleFunc("DELETE /api/tokens/{id}", s.withAuth(s.handleTokensDelete))
+
+	// Security centre (admin).
+	mux.HandleFunc("GET /api/security/attempts", s.withAuth(s.withRole(s.handleSecurityAttempts, store.RoleAdmin)))
+	mux.HandleFunc("GET /api/security/bans", s.withAuth(s.withRole(s.handleSecurityBans, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/security/unban", s.withAuth(s.withRole(s.handleSecurityUnban, store.RoleAdmin)))
 
 	// Terminal.
 	mux.HandleFunc("GET /api/terminal", s.withAuth(s.handleTerminalWS))
