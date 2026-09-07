@@ -104,8 +104,9 @@ function startLiveCharts(ov) {
   const stop = () => { try { ws?.close(); } catch {} };
   try {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/system/metrics`);
+    ws = new WebSocket(`${proto}://${location.host}/api/system/metrics?token=${encodeURIComponent(api.token)}`);
     ws.onmessage = (e) => {
+      if (!document.getElementById("cpu-val")) return stop();
       const m = JSON.parse(e.data);
       push(cpu, m.cpu);
       push(mem, m.mem_total ? (m.mem_used / m.mem_total) * 100 : 0);
