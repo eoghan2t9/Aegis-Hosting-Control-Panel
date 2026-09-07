@@ -1,0 +1,61 @@
+# Aegis development environment
+#
+# Brings up the full stack in a container with the repo bind-mounted, so code
+# edits never require rebuilding the image (rebuild only when Dockerfile.dev
+# changes).
+#
+#   make docker-up          # or: docker compose -f docker/docker-compose.yml up -d --build
+#   open http://localhost:8080   (admin / admin by default)
+#
+# Default credentials come from the env block; change before any real use.
+services:
+  aegis:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    image: aegis-dev
+    container_name: aegis-dev
+    init: true
+    # The repo is bind-mounted so Go + frontend edits are live.
+    volumes:
+      - ..:/app
+      - aegis-etc:/etc/aegis
+      - aegis-lib:/var/lib/aegis
+      - aegis-mysql:/var/lib/mysql
+      - aegis-pg:/var/lib/postgresql
+      - aegis-php:/run/php
+      - aegis-logs:/var/log
+      - aegis-backups:/var/backups/aegis
+    environment:
+      AEGIS_ADMIN_USER: admin
+      AEGIS_ADMIN_PASSWORD: admin
+      AEGIS_MARIADB_PASSWORD: mariadb_dev
+      AEGIS_POSTGRES_PASSWORD: postgres_dev
+      AEGIS_DEV_WEB: /app/web
+      AEGIS_LISTEN: ":8080"
+      AEGIS_APACHE_LISTEN: "8081"
+    ports:
+      - "8080:8080"        # Aegis panel + API
+      - "80:80"            # nginx (customer sites)
+      - "443:443"          # https (customer sites)
+      - "8081:8081"        # apache (dev, off the default :80)
+      - "3306:3306"        # mariadb
+      - "5432:5432"        # postgresql
+      - "21:21"            # vsftpd
+      - "40000-40100:40000-40100" # ftp passive
+      # - "53:53/udp"      # built-in authoritative DNS server (enable by
+      #                    # setting AEGIS_DNS_LISTEN=:53 in the container)
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    restart: unless-stopped
+
+volumes:
+  aegis-etc:
+  aegis-lib:
+  aegis-mysql:
+  aegis-pg:
+  aegis-php:
+  aegis-logs:
+  aegis-backups:
