@@ -253,6 +253,40 @@ Mode sv
 EOF
 id -u opendkim >/dev/null 2>&1 && chown -R opendkim:opendkim /etc/opendkim /run/opendkim
 
+# --- fail2ban: bans repeat-offender IPs against the panel's own auth log ------
+touch /var/log/aegis-auth.log
+mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+cat > /etc/fail2ban/filter.d/aegis.conf <<'EOF'
+[Definition]
+# No leading anchor for the timestamp: fail2ban's DateDetector recognizes
+# and strips the leading ISO8601 date before matching failregex against
+# what's left of the line — an explicit ^\S+ here never matches.
+failregex = aegis: authentication failure for \S+ from <HOST>\s*$
+ignoreregex =
+EOF
+# Named to sort after Debian's own jail.d/defaults-debian.conf (which
+# re-enables [sshd]) — jail.d files load in alphabetical order and the last
+# one wins, so an "aegis.conf" here would be overridden right back.
+rm -f /etc/fail2ban/jail.d/aegis.conf
+cat > /etc/fail2ban/jail.d/zz-aegis.conf <<'EOF'
+# This container has no sshd and no auth.log to match against, so the
+# distro-default [sshd] jail (jail.d/defaults-debian.conf) fails fail2ban's
+# own startup ("Have not found any log file for sshd jail") unless disabled.
+[sshd]
+enabled = false
+
+[aegis]
+enabled = true
+filter = aegis
+logpath = /var/log/aegis-auth.log
+maxretry = 5
+findtime = 15m
+bantime = 15m
+backend = polling
+banaction = iptables-multiport
+EOF
+mkdir -p /var/run/fail2ban
+
 # --- nginx log dir --------------------------------------------------------------
 mkdir -p /var/log/nginx
 
@@ -261,7 +295,7 @@ mkdir -p /var/log/nginx
 # container's writable layer, so /run/*.pid files from the previous run are
 # still there and make the actual daemons refuse to start ("already
 # running") even though nothing is. Clear the ones supervisord launches.
-rm -f /var/run/apache2/apache2.pid /run/dovecot/master.pid /var/spool/postfix/pid/master.pid /run/opendkim/opendkim.pid
+rm -f /var/run/apache2/apache2.pid /run/dovecot/master.pid /var/spool/postfix/pid/master.pid /run/opendkim/opendkim.pid /var/run/fail2ban/fail2ban.sock /var/run/fail2ban/fail2ban.pid
 
 log "starting services (nginx, apache, mariadb, postgres, vsftpd, php-fpm, postfix, dovecot, opendkim, cron)"
 exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf &
