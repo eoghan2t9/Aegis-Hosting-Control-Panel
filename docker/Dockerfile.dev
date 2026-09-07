@@ -1,0 +1,75 @@
+# Aegis development container
+#
+# Purpose: run the FULL hosting stack the panel manages so changes can be
+# tested before deployment to bare metal: PHP 7.4 → latest php-fpm, nginx,
+# Apache, MariaDB, PostgreSQL and vsftpd.
+#
+# No rebuild needed for code changes:
+#   - the repo is bind-mounted at /app
+#   - the panel is started with `go run` by the entrypoint (backend changes:
+#     `docker compose restart aegis`, ~1s recompile)
+#   - AEGIS_DEV_WEB=/app/web serves the frontend straight from disk (frontend
+#     changes: just refresh the browser)
+#
+# Rebuild only when you change THIS file:  make docker-up
+
+ARG UBUNTU=22.04
+FROM ubuntu:${UBUNTU}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    TZ=UTC \
+    PATH="/usr/local/go/bin:${PATH}"
+
+# Base tooling + ondrej PPA (php 7.4 .. 8.4 + nginx mainline for Ubuntu 22.04).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common gnupg ca-certificates curl wget git \
+        apt-transport-https lsb-release && \
+    add-apt-repository -y ppa:ondrej/php && \
+    add-apt-repository -y ppa:ondrej/nginx-mainline && \
+    apt-get update
+
+# PHP versions 7.4 → 8.4 (fpm + cli + a practical module set per version).
+# Newer PHP releases are picked up automatically by the panel's detector.
+RUN apt-get install -y --no-install-recommends \
+        php7.4-cli php7.4-fpm php7.4-mysql php7.4-pgsql php7.4-curl php7.4-mbstring \
+        php7.4-xml php7.4-zip php7.4-intl php7.4-bcmath php7.4-gd \
+        php8.0-cli php8.0-fpm php8.0-mysql php8.0-pgsql php8.0-curl php8.0-mbstring \
+        php8.0-xml php8.0-zip php8.0-intl php8.0-bcmath php8.0-gd \
+        php8.1-cli php8.1-fpm php8.1-mysql php8.1-pgsql php8.1-curl php8.1-mbstring \
+        php8.1-xml php8.1-zip php8.1-intl php8.1-bcmath php8.1-gd \
+        php8.2-cli php8.2-fpm php8.2-mysql php8.2-pgsql php8.2-curl php8.2-mbstring \
+        php8.2-xml php8.2-zip php8.2-intl php8.2-bcmath php8.2-gd \
+        php8.3-cli php8.3-fpm php8.3-mysql php8.3-pgsql php8.3-curl php8.3-mbstring \
+        php8.3-xml php8.3-zip php8.3-intl php8.3-bcmath php8.3-gd \
+        php8.4-cli php8.4-fpm php8.4-mysql php8.4-pgsql php8.4-curl php8.4-mbstring \
+        php8.4-xml php8.4-zip php8.4-intl php8.4-bcmath php8.4-gd
+
+# Web servers + databases + FTP + utilities.
+RUN apt-get install -y --no-install-recommends \
+        nginx apache2 apache2-utils libapache2-mod-fcgid \
+        mariadb-server mariadb-client postgresql postgresql-client \
+        vsftpd supervisor rsync zip unzip openssl cron jq dnsutils \
+        net-tools iproute2 procps sudo nano && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# --- Go toolchain (build-time download; not needed for container rebuilds of code) ---
+ARG GO_VERSION=1.26.1
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz && \
+    tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
+
+# Repo root (bind-mounted over this in compose; keeps the image runnable alone).
+RUN mkdir -p /app /etc/aegis /run/php
+WORKDIR /app
+
+# Copy docker support files.
+COPY docker/entrypoint.sh /usr/local/bin/aegis-entrypoint
+COPY docker/supervisord-aegis.conf /etc/supervisor/conf.d/aegis.conf
+COPY docker/php-pools.dev /usr/local/share/aegis/php-pools.dev
+RUN chmod +x /usr/local/bin/aegis-entrypoint
+
+# Supervisor runs the long-lived services; entrypoint wires credentials first.
+EXPOSE 80 443 8080 8081 3306 5432 21 40000-40100 53/udp
+
+ENTRYPOINT ["/usr/local/bin/aegis-entrypoint"]
+CMD ["dev"]
