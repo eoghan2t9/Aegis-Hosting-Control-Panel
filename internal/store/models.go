@@ -168,6 +168,27 @@ type AuditEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// BackupTarget kinds.
+const (
+	BackupKindS3   = "s3"
+	BackupKindB2   = "b2"
+	BackupKindSFTP = "sftp"
+)
+
+// BackupTarget is an offsite destination backups are pushed to after
+// creation. ConfigEnc holds the connection details (bucket/endpoint/key or
+// SFTP host/user/key), encrypted with the panel Cipher — same pattern as
+// dns_providers.api_key_enc.
+type BackupTarget struct {
+	ID            int64     `json:"id"`
+	Kind          string    `json:"kind"`
+	Label         string    `json:"label"`
+	ConfigEnc     string    `json:"-"`
+	RetentionDays int       `json:"retention_days"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 // LoginAttempt is one row of the login-throttling log.
 type LoginAttempt struct {
 	ID        int64     `json:"id"`

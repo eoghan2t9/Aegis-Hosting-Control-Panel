@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +45,15 @@ func (s *Server) handleBackupsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "backup.create", info.Name, "scope="+scope)
+	if targets, err := s.Backup.ListBackupTargets(r.Context()); err == nil {
+		for _, t := range targets {
+			if t.Enabled {
+				if err := s.Backup.PushOffsite(r.Context(), info, t); err != nil {
+					slog.Warn("offsite backup push failed", "target", t.Label, "err", err)
+				}
+			}
+		}
+	}
 	writeJSON(w, http.StatusCreated, info)
 }
 

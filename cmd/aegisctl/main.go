@@ -105,7 +105,7 @@ func wire() (*config.Config, *store.Store, *serviceSet, error) {
 		ssl:     svc.NewSSL(cfg, st, web, dnsSvc),
 		ftp:     ftpSvc,
 		db:      dbSvc,
-		backup:  svc.NewBackup(cfg, st, dbSvc, ftpSvc, web, php, am),
+		backup:  svc.NewBackup(cfg, st, dbSvc, ftpSvc, web, php, am, cipher),
 		tuner:   svc.NewTuner(cfg),
 		sys:     svc.NewSystem(cfg),
 	}

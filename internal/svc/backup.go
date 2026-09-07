@@ -19,13 +19,14 @@ import (
 // dumps, FTP accounts (with credentials), domains, DNS records and package
 // membership, all in a single tar.gz with a JSON manifest.
 type Backup struct {
-	Cfg   *config.Config
-	Store *store.Store
-	DB    *Databases
-	FTP   *FTP
-	Web   *WebServer
-	PHP   *PHP
-	Auth  PasswordSetter
+	Cfg    *config.Config
+	Store  *store.Store
+	DB     *Databases
+	FTP    *FTP
+	Web    *WebServer
+	PHP    *PHP
+	Auth   PasswordSetter
+	Cipher *Cipher
 }
 
 // PasswordSetter is implemented by the auth manager; decoupled so backups can
@@ -62,8 +63,8 @@ type BackupInfo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func NewBackup(cfg *config.Config, st *store.Store, db *Databases, ftp *FTP, web *WebServer, php *PHP, auth PasswordSetter) *Backup {
-	return &Backup{Cfg: cfg, Store: st, DB: db, FTP: ftp, Web: web, PHP: php, Auth: auth}
+func NewBackup(cfg *config.Config, st *store.Store, db *Databases, ftp *FTP, web *WebServer, php *PHP, auth PasswordSetter, cipher *Cipher) *Backup {
+	return &Backup{Cfg: cfg, Store: st, DB: db, FTP: ftp, Web: web, PHP: php, Auth: auth, Cipher: cipher}
 }
 
 func (b *Backup) stamp() string { return time.Now().UTC().Format("20060102-150405") }
