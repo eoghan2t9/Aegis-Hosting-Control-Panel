@@ -216,6 +216,8 @@ Promise.all([
   import("./views/ssl.js"),
   import("./views/ftp.js"),
   import("./views/cron.js"),
+  import("./views/mail.js"),
+  import("./views/webmail.js"),
   import("./views/databases.js"),
   import("./views/files.js"),
   import("./views/accounts.js"),
