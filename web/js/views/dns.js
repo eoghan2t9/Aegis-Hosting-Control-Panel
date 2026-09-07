@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, statusTag, fmtAgo, pageHead, loading } from "../ui.js";
 
@@ -86,7 +86,7 @@ addRoute("/dns", {
   // re-render on every visit
 });
 
-async function reload() { location.hash = ""; location.hash = "#/dns"; }
+async function reload() { refresh(); }
 
 function emptyState(msg, extra) {
   return `<div class="card empty-state"><span class="glyph">⌁</span><p>${esc(msg)}</p>${extra || ""}</div>`;

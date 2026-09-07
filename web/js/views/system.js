@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, confirmDialog, fmtBytes, fmtPct, fmtDate, statusTag, pageHead, loading } from "../ui.js";
 
@@ -37,7 +37,7 @@ addRoute("/system", {
       try {
         const data = await api.post("/tuning/apply", { apply_sysctl: false });
         toast("Tuning report regenerated for " + data.cores + " cores / " + data.ram_mb + " MB");
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };
 

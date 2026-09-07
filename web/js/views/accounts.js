@@ -1,4 +1,4 @@
-import { addRoute, isAdmin, isReseller, me } from "../app.js";
+import { addRoute, isAdmin, isReseller, me, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, statusTag, fmtAgo, pageHead, loading, modal } from "../ui.js";
 
@@ -69,11 +69,11 @@ addRoute("/accounts", {
       tr.querySelector(".act-susp")?.addEventListener("click", async () => {
         const suspending = row.status !== "suspended";
         if (!await confirmDialog(suspending ? `Suspend ${row.username}? Active sessions are killed.` : `Unsuspend ${row.username}?`, { danger: suspending, title: suspending ? "Suspend account" : "Unsuspend account" })) return;
-        try { await api.post(`/users/${row.id}/${suspending ? "suspend" : "unsuspend"}`); toast("Done"); location.reload(); } catch (ex) { toast(ex.message, "err"); }
+        try { await api.post(`/users/${row.id}/${suspending ? "suspend" : "unsuspend"}`); toast("Done"); refresh(); } catch (ex) { toast(ex.message, "err"); }
       });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         if (!await confirmDialog(`Delete ${row.username}? The system account and panel data are removed.`, { danger: true, title: "Delete account" })) return;
-        try { await api.del(`/users/${row.id}`); toast("Account deleted"); location.reload(); } catch (ex) { toast(ex.message, "err"); }
+        try { await api.del(`/users/${row.id}`); toast("Account deleted"); refresh(); } catch (ex) { toast(ex.message, "err"); }
       });
     });
 
@@ -93,7 +93,7 @@ addRoute("/accounts", {
       try {
         await api.post("/users", { username: vals.username, email: vals.email, password: vals.password, role: vals.role, package_id: vals.package_id ? +vals.package_id : 0 });
         toast("Account created");
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };
 
@@ -126,7 +126,7 @@ addRoute("/accounts", {
   },
 });
 
-function reload() { location.hash = "#/accounts"; location.reload(); }
+function reload() { refresh(); }
 
 function roleTag(role) {
   const cls = role === "admin" ? "tag-red" : role === "reseller" ? "tag-amber" : "";
