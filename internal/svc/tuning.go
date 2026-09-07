@@ -139,7 +139,7 @@ func (t *Tuner) Inspect() Inspection {
 // DetectPHP finds installed PHP CLI/FPM versions by scanning PATH and the
 // Debian/Ubuntu php dirs.
 func DetectPHP() []Binary {
-	var out []Binary
+	out := []Binary{}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	dirs := []string{"/usr/bin", "/usr/sbin", "/usr/local/bin"}
@@ -153,10 +153,14 @@ func DetectPHP() []Binary {
 			name := e.Name()
 			var ver string
 			switch {
-			case strings.HasPrefix(name, "php") && len(name) > 3 && name[3] == '.':
+			// Debian/Ubuntu/ondrej name versioned binaries php7.4 / php-fpm7.4
+			// (digit right after the prefix); some builds use php.7.4. Accept both.
+			case strings.HasPrefix(name, "php") && len(name) > 3 && (name[3] == '.' || (name[3] >= '0' && name[3] <= '9')):
 				ver = strings.TrimPrefix(name, "php")
-			case strings.HasPrefix(name, "php-fpm") && len(name) > 7 && name[7] == '.':
+				ver = strings.TrimPrefix(ver, ".")
+			case strings.HasPrefix(name, "php-fpm") && len(name) > 7 && (name[7] == '.' || (name[7] >= '0' && name[7] <= '9')):
 				ver = strings.TrimPrefix(name, "php-fpm")
+				ver = strings.TrimPrefix(ver, ".")
 			default:
 				continue
 			}
@@ -177,7 +181,7 @@ func DetectPHP() []Binary {
 
 // DetectWebServers returns installed web servers among nginx/apache/caddy.
 func DetectWebServers() []string {
-	var out []string
+	out := []string{}
 	for _, s := range []string{"nginx", "apache2", "caddy"} {
 		if LookPath(s) || ServiceRunning(s) {
 			out = append(out, s)
@@ -188,7 +192,7 @@ func DetectWebServers() []string {
 
 // DetectDatabases returns installed database servers.
 func DetectDatabases() []string {
-	var out []string
+	out := []string{}
 	for _, b := range []string{"mariadbd", "mysqld", "postgres"} {
 		if LookPath(b) || LookPath("psql") && b == "postgres" {
 			out = append(out, b)
@@ -204,7 +208,7 @@ func DetectDatabases() []string {
 
 // DetectFTP returns installed FTP servers.
 func DetectFTP() []string {
-	var out []string
+	out := []string{}
 	for _, b := range []string{"vsftpd", "pure-ftpd", "proftpd"} {
 		if LookPath(b) || ServiceRunning(b) {
 			out = append(out, b)

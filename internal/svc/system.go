@@ -217,7 +217,7 @@ func (s *System) PerUserUsage(usernames map[int]string) ([]UserUsage, error) {
 		}
 	}
 
-	var out []UserUsage
+	out := []UserUsage{}
 	for uid, uname := range usernames {
 		uu := UserUsage{Username: uname, UID: uid, CPUSeconds: cpuByUID[uid], RSSBytes: rssByUID[uid], DiskBytes: diskByUser[uname]}
 		out = append(out, uu)
@@ -279,7 +279,7 @@ func (s *System) Processes(uidFilter int) ([]Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []Process
+	out := []Process{}
 	for _, pe := range procs {
 		pid, err := strconv.Atoi(pe.Name())
 		if err != nil {
