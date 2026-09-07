@@ -1,22 +1,45 @@
 #!/bin/bash
-# Start one php-fpm master per installed version so the panel can create
-# pools for any version immediately during development.
-set -e
-pids=()
+# Start one php-fpm master per installed version so the panel can create pools
+# for any version immediately during development.
+#
+# Robustness notes:
+#  - supervisor restarts can orphan masters from a previous wrapper run; clear
+#    them first so fresh masters can bind their sockets/pidfiles.
+#  - the wrapper never exits: if a master dies it is restarted, so supervisor
+#    keeps this program RUNNING (not FATAL).
+set -u
+
+log() { echo "[php-pools.dev] $*"; }
+
+# Kill any leftover masters from a previous run (they are children of the old
+# wrapper, not of PID 1, so killing them is safe in the dev container).
+pkill -f 'php-fpm: master [p]rocess' 2>/dev/null || true
+sleep 1
+
+declare -A VER_BIN   # version -> fpm binary
+declare -A VER_CONF  # version -> fpm config
 for conf in /etc/php/*/fpm/php-fpm.conf; do
   ver=$(basename "$(dirname "$(dirname "$conf")")")
-  bin=/usr/sbin/php-fpm$ver
+  bin=/usr/sbin/php-fpm"$ver"
   if [ -x "$bin" ]; then
+    VER_BIN[$ver]=$bin
+    VER_CONF[$ver]=$conf
+    log "starting php-fpm $ver"
     "$bin" --nodaemonize --fpm-config "$conf" &
-    pids+=($!)
   fi
 done
-# Restart any fpm that dies, keeping the dev stack alive.
+
+sleep 1
+log "all versions launched; monitoring"
+
+# Watch every master; restart any that die, forever.
 while true; do
-  for i in "${!pids[@]}"; do
-    if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-      ver=""
-      exit 0
+  for ver in "${!VER_BIN[@]}"; do
+    bin=${VER_BIN[$ver]}
+    conf=${VER_CONF[$ver]}
+    if ! pgrep -f "php-fpm: master [p]rocess \($conf\)" >/dev/null 2>&1; then
+      log "master $ver died — restarting"
+      "$bin" --nodaemonize --fpm-config "$conf" &
     fi
   done
   sleep 3
