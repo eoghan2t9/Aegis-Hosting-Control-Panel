@@ -26,7 +26,7 @@ func (s *Server) handleZonesList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var out []*store.DNSZone
+	out := []*store.DNSZone{}
 	for _, z := range zones {
 		if u.Role == store.RoleAdmin || s.canAccessZone(r, z) {
 			out = append(out, z)

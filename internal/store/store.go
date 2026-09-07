@@ -329,7 +329,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int, actorID int64) ([]Audi
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AuditEntry
+	out := []AuditEntry{}
 	for rows.Next() {
 		var e AuditEntry
 		var created interface{}

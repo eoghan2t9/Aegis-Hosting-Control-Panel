@@ -39,7 +39,7 @@ type ServerInfo struct {
 
 // Servers detects installed/running database servers.
 func (d *Databases) Servers(ctx context.Context) []ServerInfo {
-	var out []ServerInfo
+	out := []ServerInfo{}
 	if LookPath("mariadb") || LookPath("mysql") || ServiceRunning("mariadb") || ServiceRunning("mysql") {
 		ver := ""
 		if outV, err := RunTimeout(10*time.Second, "mariadb", "--version"); err == nil {

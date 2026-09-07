@@ -66,7 +66,7 @@ func (s *Store) ListDomains(ctx context.Context, userID int64) ([]*Domain, error
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Domain
+	out := []*Domain{}
 	for rows.Next() {
 		d, err := scanDomain(rows)
 		if err != nil {
@@ -113,7 +113,7 @@ func (s *Store) ListAliases(ctx context.Context, domainID int64) ([]string, erro
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := []string{}
 	for rows.Next() {
 		var a string
 		if err := rows.Scan(&a); err != nil {
@@ -185,7 +185,7 @@ func (s *Store) ListZones(ctx context.Context) ([]*DNSZone, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*DNSZone
+	out := []*DNSZone{}
 	for rows.Next() {
 		z, err := scanZone(rows)
 		if err != nil {
@@ -228,7 +228,7 @@ func (s *Store) ListRecords(ctx context.Context, zoneID int64) ([]*DNSRecord, er
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*DNSRecord
+	out := []*DNSRecord{}
 	for rows.Next() {
 		r, err := scanRecord(rows)
 		if err != nil {

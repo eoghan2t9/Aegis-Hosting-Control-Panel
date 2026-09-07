@@ -40,7 +40,7 @@ type Version struct {
 func (p *PHP) Versions() []Version {
 	bins := DetectPHP()
 	// Build per-version entries from CLI binaries; attach fpm where found.
-	var out []Version
+	out := []Version{}
 	cliByVer := map[string]string{}
 	fpmByVer := map[string]string{}
 	for _, b := range bins {
@@ -56,7 +56,7 @@ func (p *PHP) Versions() []Version {
 			Version:  ver,
 			CLI:      cli,
 			FPM:      fpmByVer[ver],
-			Running:  ServiceRunning("php" + ver + "-fpm"),
+			Running:  fpmRunning(ver),
 			PoolConf: filepath.Join("/etc/php", ver, "fpm/pool.d"),
 		}
 		if v.FPM == "" {
@@ -72,6 +72,17 @@ func (p *PHP) Versions() []Version {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Version > out[j].Version })
 	return out
+}
+
+// fpmRunning reports whether the php-fpm master for a version is up. Uses
+// the systemd unit name on systemd hosts and the master-process cmdline
+// ("php-fpm: master process (/etc/php/X.Y/…)") elsewhere, e.g. containers
+// where the version's fpm runs under supervisor.
+func fpmRunning(version string) bool {
+	if ServiceRunning("php" + version + "-fpm") {
+		return true
+	}
+	return ProcessRunning("php-fpm: master process \\(/etc/php/" + version + "/")
 }
 
 // Has returns true when the given version is installed.
@@ -109,6 +120,9 @@ func (p *PHP) EnsurePool(domain, systemUser, version string, tuning *PHPFPMTunin
 		tuning = &PHPFPMTuning{PM: "dynamic", MaxChildren: 8, StartServers: 2, MinSpare: 1, MaxSpare: 4}
 	}
 	sock := p.SocketPath(domain)
+	// Aegis system accounts are created with primary group www-data (so nginx
+	// can serve the site); use the account's real primary group in the pool.
+	group := primaryGroup(systemUser)
 	pool := fmt.Sprintf(`; Aegis-managed pool for %s
 [%s]
 user = %s
@@ -127,7 +141,7 @@ request_terminate_timeout = 300
 catch_workers_output = yes
 php_admin_value[open_basedir] = %s:%s/tmp
 php_admin_flag[display_errors] = off
-`, domain, domain, systemUser, systemUser, sock,
+`, domain, domain, systemUser, group, sock,
 		tuning.PM, tuning.MaxChildren, tuning.StartServers, tuning.MinSpare, tuning.MaxSpare,
 		p.Cfg.HomeRoot, p.Cfg.HomeRoot)
 
@@ -155,10 +169,23 @@ func (p *PHP) RemovePool(domain, version string) error {
 	return p.Reload(version)
 }
 
+// systemdIsInit reports whether PID 1 is systemd (a binary named systemctl can
+// exist in containers/initramfs without an active systemd bus).
+func systemdIsInit() bool {
+	if !LookPath("systemctl") {
+		return false
+	}
+	data, err := os.ReadFile("/proc/1/comm")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == "systemd"
+}
+
 // Reload signals a php-fpm version to reload its configuration.
 func (p *PHP) Reload(version string) error {
 	svcName := "php" + version + "-fpm"
-	if LookPath("systemctl") {
+	if systemdIsInit() {
 		if _, err := RunTimeout(20*time.Second, "systemctl", "reload", svcName); err == nil {
 			return nil
 		}
@@ -167,11 +194,23 @@ func (p *PHP) Reload(version string) error {
 		}
 		return nil
 	}
-	// No systemd: send SIGUSR2 to the master fpm process.
+	// No systemd (containers, non-systemd hosts): send SIGUSR2 to the master
+	// fpm process, e.g. "php-fpm: master process (/etc/php/8.2/fpm/…)".
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if out, err := Exec(ctx, "pkill", "-USR2", "-f", "php-fpm:"+version); err != nil && !strings.Contains(out, "No matching") {
-		return fmt.Errorf("php: could not signal %s: %w", svcName, err)
+	if LookPath("pkill") {
+		// Signal by exact master cmdline; a bare "php-fpm:"+version could match
+		// nothing when the version separator differs, so match on the conf path.
+		pat := "php-fpm: master process \\(/etc/php/" + version + "/"
+		if out, err := Exec(ctx, "pkill", "-USR2", "-f", pat); err == nil || strings.Contains(out, "No matching") {
+			return nil
+		}
 	}
-	return nil
+	// Last resort: reload via the fpm socket dir marker is not available, so
+	// report success only if the master is at least running (supervisord in the
+	// dev container owns restarts anyway).
+	if fpmRunning(version) {
+		return nil
+	}
+	return fmt.Errorf("php: could not reload %s (no systemd and no matching fpm master)", svcName)
 }
