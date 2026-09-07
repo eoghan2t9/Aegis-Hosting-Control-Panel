@@ -183,6 +183,32 @@ CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mail_domains (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	domain_id INTEGER NOT NULL,
+	domain TEXT NOT NULL UNIQUE,
+	dkim_selector TEXT NOT NULL DEFAULT 'default',
+	dkim_public_key TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mailboxes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	mail_domain_id INTEGER NOT NULL,
+	localpart TEXT NOT NULL,
+	password_hash TEXT NOT NULL,
+	quota_bytes INTEGER NOT NULL DEFAULT 0,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	UNIQUE(mail_domain_id, localpart)
+);
+CREATE TABLE IF NOT EXISTS mail_aliases (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	mail_domain_id INTEGER NOT NULL,
+	source TEXT NOT NULL,
+	destination TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(mail_domain_id, source)
+);
 CREATE TABLE IF NOT EXISTS cron_jobs (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id INTEGER NOT NULL,

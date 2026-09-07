@@ -39,6 +39,7 @@ type Server struct {
 	Terminal *svc.Terminal
 	Cipher   *svc.Cipher
 	Cron     *svc.Cron
+	Mail     *svc.Mail
 
 	primaryIPv4 string
 }
@@ -47,11 +48,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -207,6 +208,26 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backups/download", s.withAuth(s.withRole(s.handleBackupsDownload, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/backups/restore", s.withAuth(s.withRole(s.handleBackupsRestore, store.RoleAdmin)))
 	mux.HandleFunc("DELETE /api/backups", s.withAuth(s.withRole(s.handleBackupsDelete, store.RoleAdmin)))
+
+	// Mail: domain enablement + mailboxes + aliases.
+	mux.HandleFunc("GET /api/mail/domains", s.withAuth(s.handleMailDomainsList))
+	mux.HandleFunc("POST /api/mail/domains", s.withAuth(s.handleMailDomainsCreate))
+	mux.HandleFunc("DELETE /api/mail/domains/{id}", s.withAuth(s.handleMailDomainsDelete))
+	mux.HandleFunc("GET /api/mail/domains/{id}/mailboxes", s.withAuth(s.handleMailboxesList))
+	mux.HandleFunc("POST /api/mail/domains/{id}/mailboxes", s.withAuth(s.handleMailboxesCreate))
+	mux.HandleFunc("POST /api/mail/mailboxes/{id}/password", s.withAuth(s.handleMailboxPassword))
+	mux.HandleFunc("POST /api/mail/mailboxes/{id}/toggle", s.withAuth(s.handleMailboxToggle))
+	mux.HandleFunc("DELETE /api/mail/mailboxes/{id}", s.withAuth(s.handleMailboxDelete))
+	mux.HandleFunc("GET /api/mail/domains/{id}/aliases", s.withAuth(s.handleMailAliasesList))
+	mux.HandleFunc("POST /api/mail/domains/{id}/aliases", s.withAuth(s.handleMailAliasesCreate))
+	mux.HandleFunc("DELETE /api/mail/aliases/{id}", s.withAuth(s.handleMailAliasesDelete))
+
+	// Webmail: its own credential-based session, not the panel JWT.
+	mux.HandleFunc("POST /api/webmail/login", s.handleWebmailLogin)
+	mux.HandleFunc("POST /api/webmail/logout", s.handleWebmailLogout)
+	mux.HandleFunc("GET /api/webmail/messages", s.withWebmailAuth(s.handleWebmailMessages))
+	mux.HandleFunc("GET /api/webmail/messages/{uid}", s.withWebmailAuth(s.handleWebmailMessageGet))
+	mux.HandleFunc("POST /api/webmail/send", s.withWebmailAuth(s.handleWebmailSend))
 
 	// Cron.
 	mux.HandleFunc("GET /api/cron/jobs", s.withAuth(s.handleCronList))
