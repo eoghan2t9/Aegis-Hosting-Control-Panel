@@ -186,7 +186,27 @@ addRoute("/account", {
             <button class="btn btn-primary" type="submit">Update password</button>
           </form>
         </div>
+        <div class="card">
+          <div class="card-head"><span class="card-title">Usage</span></div>
+          <div id="usage-root" class="small dim">loading…</div>
+        </div>
       </div>`);
+    api.get("/quota/usage").then((usage) => {
+      const usageRoot = document.getElementById("usage-root");
+      const bar = (used, quota, label) => {
+        if (!quota) return `<div class="small dim" style="margin-bottom:10px">${label}: ${fmtBytes(used)} used, no limit</div>`;
+        const pct = Math.min(100, (used / quota) * 100);
+        return `<div style="margin-bottom:10px">
+          <div class="small dim" style="margin-bottom:4px">${label}: ${fmtBytes(used)} / ${fmtBytes(quota)}</div>
+          <div style="height:6px;background:var(--bg2, #222);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${pct > 90 ? "var(--danger,#e5484d)" : "var(--accent,#4f8cff)"}"></div>
+          </div>
+        </div>`;
+      };
+      usageRoot.innerHTML =
+        bar(usage.disk_used_bytes, usage.disk_quota_bytes, "Disk") +
+        bar(usage.bandwidth_used_bytes, usage.bandwidth_quota_bytes, "Bandwidth (current log period)");
+    }).catch((ex) => { document.getElementById("usage-root").textContent = ex.message; });
     // Change password is admin-managed; self-service hits the same endpoint.
     document.getElementById("pw-form").onsubmit = async (e) => {
       e.preventDefault();

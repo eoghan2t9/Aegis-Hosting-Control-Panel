@@ -96,6 +96,7 @@ func run(configPath string) error {
 	mailSvc := svc.NewMail(cfg, st, dnsSvc)
 	tokensSvc := svc.NewAPITokens(st)
 	securitySvc := svc.NewSecurity(cfg, st)
+	quotaSvc := svc.NewQuota(cfg, st)
 
 	// First-run bootstrap.
 	if err := bootstrap(cfg, st, tuner, webSvc); err != nil {
@@ -103,7 +104,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc)
+		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -144,6 +145,7 @@ func run(configPath string) error {
 	// SSL auto-renew.
 	go sslSvc.AutoRenew(ctx)
 	go backupSvc.AutoBackup(ctx)
+	go quotaSvc.EnforceLoop(ctx)
 
 	select {
 	case <-ctx.Done():

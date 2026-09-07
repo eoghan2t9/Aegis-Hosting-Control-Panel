@@ -42,6 +42,7 @@ type Server struct {
 	Mail     *svc.Mail
 	Tokens   *svc.APITokens
 	Security *svc.Security
+	Quota    *svc.Quota
 
 	primaryIPv4 string
 }
@@ -50,11 +51,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -253,6 +254,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/security/attempts", s.withAuth(s.withRole(s.handleSecurityAttempts, store.RoleAdmin)))
 	mux.HandleFunc("GET /api/security/bans", s.withAuth(s.withRole(s.handleSecurityBans, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/security/unban", s.withAuth(s.withRole(s.handleSecurityUnban, store.RoleAdmin)))
+
+	// Quota.
+	mux.HandleFunc("GET /api/quota/usage", s.withAuth(s.handleQuotaUsage))
+	mux.HandleFunc("POST /api/quota/enforce", s.withAuth(s.withRole(s.handleQuotaEnforce, store.RoleAdmin)))
 
 	// Terminal.
 	mux.HandleFunc("GET /api/terminal", s.withAuth(s.handleTerminalWS))
