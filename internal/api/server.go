@@ -40,6 +40,7 @@ type Server struct {
 	Cipher   *svc.Cipher
 	Cron     *svc.Cron
 	Mail     *svc.Mail
+	Tokens   *svc.APITokens
 
 	primaryIPv4 string
 }
@@ -48,11 +49,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -237,6 +238,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/cron/jobs/{id}", s.withAuth(s.handleCronDelete))
 	mux.HandleFunc("GET /api/cron/jobs/{id}/log", s.withAuth(s.handleCronLog))
 
+	// API tokens.
+	mux.HandleFunc("GET /api/tokens", s.withAuth(s.handleTokensList))
+	mux.HandleFunc("POST /api/tokens", s.withAuth(s.handleTokensCreate))
+	mux.HandleFunc("DELETE /api/tokens/{id}", s.withAuth(s.handleTokensDelete))
+
 	// Terminal.
 	mux.HandleFunc("GET /api/terminal", s.withAuth(s.handleTerminalWS))
 
@@ -266,6 +272,26 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		token := bearerToken(r)
 		if token == "" {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
+			return
+		}
+		// API tokens (aegis_...) are a separate credential from the panel
+		// JWT — scripting/automation auth, verified against api_tokens
+		// instead of a signed session. A synthetic Claims value keeps
+		// userFrom/claimsFrom/withRole working identically either way.
+		if strings.HasPrefix(token, "aegis_") {
+			user, err := s.Tokens.Verify(r.Context(), token)
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "invalid api token")
+				return
+			}
+			if user.Status == store.StatusSuspended {
+				writeErr(w, http.StatusForbidden, "account is suspended")
+				return
+			}
+			claims := &auth.Claims{Username: user.Username, Role: user.Role}
+			ctx := context.WithValue(r.Context(), ctxUser, user)
+			ctx = context.WithValue(ctx, ctxClaims, claims)
+			next(w, r.WithContext(ctx))
 			return
 		}
 		claims, user, err := s.Auth.Verify(r.Context(), token)

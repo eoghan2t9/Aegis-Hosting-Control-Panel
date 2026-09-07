@@ -168,6 +168,19 @@ type AuditEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// APIToken is a scoped, expiring credential for scripting against the panel.
+// Only its bcrypt hash is stored; the raw token is shown once at creation.
+type APIToken struct {
+	ID         int64      `json:"id"`
+	UserID     int64      `json:"user_id"`
+	Label      string     `json:"label"`
+	TokenHash  string     `json:"-"`
+	Scopes     string     `json:"scopes"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 // MailDomain marks a domain as mail-enabled: Postfix/Dovecot serve virtual
 // mailboxes for it, and it has a DKIM signing key.
 type MailDomain struct {
