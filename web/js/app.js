@@ -103,8 +103,13 @@ function buildShell() {
     document.getElementById("imp-user").textContent = u.username;
     bar.classList.remove("hidden");
     document.getElementById("imp-stop").onclick = async () => {
-      await api.post("/admin/unimpersonate").catch(() => {});
-      api.setToken("");
+      try {
+        const data = await api.post("/admin/unimpersonate");
+        api.setToken(data.token);
+      } catch {
+        api.setToken(""); // couldn't recover an admin token — fall back to login
+      }
+      location.hash = "#/dashboard";
       location.reload();
     };
   } else {

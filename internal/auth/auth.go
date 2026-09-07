@@ -130,6 +130,33 @@ func (m *Manager) Impersonate(ctx context.Context, adminID, targetID int64) (str
 	return m.mint(target, sid, adminID)
 }
 
+// Unimpersonate ends a support session: revokes the impersonated session and
+// mints a fresh token for the original admin (the Impersonator claim), so
+// the frontend can drop straight back into the admin's own dashboard instead
+// of being left with no valid token at all.
+func (m *Manager) Unimpersonate(ctx context.Context, token string) (string, error) {
+	claims, err := m.Parse(token)
+	if err != nil {
+		return "", ErrInvalidToken
+	}
+	_ = m.store.DeleteSession(ctx, claims.SessionID)
+	if claims.Impersonator == 0 {
+		return "", errors.New("not an impersonated session")
+	}
+	admin, err := m.store.GetUserByID(ctx, claims.Impersonator)
+	if err != nil {
+		return "", err
+	}
+	sid, err := newSessionID()
+	if err != nil {
+		return "", err
+	}
+	if err := m.store.CreateSession(ctx, sid, admin.ID, time.Now().Add(m.ttl)); err != nil {
+		return "", err
+	}
+	return m.mint(admin, sid, 0)
+}
+
 func (m *Manager) mint(u *store.User, sessionID string, impersonator int64) (string, error) {
 	now := time.Now()
 	claims := Claims{

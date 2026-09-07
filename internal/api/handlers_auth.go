@@ -93,11 +93,23 @@ func (s *Server) handleImpersonate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
-// handleUnimpersonate ends the support session by revoking the token.
+// handleUnimpersonate ends the support session: revokes the impersonated
+// token and returns a fresh one for the original admin so the frontend
+// lands back in their own dashboard instead of the login screen.
 func (s *Server) handleUnimpersonate(w http.ResponseWriter, r *http.Request) {
-	_ = s.Auth.Logout(r.Context(), bearerToken(r))
-	s.audit(r, "admin.unimpersonate", userFrom(r).Username, "ended support session")
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	adminName := "admin"
+	if claims := claimsFrom(r); claims != nil && claims.Impersonator > 0 {
+		if admin, err := s.Store.GetUserByID(r.Context(), claims.Impersonator); err == nil {
+			adminName = admin.Username
+		}
+	}
+	token, err := s.Auth.Unimpersonate(r.Context(), bearerToken(r))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.audit(r, "admin.unimpersonate", userFrom(r).Username, adminName+" ended support session")
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
