@@ -1,4 +1,4 @@
-import { addRoute } from "../app.js";
+import { addRoute, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, statusTag, pageHead, loading, modal, fmtAgo } from "../ui.js";
 
@@ -58,7 +58,7 @@ addRoute("/cron", {
           await api.post("/cron/jobs", { schedule, command: vals.command });
           toast("Job created");
         }
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     }
 
@@ -82,12 +82,12 @@ addRoute("/cron", {
         try {
           await api.post(`/cron/jobs/${job.id}/toggle`, { enabled: !job.enabled });
           toast(job.enabled ? "Job disabled" : "Job enabled");
-          location.reload();
+          refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         if (!await confirmDialog(`Delete this cron job?`, { danger: true, title: "Delete cron job" })) return;
-        try { await api.del(`/cron/jobs/${job.id}`); toast("Job deleted"); location.reload(); }
+        try { await api.del(`/cron/jobs/${job.id}`); toast("Job deleted"); refresh(); }
         catch (ex) { toast(ex.message, "err"); }
       });
     });

@@ -1,4 +1,4 @@
-import { addRoute, isAdmin, me } from "../app.js";
+import { addRoute, isAdmin, me, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, modal, confirmDialog, promptDialog, statusTag, fmtAgo, pageHead, loading } from "../ui.js";
 
@@ -55,7 +55,7 @@ async function del(id) {
   try {
     await api.del("/domains/" + id);
     toast("Domain deleted");
-    location.reload();
+    refresh();
   } catch (ex) { toast(ex.message, "err"); }
 }
 
@@ -84,8 +84,7 @@ function openCreate(phpVersions, webServers) {
         ...(uid ? { user_id: uid } : {}),
       });
       toast(`Domain ${created.domain} is live`);
-      location.hash = "#/domains";
-      location.reload();
+      refresh();
     } catch (ex) { toast(ex.message, "err"); }
   });
 }
@@ -140,17 +139,17 @@ function openDetail(id, onChanged) {
         try {
           await api.patch("/domains/" + id, { php_version: ver });
           toast("PHP pool updated and web server reloaded");
-          m.close(); location.reload();
+          m.close(); refresh();
         } catch (ex) { toast(ex.message, "err"); }
       };
       document.getElementById("alias-add").onclick = async () => {
         const a = document.getElementById("alias-new").value.trim();
         if (!a) return;
-        try { await api.post(`/domains/${id}/aliases`, { alias: a }); m.close(); location.reload(); } catch (ex) { toast(ex.message, "err"); }
+        try { await api.post(`/domains/${id}/aliases`, { alias: a }); m.close(); refresh(); } catch (ex) { toast(ex.message, "err"); }
       };
       body.querySelectorAll(".alias-del").forEach((b) => b.onclick = async () => {
         await api.del(`/domains/${id}/aliases/${encodeURIComponent(b.dataset.a)}`).catch(() => {});
-        m.close(); location.reload();
+        m.close(); refresh();
       });
       const dnsBtn = document.getElementById("dd-dns");
       if (dnsBtn) dnsBtn.onclick = () => { m.close(); location.hash = "#/dns"; };
