@@ -1,0 +1,376 @@
+package api
+
+import (
+	"log/slog"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"aegis/internal/auth"
+	"aegis/internal/store"
+	"aegis/internal/svc"
+)
+
+// --- users --------------------------------------------------------------------
+
+func (s *Server) handleUsersList(w http.ResponseWriter, r *http.Request) {
+	actor := userFrom(r)
+	var users []*store.User
+	var err error
+	if actor.Role == store.RoleAdmin {
+		users, err = s.Store.ListUsers(r.Context(), 0)
+	} else {
+		users, err = s.Store.ListUsers(r.Context(), actor.ID)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]*store.User, 0, len(users))
+	for _, u := range users {
+		out = append(out, publicUser(u))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type createUserReq struct {
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	Role      string `json:"role"`
+	PackageID int64  `json:"package_id"`
+}
+
+func (s *Server) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
+	actor := userFrom(r)
+	var req createUserReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if !svc.ValidUsername(req.Username) {
+		writeErr(w, http.StatusBadRequest, "invalid username (3-30 chars, lowercase letters/digits/underscore, must start with a letter)")
+		return
+	}
+	if len(req.Password) < 8 {
+		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	role := req.Role
+	if role == "" {
+		role = store.RoleUser
+	}
+	if role != store.RoleUser && role != store.RoleReseller && role != store.RoleAdmin {
+		writeErr(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	// Resellers can only create regular users.
+	if actor.Role == store.RoleReseller && role != store.RoleUser {
+		writeErr(w, http.StatusForbidden, "resellers can only create user accounts")
+		return
+	}
+	if actor.Role != store.RoleAdmin && role == store.RoleAdmin {
+		writeErr(w, http.StatusForbidden, "only admins can create admin accounts")
+		return
+	}
+	if _, err := s.Store.GetUserByUsername(r.Context(), req.Username); err == nil {
+		writeErr(w, http.StatusConflict, "username already exists")
+		return
+	}
+	pkgID := req.PackageID
+	if pkgID == 0 {
+		if pkg, err := s.Store.GetDefaultPackage(r.Context()); err == nil {
+			pkgID = pkg.ID
+		}
+	}
+
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	home := filepath.Join(s.Cfg.HomeRoot, req.Username)
+	u := &store.User{
+		Username: req.Username, Email: req.Email, PasswordHash: hash, Role: role,
+		PackageID: pkgID, Status: store.StatusActive, OwnerID: actor.ID, HomeDir: home,
+	}
+	// System account + home dir.
+	if err := createSystemUser(r, u, req.Password); err != nil {
+		writeErr(w, http.StatusInternalServerError, "system account: "+err.Error())
+		return
+	}
+	if err := s.Store.CreateUser(r.Context(), u); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	// Primary FTP account.
+	_, _ = s.FTP.Create(r.Context(), u, u.Username, req.Password, false)
+	s.audit(r, "user.create", u.Username, "role="+role)
+	writeJSON(w, http.StatusCreated, publicUser(u))
+}
+
+func (s *Server) handleUsersGet(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	u, err := s.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.canManageUser(userFrom(r), u) {
+		writeErr(w, http.StatusForbidden, "cannot access this account")
+		return
+	}
+	writeJSON(w, http.StatusOK, publicUser(u))
+}
+
+type updateUserReq struct {
+	Email     *string `json:"email"`
+	Role      *string `json:"role"`
+	PackageID *int64  `json:"package_id"`
+	Status    *string `json:"status"`
+}
+
+func (s *Server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	actor := userFrom(r)
+	u, err := s.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.canManageUser(actor, u) {
+		writeErr(w, http.StatusForbidden, "cannot manage this account")
+		return
+	}
+	var req updateUserReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Email != nil {
+		u.Email = *req.Email
+	}
+	if req.Role != nil {
+		if actor.Role != store.RoleAdmin {
+			writeErr(w, http.StatusForbidden, "only admins can change roles")
+			return
+		}
+		u.Role = *req.Role
+	}
+	if req.PackageID != nil {
+		if _, err := s.Store.GetPackage(r.Context(), *req.PackageID); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid package")
+			return
+		}
+		u.PackageID = *req.PackageID
+	}
+	if req.Status != nil {
+		if *req.Status != store.StatusActive && *req.Status != store.StatusSuspended {
+			writeErr(w, http.StatusBadRequest, "invalid status")
+			return
+		}
+		u.Status = *req.Status
+		_ = s.Store.DeleteUserSessions(r.Context(), u.ID)
+	}
+	if err := s.Store.UpdateUser(r.Context(), u); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "user.update", u.Username, "")
+	writeJSON(w, http.StatusOK, publicUser(u))
+}
+
+func (s *Server) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	actor := userFrom(r)
+	u, err := s.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.canManageUser(actor, u) {
+		writeErr(w, http.StatusForbidden, "cannot manage this account")
+		return
+	}
+	if u.ID == actor.ID {
+		writeErr(w, http.StatusBadRequest, "you cannot delete your own account")
+		return
+	}
+	// Archive first? Keep it simple: delete system user + home is destructive,
+	// so only remove the panel account unless confirmed.
+	if err := s.Store.DeleteUser(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_, _ = svc.RunTimeout(15*time.Second, "userdel", "-r", u.Username)
+	s.audit(r, "user.delete", u.Username, "")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	actor := userFrom(r)
+	u, err := s.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.canManageUser(actor, u) {
+		writeErr(w, http.StatusForbidden, "cannot manage this account")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Password) < 8 {
+		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.Store.SetUserPassword(r.Context(), id, hash); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.Store.DeleteUserSessions(r.Context(), id)
+	// Sync the system account password so FTP login keeps working.
+	if err := svc.SetSystemPassword(u.Username, req.Password); err != nil {
+		slog.Warn("reset-password: system password sync failed", "user", u.Username, "err", err)
+	}
+	s.audit(r, "user.reset-password", u.Username, "")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleUsersSuspend(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	actor := userFrom(r)
+	u, err := s.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.canManageUser(actor, u) {
+		writeErr(w, http.StatusForbidden, "cannot manage this account")
+		return
+	}
+	status := store.StatusSuspended
+	if strings.HasSuffix(r.URL.Path, "/unsuspend") {
+		status = store.StatusActive
+	}
+	if err := s.Store.SetUserStatus(r.Context(), id, status); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Lock/unlock the system account so FTP/SSH access follows.
+	if status == store.StatusSuspended {
+		_, _ = svc.RunTimeout(10*time.Second, "usermod", "-L", u.Username)
+		_ = s.Store.DeleteUserSessions(r.Context(), id)
+	} else {
+		_, _ = svc.RunTimeout(10*time.Second, "usermod", "-U", u.Username)
+	}
+	s.audit(r, "user."+status, u.Username, "")
+	writeJSON(w, http.StatusOK, map[string]string{"status": status})
+}
+
+// createSystemUser adds the system account with a home directory.
+func createSystemUser(r *http.Request, u *store.User, password string) error {
+	_, err := svc.RunTimeout(15*time.Second, "useradd", "-m", "-d", u.HomeDir, "-s", "/sbin/nologin", "-g", "www-data", u.Username)
+	if err != nil {
+		return err
+	}
+	return svc.SetSystemPassword(u.Username, password)
+}
+
+// --- packages ------------------------------------------------------------------
+
+func (s *Server) handlePackagesList(w http.ResponseWriter, r *http.Request) {
+	pkgs, err := s.Store.ListPackages(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, pkgs)
+}
+
+func (s *Server) handlePackagesCreate(w http.ResponseWriter, r *http.Request) {
+	var p store.Package
+	if !readJSON(w, r, &p) {
+		return
+	}
+	if p.Name == "" {
+		writeErr(w, http.StatusBadRequest, "package name is required")
+		return
+	}
+	if err := s.Store.CreatePackage(r.Context(), &p); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.audit(r, "package.create", p.Name, "")
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) handlePackagesUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	pkg, err := s.Store.GetPackage(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "package not found")
+		return
+	}
+	if !readJSON(w, r, pkg) {
+		return
+	}
+	if err := s.Store.UpdatePackage(r.Context(), pkg); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "package.update", pkg.Name, "")
+	writeJSON(w, http.StatusOK, pkg)
+}
+
+func (s *Server) handlePackagesDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	pkg, err := s.Store.GetPackage(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "package not found")
+		return
+	}
+	if err := s.Store.DeletePackage(r.Context(), id); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.audit(r, "package.delete", pkg.Name, "")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
