@@ -168,6 +168,18 @@ type AuditEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// CronJob is a scheduled command run under a panel user's own system account
+// via the real crontab (crontab -u <username>), not an in-process scheduler.
+type CronJob struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Schedule  string    `json:"schedule"` // 5-field cron expression
+	Command   string    `json:"command"`
+	LogPath   string    `json:"log_path"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Session is an active login session (revocable).
 type Session struct {
 	ID        string    `json:"id"`
