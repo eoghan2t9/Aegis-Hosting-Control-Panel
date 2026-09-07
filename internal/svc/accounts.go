@@ -55,6 +55,32 @@ func parseGroup() map[int]string {
 	return out
 }
 
+// primaryGroup returns the primary group of a system user via /etc/passwd
+// (the panel creates accounts with -g www-data; FTP-only and restored accounts
+// use the same convention). Falls back to the username so a manually created
+// account with a private group still produces a valid pool.
+func primaryGroup(username string) string {
+	f, err := os.Open("/etc/passwd")
+	if err != nil {
+		return username
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Split(sc.Text(), ":")
+		if len(fields) < 4 || fields[0] != username {
+			continue
+		}
+		if gid, err := strconv.Atoi(fields[3]); err == nil {
+			if name, ok := parseGroup()[gid]; ok {
+				return name
+			}
+		}
+		break
+	}
+	return username
+}
+
 // lookupUID resolves a username to a uid via /etc/passwd.
 func lookupUID(name string) (int, error) {
 	if name == "" {

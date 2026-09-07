@@ -19,6 +19,25 @@ services:
     # The repo is bind-mounted so Go + frontend edits are live.
     volumes:
       - ..:/app
+      # Live docker support files (bind-mounted so edits need only a restart).
+      # NB: entrypoint.sh + php-pools.dev are executable in the repo; supervisord
+      # runs php-pools.dev via bash so its exec bit is not required.
+      - ./entrypoint.sh:/usr/local/bin/aegis-entrypoint
+      - ./supervisord-aegis.conf:/etc/supervisor/conf.d/aegis.conf
+      - ./php-pools.dev:/usr/local/share/aegis/php-pools.dev
+      # Dev Go toolchain from the host, when present: lets the container build
+      # the panel even on networks where go.dev is blocked. Debian's golang
+      # splits the tree across /usr/lib (bin, pkg) and /usr/share (api, lib,
+      # misc, src, test) with relative symlinks, so BOTH halves must be mounted
+      # at their canonical paths. On hosts without .tools, docker creates empty
+      # dirs here and the entrypoint falls back to the image-baked /usr/local/go.
+      # .tools/gopath + .tools/gocache below are also inside the /app mount.
+      - type: bind
+        source: ../.tools/root/usr/lib/go-1.26
+        target: /usr/lib/go-1.26
+      - type: bind
+        source: ../.tools/root/usr/share/go-1.26
+        target: /usr/share/go-1.26
       - aegis-etc:/etc/aegis
       - aegis-lib:/var/lib/aegis
       - aegis-mysql:/var/lib/mysql
@@ -34,10 +53,14 @@ services:
       AEGIS_DEV_WEB: /app/web
       AEGIS_LISTEN: ":8080"
       AEGIS_APACHE_LISTEN: "8081"
+      # Reuse the host Go module + build caches (bind-mounted under /app/.tools)
+      # so `go run` in the entrypoint doesn't re-download everything.
+      GOPATH: /app/.tools/gopath
+      GOCACHE: /app/.tools/gocache
     ports:
       - "8080:8080"        # Aegis panel + API
-      - "80:80"            # nginx (customer sites)
-      - "443:443"          # https (customer sites)
+      - "8082:80"          # nginx (customer sites)  [host 80 was taken -> 8082]
+      - "8443:443"         # https (customer sites)   [host 443 was taken -> 8443]
       - "8081:8081"        # apache (dev, off the default :80)
       - "3306:3306"        # mariadb
       - "5432:5432"        # postgresql

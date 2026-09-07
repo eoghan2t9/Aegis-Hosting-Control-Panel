@@ -21,12 +21,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     PATH="/usr/local/go/bin:${PATH}"
 
-# Base tooling + ondrej PPA (php 7.4 .. 8.4 + nginx mainline for Ubuntu 22.04).
+# Base tooling + ondrej PHP PPA (php 7.4 .. 8.4 for Ubuntu 22.04).
+# Note: the ondrej nginx-mainline PPA was retired upstream, so nginx comes
+# from the Ubuntu archive below (fine for dev; production uses nginx.org).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         software-properties-common gnupg ca-certificates curl wget git \
         apt-transport-https lsb-release && \
     add-apt-repository -y ppa:ondrej/php && \
-    add-apt-repository -y ppa:ondrej/nginx-mainline && \
     apt-get update
 
 # PHP versions 7.4 → 8.4 (fpm + cli + a practical module set per version).
@@ -53,10 +54,17 @@ RUN apt-get install -y --no-install-recommends \
         net-tools iproute2 procps sudo nano && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# --- Go toolchain (build-time download; not needed for container rebuilds of code) ---
-ARG GO_VERSION=1.26.1
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz && \
-    tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
+# --- Go toolchain ---
+# Best-effort download; docker-compose.yml bind-mounts the host toolchain to
+# /usr/local/go in dev (see the `optional` volume), which also covers networks
+# where go.dev is unreachable. `go` must exist at /usr/local/go/bin/go at
+# runtime, so a failed download here must not abort the build.
+ARG GO_VERSION=1.26.0
+RUN if curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz; then \
+        tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz; \
+    else \
+        echo 'WARN: go.dev download failed; relying on the dev bind mount of /usr/local/go'; \
+    fi
 
 # Repo root (bind-mounted over this in compose; keeps the image runnable alone).
 RUN mkdir -p /app /etc/aegis /run/php

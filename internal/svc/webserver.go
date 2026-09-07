@@ -125,7 +125,9 @@ func (w *WebServer) Reload() error {
 }
 
 func reloadService(name string) error {
-	if LookPath("systemctl") {
+	// Only use systemctl when systemd is actually PID 1; a systemctl binary can
+	// exist in containers where the systemd bus is absent.
+	if systemdIsInit() {
 		if _, err := RunTimeout(20*time.Second, "systemctl", "reload", name); err == nil {
 			return nil
 		}

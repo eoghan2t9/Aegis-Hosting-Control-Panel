@@ -1,0 +1,15 @@
+# Exclude VCS + local toolchains from the docker build context (repo root is
+# the context for docker/Dockerfile.dev). Without this every build uploads
+# ~1GB of .tools and .git.
+.git/
+.tools/
+bin/
+dist/
+*.db
+*.db-shm
+*.db-wal
+data/
+.env
+.env.*
+!.env.example
+.DS_Store
