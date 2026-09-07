@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Aegis · Linux Hosting Control Panel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 7v9c0 8-5.4 12.6-12 14C9.4 28.6 4 24 4 16V7z' fill='%230d1117' stroke='%23c6f14e' stroke-width='2'/%3E%3Cpath d='M11 16.5 14.5 20 21 12' stroke='%23c6f14e' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/aegis.css">
+</head>
+<body>
+  <!-- Login screen (shown until authenticated) -->
+  <div id="screen-login" class="screen hidden">
+    <div class="login-wrap">
+      <div class="login-mark" aria-hidden="true"></div>
+      <div class="login-brand">
+        <span class="wordmark">AEGIS</span>
+        <span class="wordmark-sub">linux hosting control panel</span>
+      </div>
+      <form id="login-form" class="login-card" autocomplete="on">
+        <label class="field">
+          <span class="field-label">Username</span>
+          <input id="login-user" name="username" autocomplete="username" spellcheck="false" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Password</span>
+          <input id="login-pass" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">Authenticate</button>
+        <p id="login-error" class="login-error" role="alert"></p>
+      </form>
+      <p class="login-hint" id="login-hint"></p>
+    </div>
+  </div>
+
+  <!-- App shell (shown once authenticated) -->
+  <div id="screen-app" class="screen hidden">
+    <div id="impersonate-bar" class="impersonate-bar hidden">
+      <span>Support session — you are acting on behalf of <b id="imp-user"></b></span>
+      <button id="imp-stop" class="btn btn-ghost btn-xs">Exit support mode</button>
+    </div>
+    <div class="shell">
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-head">
+          <span class="wordmark sidebar-wordmark">AEGIS</span>
+          <span class="sidebar-node" id="sidebar-node">—</span>
+        </div>
+        <nav id="nav" class="nav" aria-label="Primary"></nav>
+        <div class="sidebar-foot">
+          <div id="server-pill" class="server-pill" title="Host status">
+            <span class="dot"></span><span id="server-pill-text">connecting…</span>
+          </div>
+          <div class="user-chip" id="user-chip"></div>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <button id="nav-toggle" class="btn btn-ghost nav-toggle" aria-label="Menu">☰</button>
+          <h1 id="page-title" class="page-title">Dashboard</h1>
+          <div class="topbar-actions" id="topbar-actions"></div>
+        </header>
+        <main id="view" class="view" tabindex="-1"></main>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modal-root"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
