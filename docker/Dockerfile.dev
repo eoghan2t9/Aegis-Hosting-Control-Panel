@@ -63,7 +63,9 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
     apt-get install -y --no-install-recommends \
         postfix postfix-sqlite \
         dovecot-core dovecot-imapd dovecot-sqlite \
-        opendkim opendkim-tools && \
+        opendkim opendkim-tools \
+        fail2ban iptables \
+        composer && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # --- Go toolchain ---
