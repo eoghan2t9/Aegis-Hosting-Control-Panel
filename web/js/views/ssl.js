@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, statusTag, fmtAgo, fmtDate, pageHead, loading } from "../ui.js";
 
@@ -55,8 +55,7 @@ addRoute("/ssl", {
       try {
         const order = await api.post(kind === "self" ? "/ssl/self-signed" : "/ssl/issue", { domain_id: +domainId, challenge });
         toast(order.status === "issued" ? "Certificate issued" : "Certificate order " + order.status);
-        location.hash = "#/ssl";
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
       if (btn) btn.classList.remove("btn-busy");
     };

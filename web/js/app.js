@@ -180,6 +180,11 @@ async function navigate(hash) {
 
 window.addEventListener("hashchange", () => navigate(location.hash));
 
+// Re-render the current view in place (re-fetches its data) without a full
+// browser reload — the live-update path every view's mutation handlers use
+// instead of location.reload().
+export function refresh() { return navigate(location.hash); }
+
 /* Poll the server pill + keep overview cached for dashboard reuse. */
 export const overviewCache = { data: null, at: 0 };
 async function startPoller() {

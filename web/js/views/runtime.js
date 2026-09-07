@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, confirmDialog, statusTag, fmtPct, pageHead, loading, fmtDate } from "../ui.js";
 
@@ -67,7 +67,7 @@ addRoute("/runtime", {
           const target = b.dataset.ws;
           if (target === ws.active) return;
           if (!await confirmDialog(`Set the active web server to ${target}?`, { title: "Switch web server", okText: "Switch" })) return;
-          try { await api.patch("/webserver", { server: target }); toast("Active web server: " + target); location.reload(); }
+          try { await api.patch("/webserver", { server: target }); toast("Active web server: " + target); refresh(); }
           catch (ex) { toast(ex.message, "err"); }
         };
       });

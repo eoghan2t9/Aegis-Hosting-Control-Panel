@@ -1,4 +1,4 @@
-import { addRoute } from "../app.js";
+import { addRoute, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, statusTag, pageHead, loading, modal, fmtAgo } from "../ui.js";
 
@@ -61,7 +61,7 @@ addRoute("/mail", {
         try {
           await api.post("/mail/domains", { domain_id: domainID });
           toast("Mail enabled — check the DNS tab for the published SPF/DKIM/DMARC records");
-          location.reload();
+          refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
     });
@@ -82,7 +82,7 @@ addRoute("/mail", {
       });
       card.querySelector(".act-disable").addEventListener("click", async () => {
         if (!await confirmDialog(`Disable mail for ${md.domain}? All mailboxes and aliases are removed.`, { danger: true, title: "Disable mail" })) return;
-        try { await api.del(`/mail/domains/${md.id}`); toast("Mail disabled"); location.reload(); }
+        try { await api.del(`/mail/domains/${md.id}`); toast("Mail disabled"); refresh(); }
         catch (ex) { toast(ex.message, "err"); }
       });
       card.querySelector(".act-new-box").addEventListener("click", async () => {
@@ -94,7 +94,7 @@ addRoute("/mail", {
         try {
           await api.post(`/mail/domains/${md.id}/mailboxes`, { localpart: vals.localpart, password: vals.password, quota_bytes: 0 });
           toast("Mailbox created");
-          location.reload();
+          refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
       card.querySelector(".act-new-alias").addEventListener("click", async () => {
@@ -106,7 +106,7 @@ addRoute("/mail", {
         try {
           await api.post(`/mail/domains/${md.id}/aliases`, vals);
           toast("Alias created");
-          location.reload();
+          refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
     }
@@ -143,12 +143,12 @@ async function loadBoxes(card, md) {
       catch (ex) { toast(ex.message, "err"); }
     });
     tr.querySelector(".act-tog").addEventListener("click", async () => {
-      try { await api.post(`/mail/mailboxes/${box.id}/toggle`, { enabled: !box.enabled }); location.reload(); }
+      try { await api.post(`/mail/mailboxes/${box.id}/toggle`, { enabled: !box.enabled }); refresh(); }
       catch (ex) { toast(ex.message, "err"); }
     });
     tr.querySelector(".act-del").addEventListener("click", async () => {
       if (!await confirmDialog(`Delete mailbox ${box.localpart}@${md.domain}?`, { danger: true, title: "Delete mailbox" })) return;
-      try { await api.del(`/mail/mailboxes/${box.id}`); toast("Mailbox deleted"); location.reload(); }
+      try { await api.del(`/mail/mailboxes/${box.id}`); toast("Mailbox deleted"); refresh(); }
       catch (ex) { toast(ex.message, "err"); }
     });
   });
@@ -172,7 +172,7 @@ async function loadAliases(card, md) {
     const id = +tr.dataset.id;
     tr.querySelector(".act-del").addEventListener("click", async () => {
       if (!await confirmDialog("Delete this alias?", { danger: true, title: "Delete alias" })) return;
-      try { await api.del(`/mail/aliases/${id}`); toast("Alias deleted"); location.reload(); }
+      try { await api.del(`/mail/aliases/${id}`); toast("Alias deleted"); refresh(); }
       catch (ex) { toast(ex.message, "err"); }
     });
   });

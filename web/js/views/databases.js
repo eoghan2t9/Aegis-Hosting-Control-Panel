@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, refresh } from "../app.js";
 import { api, qs } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, statusTag, pageHead, loading, fmtAgo, modal } from "../ui.js";
 
@@ -45,7 +45,7 @@ addRoute("/databases", {
       tr.querySelector(".act-dump")?.addEventListener("click", () => { location.href = "/api/databases/" + row.id + "/dump"; });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         if (!await confirmDialog(`Drop database ${row.name} on ${row.server}? This deletes the data.`, { danger: true, title: "Drop database", okText: "Drop" })) return;
-        try { await api.del("/databases/" + row.id); toast("Database dropped"); location.reload(); }
+        try { await api.del("/databases/" + row.id); toast("Database dropped"); refresh(); }
         catch (ex) { toast(ex.message, "err"); }
       });
     });
@@ -63,7 +63,7 @@ addRoute("/databases", {
         const row = await api.post("/databases", vals);
         toast("Database created");
         credsModal(row, "just created");
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };
   },

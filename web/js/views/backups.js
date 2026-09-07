@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, refresh } from "../app.js";
 import { api, qs } from "../api.js";
 import { icon, esc, toast, confirmDialog, promptDialog, fmtBytes, fmtAgo, pageHead, loading } from "../ui.js";
 
@@ -41,7 +41,7 @@ addRoute("/backups", {
       });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         if (!await confirmDialog(`Delete archive ${name}?`, { danger: true, title: "Delete backup" })) return;
-        try { await api.del("/backups" + qs({ name })); toast("Backup deleted"); location.reload(); } catch (ex) { toast(ex.message, "err"); }
+        try { await api.del("/backups" + qs({ name })); toast("Backup deleted"); refresh(); } catch (ex) { toast(ex.message, "err"); }
       });
     });
 
@@ -51,7 +51,7 @@ addRoute("/backups", {
       try {
         const info = await api.post("/backups", { scope: "full" });
         toast("Backup created: " + info.name);
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };
     document.getElementById("btn-user").onclick = async () => {
@@ -65,7 +65,7 @@ addRoute("/backups", {
       try {
         const info = await api.post("/backups", { scope: "user", user_id: +vals.user_id });
         toast("Backup created: " + info.name);
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };
   },

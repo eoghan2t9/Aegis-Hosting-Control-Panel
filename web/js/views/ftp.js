@@ -1,4 +1,4 @@
-import { addRoute, me } from "../app.js";
+import { addRoute, me, refresh } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, statusTag, pageHead, loading, modal, fmtAgo } from "../ui.js";
 
@@ -59,12 +59,12 @@ addRoute("/ftp", {
         try {
           await api.post(`/ftp/accounts/${acct.id}/toggle`, { enabled: !acct.enabled });
           toast(acct.enabled ? "Account disabled" : "Account enabled");
-          location.reload();
+          refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         if (!await confirmDialog(`Delete FTP account ${acct.username}?`, { danger: true, title: "Delete FTP account" })) return;
-        try { await api.del(`/ftp/accounts/${acct.id}`); toast("Account deleted"); location.reload(); }
+        try { await api.del(`/ftp/accounts/${acct.id}`); toast("Account deleted"); refresh(); }
         catch (ex) { toast(ex.message, "err"); }
       });
     });
@@ -78,7 +78,7 @@ addRoute("/ftp", {
       try {
         await api.post("/ftp/accounts", vals);
         toast("FTP account created");
-        location.reload();
+        refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };
   },
