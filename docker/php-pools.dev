@@ -1,0 +1,23 @@
+#!/bin/bash
+# Start one php-fpm master per installed version so the panel can create
+# pools for any version immediately during development.
+set -e
+pids=()
+for conf in /etc/php/*/fpm/php-fpm.conf; do
+  ver=$(basename "$(dirname "$(dirname "$conf")")")
+  bin=/usr/sbin/php-fpm$ver
+  if [ -x "$bin" ]; then
+    "$bin" --nodaemonize --fpm-config "$conf" &
+    pids+=($!)
+  fi
+done
+# Restart any fpm that dies, keeping the dev stack alive.
+while true; do
+  for i in "${!pids[@]}"; do
+    if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+      ver=""
+      exit 0
+    fi
+  done
+  sleep 3
+done
