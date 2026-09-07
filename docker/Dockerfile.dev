@@ -54,6 +54,18 @@ RUN apt-get install -y --no-install-recommends \
         net-tools iproute2 procps sudo nano && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Mail stack: Postfix (virtual mailboxes over its own sqlite maps) + Dovecot
+# (IMAP, passdb/userdb against the same maps) + OpenDKIM (signing). Debian's
+# postfix package prompts interactively unless preseeded; "No configuration"
+# skips its own config wizard since docker/entrypoint.sh writes main.cf itself.
+RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-set-selections && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        postfix postfix-sqlite \
+        dovecot-core dovecot-imapd dovecot-sqlite \
+        opendkim opendkim-tools && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # --- Go toolchain ---
 # Best-effort download; docker-compose.yml bind-mounts the host toolchain to
 # /usr/local/go in dev (see the `optional` volume), which also covers networks
@@ -77,7 +89,10 @@ COPY docker/php-pools.dev /usr/local/share/aegis/php-pools.dev
 RUN chmod +x /usr/local/bin/aegis-entrypoint
 
 # Supervisor runs the long-lived services; entrypoint wires credentials first.
-EXPOSE 80 443 8080 8081 3306 5432 21 40000-40100 53/udp
+# SMTP/IMAP (25, 143) are intentionally not published to the host: only the
+# panel itself (same container, loopback) talks to Postfix/Dovecot — browsers
+# only ever reach the webmail REST API on 8080.
+EXPOSE 80 443 8080 8081 3306 5432 21 40000-40100 53/udp 25 143
 
 ENTRYPOINT ["/usr/local/bin/aegis-entrypoint"]
 CMD ["dev"]
