@@ -168,6 +168,15 @@ type AuditEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// LoginAttempt is one row of the login-throttling log.
+type LoginAttempt struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	IP        string    `json:"ip"`
+	Success   bool      `json:"success"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // APIToken is a scoped, expiring credential for scripting against the panel.
 // Only its bcrypt hash is stored; the raw token is shown once at creation.
 type APIToken struct {
