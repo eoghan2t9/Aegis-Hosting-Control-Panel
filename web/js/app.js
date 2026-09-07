@@ -215,6 +215,7 @@ Promise.all([
   import("./views/dns.js"),
   import("./views/ssl.js"),
   import("./views/ftp.js"),
+  import("./views/cron.js"),
   import("./views/databases.js"),
   import("./views/files.js"),
   import("./views/accounts.js"),
