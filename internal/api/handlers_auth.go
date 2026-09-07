@@ -22,10 +22,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
-	user, token, err := s.Auth.Login(r.Context(), req.Username, req.Password)
+	user, token, err := s.Auth.Login(r.Context(), req.Username, req.Password, clientIP(r))
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			writeErr(w, http.StatusUnauthorized, "invalid username or password")
+			return
+		}
+		if errors.Is(err, auth.ErrLockedOut) {
+			writeErr(w, http.StatusTooManyRequests, err.Error())
 			return
 		}
 		writeErr(w, http.StatusForbidden, err.Error())

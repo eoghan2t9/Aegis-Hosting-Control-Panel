@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -26,6 +27,12 @@ var (
 	ErrInvalidToken       = errors.New("invalid or expired token")
 	ErrSuspended          = errors.New("account is suspended")
 	ErrForbidden          = errors.New("forbidden")
+	ErrLockedOut          = errors.New("too many failed attempts — try again in a few minutes")
+)
+
+const (
+	lockoutThreshold = 5
+	lockoutWindow    = 15 * time.Minute
 )
 
 // Claims is the JWT payload.
@@ -73,20 +80,29 @@ func (m *Manager) HashPassword(password string) (string, error) {
 
 // Login authenticates a username/password pair, creates a session and returns
 // the user plus a signed token.
-func (m *Manager) Login(ctx context.Context, username, password string) (*store.User, string, error) {
+func (m *Manager) Login(ctx context.Context, username, password, ip string) (*store.User, string, error) {
+	if n, err := m.store.CountRecentFailures(ctx, username, ip, time.Now().Add(-lockoutWindow)); err == nil && n >= lockoutThreshold {
+		return nil, "", ErrLockedOut
+	}
 	u, err := m.store.GetUserByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
+			_ = m.store.RecordLoginAttempt(ctx, username, ip, false)
+			logFailedAttempt(username, ip)
 			return nil, "", ErrInvalidCredentials
 		}
 		return nil, "", err
 	}
 	if !CheckPassword(u.PasswordHash, password) {
+		_ = m.store.RecordLoginAttempt(ctx, username, ip, false)
+		logFailedAttempt(username, ip)
 		return nil, "", ErrInvalidCredentials
 	}
 	if u.Status == store.StatusSuspended {
+		_ = m.store.RecordLoginAttempt(ctx, username, ip, false)
 		return nil, "", ErrSuspended
 	}
+	_ = m.store.RecordLoginAttempt(ctx, username, ip, true)
 	sid, err := newSessionID()
 	if err != nil {
 		return nil, "", err
@@ -155,6 +171,20 @@ func (m *Manager) Unimpersonate(ctx context.Context, token string) (string, erro
 		return "", err
 	}
 	return m.mint(admin, sid, 0)
+}
+
+// authLogPath is a plain-text log of failed logins, in a fixed format a
+// fail2ban filter can regex against — deliberately separate from the audit
+// log (structured, DB-backed, not filesystem-tailable by an external tool).
+const authLogPath = "/var/log/aegis-auth.log"
+
+func logFailedAttempt(username, ip string) {
+	f, err := os.OpenFile(authLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return // best-effort: fail2ban integration is optional, login throttling above doesn't depend on this
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s aegis: authentication failure for %s from %s\n", time.Now().UTC().Format(time.RFC3339), username, ip)
 }
 
 func (m *Manager) mint(u *store.User, sessionID string, impersonator int64) (string, error) {
