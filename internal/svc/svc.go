@@ -62,12 +62,21 @@ func ServiceRunning(service string) bool {
 	if out == "active" {
 		return true
 	}
-	// Fallback: check pidfiles via pgrep.
-	if LookPath("pgrep") {
-		out, _ := Exec(ctx, "pgrep", "-f", service)
-		return strings.TrimSpace(out) != ""
+	// Fallback: check pidfiles via pgrep (containers / non-systemd hosts).
+	return ProcessRunning(service)
+}
+
+// ProcessRunning reports whether any process cmdline matches the (regexp)
+// pattern, e.g. "php-fpm: master process \(/etc/php/8.4/" for a versioned
+// php-fpm master. Used where systemd is absent (containers, chroots).
+func ProcessRunning(pattern string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if !LookPath("pgrep") {
+		return false
 	}
-	return false
+	out, _ := Exec(ctx, "pgrep", "-f", pattern)
+	return strings.TrimSpace(out) != ""
 }
 
 // RandomString returns a URL-safe random string of n bytes (entropy 8n bits).
