@@ -168,6 +168,41 @@ type AuditEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// MailDomain marks a domain as mail-enabled: Postfix/Dovecot serve virtual
+// mailboxes for it, and it has a DKIM signing key.
+type MailDomain struct {
+	ID            int64     `json:"id"`
+	DomainID      int64     `json:"domain_id"`
+	Domain        string    `json:"domain"`
+	DKIMSelector  string    `json:"dkim_selector"`
+	DKIMPublicKey string    `json:"dkim_public_key"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// Mailbox is a virtual mailbox: not a system user, served by Postfix/Dovecot
+// querying this row directly (via their own sqlite maps against this DB).
+type Mailbox struct {
+	ID           int64     `json:"id"`
+	MailDomainID int64     `json:"mail_domain_id"`
+	Domain       string    `json:"domain,omitempty"`
+	Localpart    string    `json:"localpart"`
+	PasswordHash string    `json:"-"`
+	QuotaBytes   int64     `json:"quota_bytes"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// MailAlias forwards mail for source (a localpart) to destination (a full
+// address), within one mail domain.
+type MailAlias struct {
+	ID           int64     `json:"id"`
+	MailDomainID int64     `json:"mail_domain_id"`
+	Domain       string    `json:"domain,omitempty"`
+	Source       string    `json:"source"`
+	Destination  string    `json:"destination"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 // CronJob is a scheduled command run under a panel user's own system account
 // via the real crontab (crontab -u <username>), not an in-process scheduler.
 type CronJob struct {
