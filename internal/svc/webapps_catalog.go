@@ -21,9 +21,11 @@ const (
 // AppManifest is one catalog entry — the "plugin" extension point. Adding a
 // new app means adding an entry here, not touching InstallApp.
 type AppManifest struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Category string `json:"category"` // cms | forum | wiki | ecommerce | tools | framework
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Category    string `json:"category"` // cms | forum | wiki | ecommerce | tools | framework
+	Description string `json:"description"`
+	Vendor      string `json:"vendor"`
 
 	Strategy        InstallStrategy `json:"strategy"`
 	DownloadURL     string          `json:"-"` // tarball strategy, internal
@@ -51,17 +53,20 @@ type AppManifest struct {
 var Catalog = []AppManifest{
 	{
 		ID: "wordpress", Name: "WordPress", Category: "cms",
+		Description: "The world's most popular CMS — blogs, business sites, and everything in between.", Vendor: "WordPress Foundation",
 		Strategy: StrategyTarball, DownloadURL: "https://wordpress.org/latest.tar.gz", ExtractSubdir: "wordpress",
 		NeedsDatabase: true, DBEngine: "mariadb",
 		Install: installWordPress,
 	},
 	{
 		ID: "laravel", Name: "Laravel", Category: "framework",
+		Description: "A PHP framework for building modern web applications with elegant syntax.", Vendor: "Laravel LLC",
 		Strategy: StrategyComposer, ComposerPackage: "laravel/laravel",
 		PublicSubdir: "public",
 	},
 	{
 		ID: "drupal", Name: "Drupal", Category: "cms",
+		Description: "An enterprise-grade CMS for complex, highly-structured content sites.", Vendor: "Drupal Association",
 		Strategy: StrategyComposer, ComposerPackage: "drupal/recommended-project",
 		PublicSubdir:  "web",
 		NeedsDatabase: true, DBEngine: "mariadb",
@@ -69,40 +74,47 @@ var Catalog = []AppManifest{
 	},
 	{
 		ID: "grav", Name: "Grav", Category: "cms",
+		Description: "A fast, flat-file CMS — no database required.", Vendor: "Trilby Media",
 		Strategy: StrategyTarball, DownloadURL: "https://getgrav.org/download/core/grav-admin/latest", ExtractSubdir: "*",
 	},
 	{
 		ID: "phpbb", Name: "phpBB", Category: "forum",
+		Description: "A widely-used, fully featured discussion board.", Vendor: "phpBB Group",
 		Strategy: StrategyTarball, DownloadURL: "https://download.phpbb.com/pub/release/3.3/3.3.15/phpBB-3.3.15.zip", ExtractSubdir: "phpBB3",
 		NeedsDatabase: true, DBEngine: "mariadb",
 		Install: installPhpBB,
 	},
 	{
 		ID: "mediawiki", Name: "MediaWiki", Category: "wiki",
+		Description: "The software that powers Wikipedia — collaborative wikis at any scale.", Vendor: "Wikimedia Foundation",
 		Strategy: StrategyTarball, DownloadURL: "https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.1.tar.gz", ExtractSubdir: "*",
 		NeedsDatabase: true, DBEngine: "mariadb",
 		Install: installMediaWiki,
 	},
 	{
 		ID: "nextcloud", Name: "Nextcloud", Category: "tools",
+		Description: "Self-hosted file sync, share, and collaboration — your own private cloud.", Vendor: "Nextcloud GmbH",
 		Strategy: StrategyTarball, DownloadURL: "https://download.nextcloud.com/server/releases/latest.tar.bz2", ExtractSubdir: "nextcloud",
 		NeedsDatabase: true, DBEngine: "mariadb",
 		Install: installNextcloud,
 	},
 	{
 		ID: "matomo", Name: "Matomo", Category: "tools",
+		Description: "Privacy-friendly web analytics — a self-hosted alternative to Google Analytics.", Vendor: "Matomo",
 		Strategy: StrategyTarball, DownloadURL: "https://builds.matomo.org/matomo-latest.tar.gz", ExtractSubdir: "matomo",
 		NeedsDatabase: true, DBEngine: "mariadb",
 		ConfigFile: matomoConfig,
 	},
 	{
 		ID: "phpmyadmin", Name: "phpMyAdmin", Category: "tools",
+		Description: "A web UI for administering MySQL/MariaDB databases.", Vendor: "phpMyAdmin devel team",
 		Strategy: StrategyTarball, DownloadURL: "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz", ExtractSubdir: "*",
 		NeedsDatabase: false,
 		ConfigFile:    phpMyAdminConfig,
 	},
 	{
 		ID: "craftcms", Name: "Craft CMS", Category: "cms",
+		Description: "A content-first CMS built for designers and developers who like flexibility.", Vendor: "Pixel & Tonic",
 		Strategy: StrategyComposer, ComposerPackage: "craftcms/craft",
 		PublicSubdir:  "web",
 		NeedsDatabase: true, DBEngine: "mariadb",
@@ -110,6 +122,7 @@ var Catalog = []AppManifest{
 	},
 	{
 		ID: "flarum", Name: "Flarum", Category: "forum",
+		Description: "A modern, fast forum platform, simple by default and powerful with extensions.", Vendor: "Flarum",
 		Strategy: StrategyComposer, ComposerPackage: "flarum/flarum",
 		PublicSubdir:  "public",
 		NeedsDatabase: true, DBEngine: "mariadb",
@@ -118,6 +131,7 @@ var Catalog = []AppManifest{
 	},
 	{
 		ID: "prestashop", Name: "PrestaShop", Category: "ecommerce",
+		Description: "A full-featured open-source online store platform.", Vendor: "PrestaShop SA",
 		Strategy: StrategyTarball, DownloadURL: "https://github.com/PrestaShop/PrestaShop/releases/download/8.1.7/prestashop_8.1.7.zip", ExtractSubdir: "",
 		NeedsDatabase: true, DBEngine: "mariadb",
 		Install: installPrestaShop,
