@@ -2,6 +2,10 @@ package api
 
 import "net/http"
 
+func (s *Server) handleDistroInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Packages.DistroInfo(r.Context()))
+}
+
 func (s *Server) handleUpdatesList(w http.ResponseWriter, r *http.Request) {
 	updates, err := s.Packages.ListCached(r.Context())
 	if err != nil {
