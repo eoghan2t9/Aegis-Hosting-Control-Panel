@@ -3,10 +3,16 @@ package api
 import (
 	"net/http"
 	"strings"
+
+	"aegis/internal/svc"
 )
 
+func (s *Server) handleWebAppsCatalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, svc.Catalog)
+}
+
 type installReq struct {
-	App string `json:"app"` // wordpress | laravel
+	App string `json:"app"` // catalog app id, e.g. "wordpress"
 }
 
 func (s *Server) handleDomainInstall(w http.ResponseWriter, r *http.Request) {
@@ -28,24 +34,17 @@ func (s *Server) handleDomainInstall(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if _, ok := svc.FindApp(req.App); !ok {
+		writeErr(w, http.StatusBadRequest, "unknown app")
+		return
+	}
 	owner, err := s.Store.GetUserByID(r.Context(), dom.UserID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "domain owner not found")
 		return
 	}
-	switch req.App {
-	case "wordpress":
-		if err := s.WebApps.InstallWordPress(r.Context(), dom, owner); err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
-			return
-		}
-	case "laravel":
-		if err := s.WebApps.InstallLaravel(r.Context(), dom, owner); err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
-			return
-		}
-	default:
-		writeErr(w, http.StatusBadRequest, "app must be 'wordpress' or 'laravel'")
+	if err := s.WebApps.InstallApp(r.Context(), req.App, dom, owner); err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	s.audit(r, "domain.install", dom.Domain, req.App)

@@ -135,14 +135,12 @@ function openDetail(id, onChanged) {
         <div style="height:16px"></div>
         <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Web app installer</b>
         <div id="dd-apps" style="margin-top:8px;display:flex;gap:8px;align-items:center">
-          <button class="btn btn-sm" id="dd-install-wp">Install WordPress</button>
-          <button class="btn btn-sm" id="dd-install-laravel">Install Laravel</button>
+          <button class="btn btn-sm" id="dd-install">${icon("plus")} Install an app…</button>
           <button class="btn btn-sm" id="dd-wpcli">Run WP-CLI command</button>
         </div>
         <div style="height:16px"></div>
         ${sslBlock(dom, id)}`;
-      document.getElementById("dd-install-wp").onclick = () => installApp(dom, id, "wordpress", m);
-      document.getElementById("dd-install-laravel").onclick = () => installApp(dom, id, "laravel", m);
+      document.getElementById("dd-install").onclick = () => appPickerDialog(dom, id, m);
       document.getElementById("dd-wpcli").onclick = () => wpCliDialog(id);
       document.getElementById("dd-apply-php").onclick = async () => {
         const ver = document.getElementById("dd-php").value;
@@ -167,15 +165,38 @@ function openDetail(id, onChanged) {
   }).catch((ex) => toast(ex.message, "err"));
 }
 
-async function installApp(dom, id, app, m) {
-  const label = app === "wordpress" ? "WordPress" : "Laravel";
-  if (!await confirmDialog(`Install ${label} into ${dom.document_root}? The document root must be empty.`, { title: "Install " + label, okText: "Install" })) return;
-  try {
-    toast(`Installing ${label}… this can take a minute`);
-    await api.post(`/domains/${id}/install`, { app });
-    toast(`${label} installed`);
-    m.close();
-  } catch (ex) { toast(ex.message, "err"); }
+const CATEGORY_LABELS = { cms: "CMS", forum: "Forums", wiki: "Wikis", tools: "Tools", ecommerce: "E-commerce", framework: "Frameworks" };
+
+async function appPickerDialog(dom, id, parentModal) {
+  let apps;
+  try { apps = await api.get("/webapps/catalog"); }
+  catch (ex) { toast(ex.message, "err"); return; }
+  const byCategory = {};
+  for (const a of apps) (byCategory[a.category] ||= []).push(a);
+
+  const body = document.createElement("div");
+  body.innerHTML = Object.entries(byCategory).map(([cat, list]) => `
+    <div style="margin-bottom:14px">
+      <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">${esc(CATEGORY_LABELS[cat] || cat)}</b>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+        ${list.map((a) => `<button class="btn btn-sm app-pick" data-id="${esc(a.id)}">${esc(a.name)}</button>`).join("")}
+      </div>
+    </div>`).join("");
+  const pm = modal({ title: "Install an app", wide: true, body, actions: [mkAction("Cancel", "btn")] });
+  body.querySelectorAll(".app-pick").forEach((btn) => {
+    btn.onclick = async () => {
+      const appId = btn.dataset.id;
+      const name = btn.textContent;
+      pm.close();
+      if (!await confirmDialog(`Install ${name} into ${dom.document_root}? The document root must be empty (aside from the default placeholder page). This can take a minute or two.`, { title: "Install " + name, okText: "Install" })) return;
+      try {
+        toast(`Installing ${name}… this can take a minute`);
+        await api.post(`/domains/${id}/install`, { app: appId });
+        toast(`${name} installed — check .aegis-credentials.txt in the document root for the admin login, if one was created`);
+        parentModal.close();
+      } catch (ex) { toast(ex.message, "err"); }
+    };
+  });
 }
 
 async function wpCliDialog(id) {
