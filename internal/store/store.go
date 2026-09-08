@@ -244,6 +244,14 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 	enabled INTEGER NOT NULL DEFAULT 1,
 	created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS system_package_updates (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	current_version TEXT NOT NULL,
+	new_version TEXT NOT NULL,
+	is_security INTEGER NOT NULL DEFAULT 0,
+	checked_at TEXT NOT NULL
+);
 `
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

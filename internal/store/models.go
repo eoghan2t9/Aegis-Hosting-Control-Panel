@@ -258,6 +258,18 @@ type CronJob struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// PackageUpdate is one outdated OS package, as of the last check-updates
+// run. The table is cleared and repopulated on every run rather than
+// diffed, so it always reflects exactly the latest check.
+type PackageUpdate struct {
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	CurrentVersion string    `json:"current_version"`
+	NewVersion     string    `json:"new_version"`
+	Security       bool      `json:"security"`
+	CheckedAt      time.Time `json:"checked_at"`
+}
+
 // Session is an active login session (revocable).
 type Session struct {
 	ID        string    `json:"id"`

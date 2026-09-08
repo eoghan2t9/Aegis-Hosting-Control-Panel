@@ -77,6 +77,7 @@ async function enterApp() {
   document.getElementById("screen-app").classList.remove("hidden");
   buildShell();
   startPoller();
+  if (isAdmin()) startUpdateBadgePoller();
   navigate(location.hash || "#/dashboard");
 }
 
@@ -133,7 +134,7 @@ function buildShell() {
     a.className = "nav-link";
     a.href = "#" + path;
     a.dataset.route = path;
-    a.innerHTML = `${icon(def.icon)}<span>${esc(def.title)}</span>`;
+    a.innerHTML = `${icon(def.icon)}<span>${esc(def.title)}</span>${path === "/updates" ? '<span class="nav-badge hidden" id="nav-badge-updates"></span>' : ""}`;
     groups[g].links.push(a);
   }
   for (const g of Object.values(groups)) {
@@ -214,6 +215,24 @@ async function startPoller() {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) debounced(); });
 }
 
+/* Poll the cached (not live-checked) update count for the sidebar badge. */
+function startUpdateBadgePoller() {
+  const tick = async () => {
+    const badge = document.getElementById("nav-badge-updates");
+    if (!badge) return; // route filtered out (shouldn't happen for an admin, but be defensive)
+    try {
+      const data = await api.get("/system/updates");
+      const n = (data.updates || []).length;
+      badge.textContent = n > 0 ? String(n) : "";
+      badge.classList.toggle("hidden", n === 0);
+    } catch {
+      // Quiet failure — this is a passive background indicator, not worth a toast.
+    }
+  };
+  tick();
+  setInterval(tick, 5 * 60 * 1000);
+}
+
 // Import views (side effects register routes). Not awaited at top level:
 // each view imports addRoute/isAdmin/me back from this module, and a
 // top-level await here would deadlock that cycle (this module can't finish
@@ -236,6 +255,7 @@ Promise.all([
   import("./views/accounts.js"),
   import("./views/backups.js"),
   import("./views/system.js"),
+  import("./views/updates.js"),
   import("./views/terminal.js"),
   import("./views/runtime.js"),
 ]).then(boot);
