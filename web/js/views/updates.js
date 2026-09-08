@@ -1,6 +1,6 @@
 import { addRoute } from "../app.js";
 import { api } from "../api.js";
-import { icon, esc, toast, confirmDialog, pageHead, loading, fmtAgo } from "../ui.js";
+import { icon, esc, toast, confirmDialog, pageHead, loading, fmtAgo, modal } from "../ui.js";
 
 addRoute("/updates", {
   title: "Updates",
@@ -121,15 +121,57 @@ addRoute("/updates", {
 
     document.getElementById("btn-check").onclick = async (e) => {
       const btn = e.currentTarget;
-      btn.classList.add("btn-busy");
+      btn.disabled = true;
+      await runCheckDialog();
+      btn.disabled = false;
+    };
+
+    async function runCheckDialog() {
+      const steps = [
+        { id: "pkg", label: "Refreshing package index and checking for updates" },
+        { id: "distro", label: "Checking distro release version" },
+      ];
+      const body = document.createElement("div");
+      body.innerHTML = steps.map((s) => `
+        <div id="cd-${s.id}" style="display:flex;align-items:center;gap:10px;padding:8px 0">
+          <span class="cd-icon" style="flex-shrink:0;width:15px">${loading()}</span>
+          <span class="cd-text small">${esc(s.label)}</span>
+        </div>`).join("");
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "btn";
+      closeBtn.textContent = "Close";
+      closeBtn.disabled = true;
+      const dm = modal({ title: "Checking for updates", body, actions: [closeBtn] });
+      closeBtn.onclick = () => dm.close();
+
+      const setStep = (id, state, text) => {
+        const row = document.getElementById(`cd-${id}`);
+        if (!row) return;
+        row.querySelector(".cd-icon").innerHTML = state === "done" ? icon("check")
+          : state === "error" ? icon("x") : loading();
+        if (text) row.querySelector(".cd-text").textContent = text;
+      };
+
+      let updateCount = null;
       try {
         const data = await api.post("/system/updates/check");
-        toast((data.updates || []).length ? `${data.updates.length} update(s) available` : "Everything is up to date");
+        updateCount = (data.updates || []).length;
+        setStep("pkg", "done", updateCount ? `${updateCount} update(s) available` : "Everything is up to date");
         renderUpdates(data);
-      } catch (ex) { toast(ex.message, "err"); }
-      loadDistro();
-      btn.classList.remove("btn-busy");
-    };
+      } catch (ex) {
+        setStep("pkg", "error", ex.message);
+      }
+
+      // loadDistro reports its own failures inline in the distro card, so
+      // this step just tracks "ran", not "succeeded".
+      await loadDistro();
+      setStep("distro", "done", "Distro release check complete");
+
+      closeBtn.disabled = false;
+      closeBtn.classList.add("btn-primary");
+      closeBtn.textContent = "Done";
+      if (updateCount !== null) toast(updateCount ? `${updateCount} update(s) available` : "Everything is up to date");
+    }
 
     // Package search / install.
     const resultsBox = document.getElementById("search-results");
