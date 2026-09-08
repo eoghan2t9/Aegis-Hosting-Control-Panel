@@ -96,6 +96,17 @@ export function statusTag(status) {
 export function h(html) {
   const t = document.createElement("template");
   t.innerHTML = html.trim();
+  // A template with more than one top-level element would otherwise
+  // silently drop everything after the first — every real call site here
+  // is single-root, but a multi-root string (e.g. a modal body built from
+  // several concatenated blocks) needs a wrapper or its later content is
+  // lost with no error. This has been a recurring bug, so guard it here
+  // instead of relying on every call site remembering to wrap.
+  if (t.content.children.length > 1) {
+    const wrap = document.createElement("div");
+    wrap.append(...t.content.childNodes);
+    return wrap;
+  }
   return t.content.firstElementChild;
 }
 export function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }

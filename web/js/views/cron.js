@@ -68,14 +68,23 @@ addRoute("/cron", {
       const job = jobs.find((j) => j.id === id);
       if (!job) return;
       tr.querySelector(".act-log")?.addEventListener("click", async () => {
-        let log = "";
-        try { ({ log } = await api.get(`/cron/jobs/${job.id}/log`)); }
+        let res;
+        try { res = await api.get(`/cron/jobs/${job.id}/log`); }
         catch (ex) { toast(ex.message, "err"); return; }
+        let bodyHTML;
+        if (!res.has_run) {
+          bodyHTML = `<div><p class="small dim" style="margin:0">This job hasn't run yet — nothing has fired on schedule <span class="mono">${esc(job.schedule)}</span> since it was created${job.enabled ? "" : ", and it's currently disabled"}.</p></div>`;
+        } else {
+          bodyHTML = `<div>
+            <p class="small dim" style="margin:0 0 8px">Last wrote to its log ${fmtAgo(res.updated_at)}.</p>
+            <pre class="mono small" style="max-height:60vh;overflow:auto;white-space:pre-wrap">${res.log ? esc(res.log) : "(ran, but produced no output)"}</pre>
+          </div>`;
+        }
         const close = btn("Close");
         const lm = modal({
           title: `Log — ${job.schedule}`,
           wide: true,
-          body: `<pre class="mono small" style="max-height:60vh;overflow:auto;white-space:pre-wrap">${esc(log || "(no output yet)")}</pre>`,
+          body: bodyHTML,
           actions: [close],
         });
         close.onclick = () => lm.close();

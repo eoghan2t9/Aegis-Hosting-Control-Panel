@@ -136,10 +136,14 @@ func (s *Server) handleCronLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "job not found")
 		return
 	}
-	log, err := s.Cron.TailLog(job)
+	res, err := s.Cron.TailLog(job)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"log": log})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"log":        res.Log,
+		"has_run":    res.HasRun,
+		"updated_at": res.UpdatedAt,
+	})
 }

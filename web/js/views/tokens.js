@@ -53,8 +53,10 @@ addRoute("/tokens", {
         const m = modal({
           title: "Copy your token now",
           wide: true,
-          body: `<p class="small muted">This is shown once. Store it somewhere safe — Aegis only keeps a hash of it.</p>
-            <div class="creds-box mono" style="word-break:break-all;user-select:all">${esc(created.raw)}</div>`,
+          body: `<div>
+            <p class="small muted">This is shown once. Store it somewhere safe — Aegis only keeps a hash of it.</p>
+            <div class="creds-box mono" style="word-break:break-all;user-select:all">${esc(created.raw)}</div>
+          </div>`,
           actions: [done],
           onClose: refresh,
         });
