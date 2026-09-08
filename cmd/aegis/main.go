@@ -257,11 +257,13 @@ func panelHandler(server *api.Server) http.Handler {
 		// SPA: serve index.html for client-side routes.
 		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		isAsset := strings.HasPrefix(p, "css/") || strings.HasPrefix(p, "js/")
-		if isAsset {
-			// CSS/JS change on every deploy but have no cache-busting query
-			// string, so force revalidation instead of letting the browser
-			// serve a stale copy from its heuristic disk cache after an update.
-			w.Header().Set("Cache-Control", "no-cache")
+		// Frontend files have no cache-busting query string, so a plain
+		// no-cache (revalidate-before-use) isn't reliable enough — some
+		// mobile browsers keep serving a stale copy anyway. no-store forbids
+		// caching outright: every load hits the server for these small
+		// files, so a deploy is visible immediately.
+		if isAsset || p == "" || p == "index.html" {
+			w.Header().Set("Cache-Control", "no-store")
 		}
 		if p != "" {
 			if _, err := fs.Stat(assets, p); err != nil && !isAsset {
