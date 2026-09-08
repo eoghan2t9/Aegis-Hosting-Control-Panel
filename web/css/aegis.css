@@ -125,6 +125,10 @@ body {
 .btn:hover { border-color: #3a4a5a; background: var(--bg3); }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+/* Default size for every icon() svg (see web/js/ui.js) — context-specific
+   rules below (.btn svg, .nav-link svg, etc) have higher specificity and
+   still win where a different size is wanted. */
+.ico { width: 15px; height: 15px; flex-shrink: 0; }
 .btn svg { width: 15px; height: 15px; }
 .btn-primary {
   background: var(--accent);
@@ -433,6 +437,7 @@ tr:hover .row-actions, .row-actions:hover { opacity: 1; }
 }
 .toast.err { border-left-color: var(--danger); }
 .toast.warn { border-left-color: var(--warn); }
+.toast svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ---------------------------------------------------------------- modal */
@@ -576,6 +581,7 @@ pre.codeblock {
   .topbar { padding: 10px 14px; }
   .grid-4, .grid-3 { grid-template-columns: 1fr; }
   .toolbar input[type=search] { width: 100%; }
+  .toasts { left: 12px; right: 12px; bottom: 12px; max-width: none; }
 }
 @media (min-width: 861px) {
   .sidebar-backdrop { display: none !important; }
