@@ -9,9 +9,13 @@ addRoute("/updates", {
   order: 2,
   adminOnly: true,
   render: async (view) => {
-    view.innerHTML = pageHead("Updates & packages", "Check for and apply OS package updates, and install new packages — works across apt, dnf/yum, pacman, zypper and apk.", `
+    view.innerHTML = pageHead("Updates & packages", "Check for and apply OS package updates, install new packages, and see if a newer OS release is out — works across apt, dnf/yum, pacman, zypper and apk.", `
       <button class="btn btn-primary" id="btn-check">${icon("refresh")} Check now</button>`);
     view.insertAdjacentHTML("beforeend", `
+      <div class="card" id="distro-card" style="margin-bottom:16px">
+        <div class="card-head"><span class="card-title">Distro version</span></div>
+        <div id="distro-body">${loading()}</div>
+      </div>
       <div class="card" id="updates-card" style="margin-bottom:16px">
         <div class="card-head"><span class="card-title">System updates</span></div>
         <div id="updates-body">${loading()}</div>
@@ -24,6 +28,34 @@ addRoute("/updates", {
         </div>
         <div id="search-results" style="margin-top:14px"></div>
       </div>`);
+
+    const distroBody = document.getElementById("distro-body");
+    async function loadDistro() {
+      distroBody.innerHTML = loading();
+      let d;
+      try {
+        d = await api.get("/system/distro");
+      } catch (ex) {
+        distroBody.innerHTML = `<p class="muted">${esc(ex.message)}</p>`;
+        return;
+      }
+      if (!d.name) {
+        distroBody.innerHTML = `<p class="small dim">Could not read /etc/os-release on this host.</p>`;
+        return;
+      }
+      let statusHTML;
+      if (d.upgrade_available) {
+        statusHTML = `<div style="margin-top:10px;padding:12px 14px;border-radius:var(--radius-sm);background:var(--accent-dim);border:1px solid rgba(198,241,78,.35)">
+          <p style="margin:0"><span class="tag tag-lime">upgrade available</span> ${esc(d.new_version)} is out.</p>
+          <p class="small dim" style="margin:8px 0 0">Run <code class="mono">do-release-upgrade</code> over SSH when you're ready — this can take a while, may need a reboot, and isn't something to trigger from the panel.</p>
+        </div>`;
+      } else if (d.upgrade_supported) {
+        statusHTML = `<p class="small dim" style="margin-top:8px">You're on the latest release for this OS.</p>`;
+      } else {
+        statusHTML = `<p class="small dim" style="margin-top:8px">Automatic release-upgrade checking isn't available for ${esc(d.id || "this distro")} — shown here is just the currently installed version.</p>`;
+      }
+      distroBody.innerHTML = `<p style="margin:0"><b>${esc(d.name)}</b> <span class="small dim mono">${esc(d.version || "")}</span></p>${statusHTML}`;
+    }
 
     const updatesBody = document.getElementById("updates-body");
 
@@ -95,6 +127,7 @@ addRoute("/updates", {
         toast((data.updates || []).length ? `${data.updates.length} update(s) available` : "Everything is up to date");
         renderUpdates(data);
       } catch (ex) { toast(ex.message, "err"); }
+      loadDistro();
       btn.classList.remove("btn-busy");
     };
 
@@ -138,6 +171,7 @@ addRoute("/updates", {
     document.getElementById("btn-search").onclick = runSearch;
     document.getElementById("pkg-q").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
 
+    loadDistro();
     loadUpdates();
   },
 });
