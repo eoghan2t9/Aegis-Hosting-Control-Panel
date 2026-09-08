@@ -43,6 +43,7 @@ type Server struct {
 	Tokens   *svc.APITokens
 	Security *svc.Security
 	Quota    *svc.Quota
+	WebApps  *svc.WebApps
 
 	primaryIPv4 string
 }
@@ -51,11 +52,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -144,6 +145,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/domains/{id}", s.withAuth(s.handleDomainsUpdate))
 	mux.HandleFunc("DELETE /api/domains/{id}", s.withAuth(s.handleDomainsDelete))
 	mux.HandleFunc("POST /api/domains/{id}/apply", s.withAuth(s.handleDomainsApply))
+	mux.HandleFunc("POST /api/domains/{id}/install", s.withAuth(s.handleDomainInstall))
+	mux.HandleFunc("POST /api/domains/{id}/wp-cli", s.withAuth(s.handleDomainWPCLI))
 	mux.HandleFunc("POST /api/domains/{id}/aliases", s.withAuth(s.handleAliasesAdd))
 	mux.HandleFunc("DELETE /api/domains/{id}/aliases/{alias}", s.withAuth(s.handleAliasesRemove))
 

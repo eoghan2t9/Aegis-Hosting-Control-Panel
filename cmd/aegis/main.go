@@ -97,6 +97,7 @@ func run(configPath string) error {
 	tokensSvc := svc.NewAPITokens(st)
 	securitySvc := svc.NewSecurity(cfg, st)
 	quotaSvc := svc.NewQuota(cfg, st)
+	webAppsSvc := svc.NewWebApps(cfg, dbSvc)
 
 	// First-run bootstrap.
 	if err := bootstrap(cfg, st, tuner, webSvc); err != nil {
@@ -104,7 +105,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc)
+		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
