@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 
 	// System updates + package installer (admin) — works across
 	// apt/dnf/yum/pacman/zypper/apk, see internal/svc/packages.go.
+	mux.HandleFunc("GET /api/system/distro", s.withAuth(s.withRole(s.handleDistroInfo, store.RoleAdmin)))
 	mux.HandleFunc("GET /api/system/updates", s.withAuth(s.withRole(s.handleUpdatesList, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/system/updates/check", s.withAuth(s.withRole(s.handleUpdatesCheck, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/system/updates/apply", s.withAuth(s.withRole(s.handleUpdatesApply, store.RoleAdmin)))

@@ -100,31 +100,38 @@ func DetectPkgManager() (PkgManager, error) {
 	return nil, errors.New("no supported package manager found on this host")
 }
 
-// readOSRelease returns the lowercased ID followed by ID_LIKE entries, or
-// nil if /etc/os-release can't be read.
-func readOSRelease() []string {
+// osReleaseFields returns /etc/os-release's raw KEY=VALUE pairs (quotes
+// stripped), or nil if the file can't be read.
+func osReleaseFields() map[string]string {
 	f, err := os.Open("/etc/os-release")
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
-	var id string
-	var like []string
+	out := map[string]string{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		line := sc.Text()
-		switch {
-		case strings.HasPrefix(line, "ID="):
-			id = strings.Trim(strings.TrimPrefix(line, "ID="), `"`)
-		case strings.HasPrefix(line, "ID_LIKE="):
-			like = append(like, strings.Fields(strings.Trim(strings.TrimPrefix(line, "ID_LIKE="), `"`))...)
+		k, v, ok := strings.Cut(sc.Text(), "=")
+		if !ok {
+			continue
 		}
+		out[k] = strings.Trim(v, `"`)
+	}
+	return out
+}
+
+// readOSRelease returns the lowercased ID followed by ID_LIKE entries, or
+// nil if /etc/os-release can't be read.
+func readOSRelease() []string {
+	fields := osReleaseFields()
+	if fields == nil {
+		return nil
 	}
 	var out []string
-	if id != "" {
+	if id := fields["ID"]; id != "" {
 		out = append(out, strings.ToLower(id))
 	}
-	for _, v := range like {
+	for _, v := range strings.Fields(fields["ID_LIKE"]) {
 		out = append(out, strings.ToLower(v))
 	}
 	return out
@@ -156,6 +163,50 @@ func (p *Packages) ManagerName() string {
 		return ""
 	}
 	return p.Mgr.Name()
+}
+
+// DistroInfo is the current OS release plus, where one can be actively and
+// safely checked, whether a newer major release is available.
+type DistroInfo struct {
+	Name             string `json:"name"`  // PRETTY_NAME, e.g. "Ubuntu 22.04.4 LTS"
+	ID               string `json:"id"`    // os-release ID, e.g. "ubuntu"
+	Version          string `json:"version"`
+	UpgradeSupported bool   `json:"upgrade_supported"` // whether an active check ran at all
+	UpgradeAvailable bool   `json:"upgrade_available"`
+	NewVersion       string `json:"new_version"`
+}
+
+// DistroInfo reports the current OS release and, only for Ubuntu, whether a
+// newer one is available — do-release-upgrade -c is the one distro-upgrade
+// tool across every family this session verified is both official and
+// genuinely read-only (verified live: prints "New release 'X' available."
+// or a no-upgrade message, exits either way, downloads/changes nothing).
+// Every other family lacks that: Debian has no equivalent tool at all;
+// Fedora's dnf system-upgrade plugin only offers `download` (which starts
+// pulling the entire upgrade, not a check) with no check-only subcommand
+// (confirmed live); RHEL/Rocky/Alma's path is the multi-stage `leapp`
+// tool, too heavy to invoke blindly; openSUSE's major-version upgrade is a
+// manual repo-swap procedure, not a single tool; Arch is rolling release
+// (no concept of a "next version"). Those show current version only.
+func (p *Packages) DistroInfo(ctx context.Context) DistroInfo {
+	fields := osReleaseFields()
+	info := DistroInfo{Name: fields["PRETTY_NAME"], ID: fields["ID"], Version: fields["VERSION_ID"]}
+	if info.ID != "ubuntu" || !LookPath("do-release-upgrade") {
+		return info
+	}
+	c, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out := ExecQuiet(c, "do-release-upgrade", "-c")
+	info.UpgradeSupported = true
+	const marker = "New release '"
+	if idx := strings.Index(out, marker); idx >= 0 {
+		rest := out[idx+len(marker):]
+		if end := strings.Index(rest, "'"); end >= 0 {
+			info.UpgradeAvailable = true
+			info.NewVersion = rest[:end]
+		}
+	}
+	return info
 }
 
 func (p *Packages) available() error {
