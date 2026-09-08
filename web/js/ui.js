@@ -49,7 +49,10 @@ const paths = {
 
 export function icon(name, cls) {
   const p = paths[name] || paths.grid;
-  return `<svg class="${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+  // "ico" gives every icon a sane default size (see .ico in aegis.css) so a
+  // spot that forgets a context-specific `svg` sizing rule doesn't fall
+  // back to the browser's ~300x150 default — this has been a recurring bug.
+  return `<svg class="ico ${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 }
 
 /* -------------------------------------------------------------- formatting */
