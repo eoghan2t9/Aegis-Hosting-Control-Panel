@@ -44,6 +44,7 @@ type Server struct {
 	Security *svc.Security
 	Quota    *svc.Quota
 	WebApps  *svc.WebApps
+	Packages *svc.Packages
 
 	primaryIPv4 string
 }
@@ -52,11 +53,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -123,6 +124,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tuning/report", s.withAuth(s.withRole(s.handleTuningReport, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/tuning/inspect", s.withAuth(s.withRole(s.handleTuningInspect, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/tuning/apply", s.withAuth(s.withRole(s.handleTuningApply, store.RoleAdmin)))
+
+	// System updates + package installer (admin) — works across
+	// apt/dnf/yum/pacman/zypper/apk, see internal/svc/packages.go.
+	mux.HandleFunc("GET /api/system/updates", s.withAuth(s.withRole(s.handleUpdatesList, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/system/updates/check", s.withAuth(s.withRole(s.handleUpdatesCheck, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/system/updates/apply", s.withAuth(s.withRole(s.handleUpdatesApply, store.RoleAdmin)))
+	mux.HandleFunc("GET /api/system/packages/search", s.withAuth(s.withRole(s.handlePackagesSearch, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/system/packages/install", s.withAuth(s.withRole(s.handlePackagesInstall, store.RoleAdmin)))
 
 	// Users + packages (admin/reseller).
 	mux.HandleFunc("GET /api/users", s.withAuth(s.withRole(s.handleUsersList, store.RoleAdmin, store.RoleReseller)))

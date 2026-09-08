@@ -98,6 +98,7 @@ func run(configPath string) error {
 	securitySvc := svc.NewSecurity(cfg, st)
 	quotaSvc := svc.NewQuota(cfg, st)
 	webAppsSvc := svc.NewWebApps(cfg, dbSvc)
+	packagesSvc := svc.NewPackages(st)
 
 	// First-run bootstrap.
 	if err := bootstrap(cfg, st, tuner, webSvc); err != nil {
@@ -105,7 +106,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc)
+		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -147,6 +148,15 @@ func run(configPath string) error {
 	go sslSvc.AutoRenew(ctx)
 	go backupSvc.AutoBackup(ctx)
 	go quotaSvc.EnforceLoop(ctx)
+	go packagesSvc.CheckUpdatesLoop(ctx)
+	// One-off check shortly after boot so the update badge isn't empty for
+	// up to 6h waiting on CheckUpdatesLoop's first tick.
+	go func() {
+		time.Sleep(10 * time.Second)
+		if _, err := packagesSvc.CheckUpdates(ctx); err != nil {
+			slog.Warn("initial package update check failed", "err", err)
+		}
+	}()
 
 	select {
 	case <-ctx.Done():
