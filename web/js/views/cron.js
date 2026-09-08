@@ -70,12 +70,14 @@ addRoute("/cron", {
         let log = "";
         try { ({ log } = await api.get(`/cron/jobs/${job.id}/log`)); }
         catch (ex) { toast(ex.message, "err"); return; }
-        modal({
+        const close = btn("Close");
+        const lm = modal({
           title: `Log — ${job.schedule}`,
           wide: true,
           body: `<pre class="mono small" style="max-height:60vh;overflow:auto;white-space:pre-wrap">${esc(log || "(no output yet)")}</pre>`,
-          actions: [btn("Close")],
+          actions: [close],
         });
+        close.onclick = () => lm.close();
       });
       tr.querySelector(".act-edit")?.addEventListener("click", () => editJob(job));
       tr.querySelector(".act-tog")?.addEventListener("click", async () => {
