@@ -133,7 +133,17 @@ function openDetail(id, onChanged) {
           </div>
         </div>
         <div style="height:16px"></div>
+        <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Web app installer</b>
+        <div id="dd-apps" style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-sm" id="dd-install-wp">Install WordPress</button>
+          <button class="btn btn-sm" id="dd-install-laravel">Install Laravel</button>
+          <button class="btn btn-sm" id="dd-wpcli">Run WP-CLI command</button>
+        </div>
+        <div style="height:16px"></div>
         ${sslBlock(dom, id)}`;
+      document.getElementById("dd-install-wp").onclick = () => installApp(dom, id, "wordpress", m);
+      document.getElementById("dd-install-laravel").onclick = () => installApp(dom, id, "laravel", m);
+      document.getElementById("dd-wpcli").onclick = () => wpCliDialog(id);
       document.getElementById("dd-apply-php").onclick = async () => {
         const ver = document.getElementById("dd-php").value;
         try {
@@ -155,6 +165,33 @@ function openDetail(id, onChanged) {
       if (dnsBtn) dnsBtn.onclick = () => { m.close(); location.hash = "#/dns"; };
     });
   }).catch((ex) => toast(ex.message, "err"));
+}
+
+async function installApp(dom, id, app, m) {
+  const label = app === "wordpress" ? "WordPress" : "Laravel";
+  if (!await confirmDialog(`Install ${label} into ${dom.document_root}? The document root must be empty.`, { title: "Install " + label, okText: "Install" })) return;
+  try {
+    toast(`Installing ${label}… this can take a minute`);
+    await api.post(`/domains/${id}/install`, { app });
+    toast(`${label} installed`);
+    m.close();
+  } catch (ex) { toast(ex.message, "err"); }
+}
+
+async function wpCliDialog(id) {
+  const vals = await promptDialog("Run WP-CLI command", [
+    { name: "args", label: "Command", mono: true, required: true, placeholder: "plugin list", help: "Without the leading 'wp' — e.g. \"plugin list\" or \"core update\"." },
+  ]);
+  if (!vals) return;
+  try {
+    const res = await api.post(`/domains/${id}/wp-cli`, { args: vals.args.split(/\s+/).filter(Boolean) });
+    modal({
+      title: "WP-CLI output",
+      wide: true,
+      body: `<pre class="mono small" style="white-space:pre-wrap;max-height:50vh;overflow:auto">${esc(res.output || "(no output)")}</pre>`,
+      actions: [mkAction("Close", "btn")],
+    });
+  } catch (ex) { toast(ex.message, "err"); }
 }
 
 function sslBlock(dom, id) {
