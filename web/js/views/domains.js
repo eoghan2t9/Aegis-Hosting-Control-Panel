@@ -92,12 +92,14 @@ function openCreate(phpVersions, webServers) {
 function openDetail(id, onChanged) {
   api.get("/domains/" + id).then((d) => {
     const dom = d.domain;
+    const closeBtn = mkAction("Close", "btn");
     const m = modal({
       title: dom.domain,
       wide: true,
       body: `<div id="detail-body">${loading()}</div>`,
-      actions: [mkAction("Apply config", "btn", () => applyConfig(dom)), mkAction("Close", "btn")],
+      actions: [mkAction("Apply config", "btn", () => applyConfig(dom)), closeBtn],
     });
+    closeBtn.onclick = () => m.close();
     const body = document.getElementById("detail-body");
     const phpInfo = [];
     api.get("/php/versions").then((p) => {
@@ -195,7 +197,9 @@ async function appPickerDialog(dom, id, parentModal) {
         ${list.map((a) => `<button class="btn btn-sm app-pick" data-id="${esc(a.id)}">${esc(a.name)}</button>`).join("")}
       </div>
     </div>`).join("");
-  const pm = modal({ title: "Install an app", wide: true, body, actions: [mkAction("Cancel", "btn")] });
+  const cancelBtn = mkAction("Cancel", "btn");
+  const pm = modal({ title: "Install an app", wide: true, body, actions: [cancelBtn] });
+  cancelBtn.onclick = () => pm.close();
   body.querySelectorAll(".app-pick").forEach((btn) => {
     btn.onclick = async () => {
       const appId = btn.dataset.id;
@@ -219,12 +223,14 @@ async function wpCliDialog(id) {
   if (!vals) return;
   try {
     const res = await api.post(`/domains/${id}/wp-cli`, { args: vals.args.split(/\s+/).filter(Boolean) });
-    modal({
+    const closeBtn = mkAction("Close", "btn");
+    const wm = modal({
       title: "WP-CLI output",
       wide: true,
       body: `<pre class="mono small" style="white-space:pre-wrap;max-height:50vh;overflow:auto">${esc(res.output || "(no output)")}</pre>`,
-      actions: [mkAction("Close", "btn")],
+      actions: [closeBtn],
     });
+    closeBtn.onclick = () => wm.close();
   } catch (ex) { toast(ex.message, "err"); }
 }
 

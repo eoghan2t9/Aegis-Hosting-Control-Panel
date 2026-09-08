@@ -72,13 +72,15 @@ addRoute("/mail", {
       loadAliases(card, md);
 
       card.querySelector(".act-dkim").addEventListener("click", () => {
-        modal({
+        const close = closeBtn();
+        const dm = modal({
           title: "DKIM key — " + md.domain,
           wide: true,
           body: `<p class="small muted">Published as a TXT record at <span class="mono">default._domainkey.${esc(md.domain)}</span>:</p>
             <pre class="mono small" style="white-space:pre-wrap;word-break:break-all">${esc(md.dkim_public_key)}</pre>`,
-          actions: [closeBtn()],
+          actions: [close],
         });
+        close.onclick = () => dm.close();
       });
       card.querySelector(".act-disable").addEventListener("click", async () => {
         if (!await confirmDialog(`Disable mail for ${md.domain}? All mailboxes and aliases are removed.`, { danger: true, title: "Disable mail" })) return;

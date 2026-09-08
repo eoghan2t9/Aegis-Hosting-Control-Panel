@@ -121,12 +121,14 @@ async function openMessage(uid) {
   const bodyHTML = msg.html_body
     ? `<div class="wm-body">${msg.html_body}</div>`
     : `<pre class="mono small" style="white-space:pre-wrap">${esc(msg.text_body || "(empty message)")}</pre>`;
-  modal({
+  const close = closeBtn();
+  const rm = modal({
     title: msg.subject || "(no subject)",
     wide: true,
     body: `<p class="small dim">From ${esc(msg.from)} &middot; ${esc(new Date(msg.date).toLocaleString())}</p>${bodyHTML}`,
-    actions: [closeBtn()],
+    actions: [close],
   });
+  close.onclick = () => rm.close();
 }
 
 function composeModal(fromAddress) {
