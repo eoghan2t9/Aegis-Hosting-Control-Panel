@@ -5,7 +5,8 @@ import { icon, esc, toast, promptDialog, confirmDialog, statusTag, pageHead, loa
 addRoute("/mail", {
   title: "Email",
   icon: "mail",
-  group: "Web",
+  group: "Email",
+  order: 0,
   render: async (view) => {
     view.innerHTML = pageHead("Email", "Mailboxes, aliases and SPF/DKIM/DMARC for your domains. Enabling mail publishes DNS records automatically into the DNS tab.", "");
     view.insertAdjacentHTML("beforeend", `<div id="mail-root">${loading()}</div>`);

@@ -5,7 +5,8 @@ import { icon, esc, toast, modal, confirmDialog, promptDialog, statusTag, fmtAgo
 addRoute("/domains", {
   title: "Domains",
   icon: "globe",
-  group: "Web",
+  group: "Websites",
+  order: 0,
   render: async (view) => {
     view.innerHTML = pageHead("Domains", "Websites attached to your account. Each domain gets its own document root, PHP version and web server config.", `
       <button class="btn btn-primary" id="btn-add-domain">${icon("plus")} Add domain</button>`);

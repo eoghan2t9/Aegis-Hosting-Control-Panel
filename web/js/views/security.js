@@ -6,6 +6,7 @@ addRoute("/security", {
   title: "Security",
   icon: "shield",
   group: "Server",
+  order: 3,
   adminOnly: true,
   render: async (view) => {
     view.innerHTML = pageHead("Security", "Login attempts against the panel and IPs currently banned by fail2ban after repeated failures.", "");

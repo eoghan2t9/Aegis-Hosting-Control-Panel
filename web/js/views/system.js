@@ -6,6 +6,7 @@ addRoute("/system", {
   title: "System",
   icon: "cpu",
   group: "Server",
+  order: 0,
   adminOnly: true,
   render: async (view) => {
     view.innerHTML = pageHead("System", "Processes, security audit log, and the performance-tuning report.");

@@ -6,6 +6,7 @@ addRoute("/tokens", {
   title: "API tokens",
   icon: "key",
   group: "Account",
+  order: 1,
   render: async (view) => {
     view.innerHTML = pageHead("API tokens", "Scoped credentials for scripting against the panel. Send as a Bearer token instead of logging in.", `
       <button class="btn btn-primary" id="btn-token">${icon("plus")} New token</button>`);

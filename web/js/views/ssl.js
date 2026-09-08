@@ -5,7 +5,8 @@ import { icon, esc, toast, statusTag, fmtAgo, fmtDate, pageHead, loading } from 
 addRoute("/ssl", {
   title: "SSL",
   icon: "ssl",
-  group: "Web",
+  group: "Websites",
+  order: 2,
   render: async (view) => {
     view.innerHTML = pageHead("SSL / TLS", "Let's Encrypt certificates with HTTP-01 or DNS-01 (via Cloudflare) challenges, self-signed fallbacks, and automatic renewal.");
     view.insertAdjacentHTML("beforeend", `<div id="ssl-root">${loading()}</div>`);

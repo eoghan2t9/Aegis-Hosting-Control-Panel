@@ -5,7 +5,8 @@ import { icon, esc, toast, promptDialog, confirmDialog, statusTag, pageHead, loa
 addRoute("/ftp", {
   title: "FTP",
   icon: "server",
-  group: "Web",
+  group: "Data",
+  order: 2,
   render: async (view) => {
     view.innerHTML = pageHead("FTP accounts", "FTP access to your files, chrooted to your account. The primary account matches your panel login; extra accounts are rooted inside your home.", `
       <button class="btn btn-primary" id="btn-ftp">${icon("plus")} New account</button>`);

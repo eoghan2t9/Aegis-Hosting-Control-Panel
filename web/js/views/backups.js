@@ -5,7 +5,8 @@ import { icon, esc, toast, confirmDialog, promptDialog, fmtBytes, fmtAgo, pageHe
 addRoute("/backups", {
   title: "Backups",
   icon: "archive",
-  group: "Manage",
+  group: "Server",
+  order: 4,
   resellerOnly: true,
   adminOnly: true,
   render: async (view) => {
