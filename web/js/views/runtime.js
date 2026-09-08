@@ -23,7 +23,7 @@ addRoute("/runtime", {
         <div class="card">
           <div class="card-head"><span class="card-title">Installed PHP</span>
             <span class="card-actions"><span class="tag tag-lime">latest: ${esc(php.latest || "—")}</span></span></div>
-          ${versions.length ? `<table class="tbl" style="min-width:0">
+          ${versions.length ? `<div class="tbl-wrap"><table class="tbl">
             <thead><tr><th>Version</th><th>CLI</th><th>php-fpm</th><th>Pool</th></tr></thead>
             <tbody>${versions.map((v) => `
               <tr>
@@ -31,7 +31,7 @@ addRoute("/runtime", {
                 <td class="mono small dim">${esc(v.cli || "—")}</td>
                 <td class="mono small dim">${esc(v.fpm || "—")}</td>
                 <td>${v.running ? statusTag("active") : statusTag("inactive")}</td>
-              </tr>`).join("")}</tbody></table>`
+              </tr>`).join("")}</tbody></table></div>`
           : `<p class="muted">No PHP-FPM installations detected. Install php-fpm (e.g. ondrej/php PPA on Ubuntu) and it appears here automatically.</p>`}
           <p class="small dim" style="margin:10px 0 0">Aegis writes one isolated FPM pool per website under /etc/php/&lt;version&gt;/fpm/pool.d, socket in /run/php/aegis-&lt;domain&gt;.sock.</p>
         </div>

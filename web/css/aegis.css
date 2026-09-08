@@ -359,6 +359,7 @@ select { cursor: pointer; }
 .card-title .sub { display: block; font-weight: 400; font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 .card-actions { margin-left: auto; display: flex; gap: 8px; }
 .grid { display: grid; gap: 16px; }
+.grid > * { min-width: 0; } /* grid items default to min-width:auto, which lets wide content (e.g. a table) blow out the whole row instead of scrolling within itself */
 .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -500,10 +501,10 @@ tr:hover .row-actions, .row-actions:hover { opacity: 1; }
 .empty-state { text-align: center; padding: 46px 20px; color: var(--text-3); }
 .empty-state .glyph { font-size: 30px; opacity: .5; margin-bottom: 8px; display: block; }
 .empty-state p { margin: 4px 0 16px; max-width: 420px; margin-inline: auto; }
-.page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
+.page-head { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
 .page-head h2 { margin: 0 0 3px; font-size: 21px; letter-spacing: -.02em; }
 .page-head p { margin: 0; color: var(--text-2); font-size: 13px; max-width: 640px; }
-.page-head .page-actions { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+.page-head .page-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
 .breadcrumb { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; word-break: break-all; }
 .breadcrumb a { color: var(--accent); text-decoration: none; }
 .breadcrumb a:hover { text-decoration: underline; }

@@ -14,8 +14,11 @@ addRoute("/databases", {
     const [servers, dbs] = await Promise.all([api.get("/databases/servers").catch(() => []), api.get("/databases").catch(() => [])]);
     const serverBox = document.getElementById("db-servers");
     serverBox.innerHTML = servers.length
-      ? `<div class="pill-group" style="margin-bottom:4px">${servers.map((s) => `
-          <span class="tag ${s.running ? "tag-lime" : "tag-amber"}">${icon("database", "")} ${esc(s.name)} ${s.version ? "· " + esc(s.version) : ""} ${s.running ? "" : "(down)"}</span>`).join("")}</div>`
+      ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:4px">${servers.map((s) => `
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="tag ${s.running ? "tag-lime" : "tag-amber"}">${icon("database", "")} ${esc(s.name)} ${s.running ? "" : "(down)"}</span>
+            ${s.version ? `<span class="small dim" style="word-break:break-word">${esc(s.version)}</span>` : ""}
+          </div>`).join("")}</div>`
       : `<p class="small dim">No database servers detected on this host (install mariadb-server and/or postgresql).</p>`;
 
     const root = document.getElementById("db-root");
