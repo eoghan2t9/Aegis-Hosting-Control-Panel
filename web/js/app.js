@@ -229,6 +229,7 @@ Promise.all([
   import("./views/tokens.js"),
   import("./views/security.js"),
   import("./views/mail.js"),
+  import("./views/apps.js"),
   import("./views/webmail.js"),
   import("./views/databases.js"),
   import("./views/files.js"),
