@@ -344,7 +344,9 @@ func (d DnfManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	out, err := Exec(ctx, d.bin, "check-update")
 	if err != nil {
 		// check-update's documented exit code for "updates are available"
-		// is 100 — not a failure. 0 = none. Anything else is a real error.
+		// is 100 on classic dnf4/yum — not a failure. dnf5 (Fedora 41+)
+		// exits 0 either way. 0/100 both mean "ran fine"; anything else is
+		// a real error.
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 100 {
 			return nil, err
@@ -352,32 +354,64 @@ func (d DnfManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	}
 	var updates []PackageUpdate
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "Last metadata") || strings.HasPrefix(line, "Obsoleting") {
-			continue
-		}
 		fields := strings.Fields(line)
+		// A real update line is "name.arch  version  repo": dnf4 prints it
+		// bare; dnf5 wraps it in a progress banner + "Upgrades" header first.
+		// Rather than chase every banner string across versions, positively
+		// match the shape instead: fields[0] must be "name.arch" and
+		// fields[1] must look like a version (leads with a digit) — no
+		// banner/header/progress line matches both.
 		if len(fields) < 3 {
 			continue
 		}
-		// name.arch  version  repo
-		name, _, _ := strings.Cut(fields[0], ".")
+		name, arch, ok := strings.Cut(fields[0], ".")
+		if !ok || name == "" || arch == "" || !startsWithDigit(fields[1]) {
+			continue
+		}
 		updates = append(updates, PackageUpdate{Name: name, NewVersion: fields[1]})
 	}
-	// Best-effort security flagging via updateinfo; cross-referenced by name.
-	secOut := ExecQuiet(ctx, d.bin, "updateinfo", "list", "security")
+	// Best-effort security flagging via updateinfo. --security is a flag on
+	// both dnf4 and dnf5 (dnf4 also accepts the older positional "security"
+	// form, but the flag works on both, so use that). Advisory line layout
+	// differs between versions (different column counts/order), so instead
+	// of indexing a fixed column, scan every field for one shaped like an
+	// NVRA token ("name-version-release.arch" — contains both "-" and ".",
+	// which nothing else on either version's advisory line does) and pull
+	// the package name out of that.
+	secOut := ExecQuiet(ctx, d.bin, "updateinfo", "list", "--security")
 	secNames := map[string]bool{}
 	for _, line := range strings.Split(secOut, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 {
-			name, _, _ := strings.Cut(fields[2], ".")
-			secNames[name] = true
+		for _, f := range strings.Fields(line) {
+			if strings.Contains(f, "-") && strings.Contains(f, ".") {
+				secNames[dnfPackageName(f)] = true
+			}
 		}
 	}
 	for i := range updates {
 		updates[i].Security = secNames[updates[i].Name]
 	}
 	return updates, nil
+}
+
+func startsWithDigit(s string) bool { return len(s) > 0 && s[0] >= '0' && s[0] <= '9' }
+
+// dnfPackageName best-effort extracts the package name from dnf's combined
+// "name-version-release.arch" token (e.g. "curl-8.18.0-9.fc44.x86_64" or,
+// with an epoch, "openssl-libs-1:3.5.8-1.fc44.x86_64"). Like apk's combined
+// tokens, this is a heuristic — package names can contain digits/dashes too
+// — sufficient for cross-referencing against the check-update list by name.
+func dnfPackageName(nvra string) string {
+	base := nvra
+	if idx := strings.LastIndex(nvra, "."); idx > 0 {
+		base = nvra[:idx] // strip ".arch"
+	}
+	parts := strings.Split(base, "-")
+	for i := 1; i < len(parts); i++ {
+		if startsWithDigit(parts[i]) {
+			return strings.Join(parts[:i], "-")
+		}
+	}
+	return base
 }
 
 func (d DnfManager) ApplyUpdates(ctx context.Context, names []string) error {
@@ -400,15 +434,25 @@ func (d DnfManager) Search(ctx context.Context, query string) ([]PackageInfo, er
 	var results []PackageInfo
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "=") || strings.HasPrefix(line, "Last metadata") {
+		// dnf4/yum: "name.arch : description". dnf5: "name.arch<TAB>description"
+		// (plus a "Matched fields: ..." header line before each group, and
+		// progress-bar/repo-sync banner lines on dnf5 — none of those match
+		// either separator followed by a "name.arch"-shaped left side, so no
+		// explicit header skip-list is needed).
+		var name, desc string
+		if i := strings.IndexByte(line, '\t'); i >= 0 {
+			name, desc = line[:i], line[i+1:]
+		} else if i := strings.Index(line, " : "); i >= 0 {
+			name, desc = line[:i], line[i+3:]
+		} else {
 			continue
 		}
-		name, desc, ok := strings.Cut(line, " : ")
-		if !ok {
+		name = strings.TrimSpace(name)
+		base, _, ok := strings.Cut(name, ".")
+		if !ok || base == "" {
 			continue
 		}
-		name, _, _ = strings.Cut(name, ".")
-		results = append(results, PackageInfo{Name: strings.TrimSpace(name), Description: strings.TrimSpace(desc)})
+		results = append(results, PackageInfo{Name: base, Description: strings.TrimSpace(desc)})
 		if len(results) >= 50 {
 			break
 		}
@@ -511,13 +555,25 @@ func (ZypperManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) 
 		return nil, err
 	}
 	// Best-effort security flagging — list-patches groups by patch, not
-	// package, so this is an approximation, not an exact per-package match.
+	// package, and its "Name" column is the patch id (e.g.
+	// "openSUSE-Leap-16.0-1187"), not a package name, so cross-referencing
+	// by that column can never match. The patch's Summary column, though,
+	// consistently reads "Security update for pkg[, pkg2, ...]" — pull the
+	// real package names out of that instead.
 	secOut := ExecQuiet(ctx, "zypper", "--non-interactive", "list-patches", "--category", "security")
 	secNames := map[string]bool{}
+	const secPrefix = "Security update for "
 	for _, line := range strings.Split(secOut, "\n") {
 		fields := strings.Split(line, "|")
-		if len(fields) > 1 {
-			secNames[strings.TrimSpace(fields[1])] = true
+		if len(fields) < 7 {
+			continue
+		}
+		summary := strings.TrimSpace(fields[len(fields)-1])
+		if !strings.HasPrefix(summary, secPrefix) {
+			continue
+		}
+		for _, n := range strings.Split(strings.TrimPrefix(summary, secPrefix), ",") {
+			secNames[strings.TrimSpace(n)] = true
 		}
 	}
 	var updates []PackageUpdate
@@ -554,15 +610,19 @@ func (ZypperManager) Search(ctx context.Context, query string) ([]PackageInfo, e
 	}
 	var results []PackageInfo
 	for _, line := range strings.Split(out, "\n") {
+		// "S | Name | Summary | Type" — S (install status) is blank for
+		// the (usual) case of a not-yet-installed match, so it can't be
+		// used to identify data rows; match the table shape instead
+		// (exactly 4 columns) and skip the header/separator by name.
 		fields := strings.Split(line, "|")
-		if len(fields) < 3 {
+		if len(fields) != 4 {
 			continue
 		}
-		status := strings.TrimSpace(fields[0])
-		if status == "" || status == "S" || strings.HasPrefix(status, "-") {
+		name := strings.TrimSpace(fields[1])
+		if name == "" || name == "Name" || strings.HasPrefix(strings.TrimSpace(fields[0]), "-") {
 			continue
 		}
-		results = append(results, PackageInfo{Name: strings.TrimSpace(fields[1]), Description: strings.TrimSpace(fields[2])})
+		results = append(results, PackageInfo{Name: name, Description: strings.TrimSpace(fields[2])})
 		if len(results) >= 50 {
 			break
 		}
@@ -630,8 +690,10 @@ func (ApkManager) Search(ctx context.Context, query string) ([]PackageInfo, erro
 		if line == "" {
 			continue
 		}
-		name, ver := splitApkNameVersion(line)
-		results = append(results, PackageInfo{Name: name, Version: ver})
+		// "name-version - description"
+		nvr, desc, _ := strings.Cut(line, " - ")
+		name, ver := splitApkNameVersion(nvr)
+		results = append(results, PackageInfo{Name: name, Version: ver, Description: desc})
 		if len(results) >= 50 {
 			break
 		}
