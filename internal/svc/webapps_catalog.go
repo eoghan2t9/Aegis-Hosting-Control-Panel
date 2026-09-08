@@ -21,28 +21,30 @@ const (
 // AppManifest is one catalog entry — the "plugin" extension point. Adding a
 // new app means adding an entry here, not touching InstallApp.
 type AppManifest struct {
-	ID       string
-	Name     string
-	Category string // cms | forum | wiki | ecommerce | tools | framework
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Category string `json:"category"` // cms | forum | wiki | ecommerce | tools | framework
 
-	Strategy        InstallStrategy
-	DownloadURL     string // tarball strategy
-	ExtractSubdir   string // "" = archive root, "*" = auto-detect single wrapping dir, else a fixed name
-	ComposerPackage string // composer strategy
+	Strategy        InstallStrategy `json:"strategy"`
+	DownloadURL     string          `json:"-"` // tarball strategy, internal
+	ExtractSubdir   string          `json:"-"` // "" = archive root, "*" = auto-detect single wrapping dir, else a fixed name
+	ComposerPackage string          `json:"-"` // composer strategy, internal
 
 	// PublicSubdir is set when the app's real webroot is a subdirectory of
 	// the project (Laravel/Flarum "public", Drupal/Craft "web") — the
 	// engine installs into a sibling "<domain>-app" dir and symlinks the
 	// visible document root to PublicSubdir within it.
-	PublicSubdir string
+	PublicSubdir string `json:"-"`
 
-	NeedsDatabase bool
-	DBEngine      string // "mariadb"
+	NeedsDatabase bool   `json:"needs_database"`
+	DBEngine      string `json:"-"` // "mariadb"
 
-	// ConfigFile, if set, is written before Install runs.
-	ConfigFile func(db *store.Database, dom *store.Domain, appDir string) (path, content string)
+	// ConfigFile, if set, is written before Install runs. Func values can't
+	// be JSON-marshaled — encoding/json errors on unexported func types and
+	// silently produces an empty response body, so this must stay excluded.
+	ConfigFile func(db *store.Database, dom *store.Domain, appDir string) (path, content string) `json:"-"`
 	// Install, if set, runs the app's non-interactive CLI installer.
-	Install func(ctx context.Context, w *WebApps, dom *store.Domain, appDir string, db *store.Database) error
+	Install func(ctx context.Context, w *WebApps, dom *store.Domain, appDir string, db *store.Database) error `json:"-"`
 }
 
 // Catalog is the full list of installable apps.
