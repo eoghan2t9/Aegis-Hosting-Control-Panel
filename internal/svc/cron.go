@@ -183,16 +183,30 @@ func (c *Cron) writeCrontab(ctx context.Context, user *store.User) error {
 }
 
 // TailLog returns the last lines of a job's log file (empty if it hasn't run yet).
-func (c *Cron) TailLog(job *store.CronJob) (string, error) {
+// LogResult distinguishes "never run" (log file doesn't exist — cron's `>>`
+// redirection creates the file on the job's first execution, even if it
+// produces no output) from "ran but produced nothing", which the log text
+// alone can't tell apart.
+type LogResult struct {
+	Log       string
+	HasRun    bool
+	UpdatedAt time.Time
+}
+
+func (c *Cron) TailLog(job *store.CronJob) (LogResult, error) {
 	if job.LogPath == "" {
-		return "", nil
+		return LogResult{}, nil
+	}
+	info, err := os.Stat(job.LogPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return LogResult{}, nil
+		}
+		return LogResult{}, err
 	}
 	f, err := os.Open(job.LogPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
+		return LogResult{}, err
 	}
 	defer f.Close()
 	lines := make([]string, 0, maxLogLines)
@@ -204,5 +218,5 @@ func (c *Cron) TailLog(job *store.CronJob) (string, error) {
 			lines = lines[1:]
 		}
 	}
-	return strings.Join(lines, "\n"), sc.Err()
+	return LogResult{Log: strings.Join(lines, "\n"), HasRun: true, UpdatedAt: info.ModTime()}, sc.Err()
 }

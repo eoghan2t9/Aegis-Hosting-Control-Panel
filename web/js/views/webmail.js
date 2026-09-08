@@ -126,7 +126,7 @@ async function openMessage(uid) {
   const rm = modal({
     title: msg.subject || "(no subject)",
     wide: true,
-    body: `<p class="small dim">From ${esc(msg.from)} &middot; ${esc(new Date(msg.date).toLocaleString())}</p>${bodyHTML}`,
+    body: `<div><p class="small dim">From ${esc(msg.from)} &middot; ${esc(new Date(msg.date).toLocaleString())}</p>${bodyHTML}</div>`,
     actions: [close],
   });
   close.onclick = () => rm.close();
