@@ -19,7 +19,8 @@ const CAT_TAG = { cms: "tag-lime", forum: "tag-teal", wiki: "tag-teal", ecommerc
 addRoute("/apps", {
   title: "App installer",
   icon: "plus",
-  group: "Web",
+  group: "Websites",
+  order: 3,
   render: async (view) => {
     view.innerHTML = pageHead("App installer", "One-click install WordPress, Laravel, Drupal and more onto any of your domains.", "");
     view.insertAdjacentHTML("beforeend", `

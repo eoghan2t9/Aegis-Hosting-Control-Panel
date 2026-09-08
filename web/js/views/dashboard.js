@@ -6,6 +6,7 @@ addRoute("/dashboard", {
   title: "Dashboard",
   icon: "grid",
   group: "Overview",
+  order: 0,
   render: async (view) => {
     view.innerHTML = pageHead("Server status", isAdmin()
       ? "Live resource usage for the whole host, plus per-account consumption."
@@ -159,7 +160,8 @@ function spinnerHtml() { return `<div class="spinner"></div>`; }
 addRoute("/account", {
   title: "My account",
   icon: "user",
-  group: "Overview",
+  group: "Account",
+  order: 0,
   adminOnly: false,
   render: async (view) => {
     const u = me();

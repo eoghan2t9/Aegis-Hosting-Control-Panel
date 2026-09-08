@@ -26,7 +26,8 @@ async function wmFetch(path, opts = {}) {
 addRoute("/webmail", {
   title: "Webmail",
   icon: "mail",
-  group: "Web",
+  group: "Email",
+  order: 1,
   render: async (view) => {
     const token = sessionStorage.getItem(TOKEN_KEY);
     const address = sessionStorage.getItem(ADDR_KEY);

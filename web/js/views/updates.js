@@ -6,6 +6,7 @@ addRoute("/updates", {
   title: "Updates",
   icon: "download",
   group: "Server",
+  order: 2,
   adminOnly: true,
   render: async (view) => {
     view.innerHTML = pageHead("Updates & packages", "Check for and apply OS package updates, and install new packages — works across apt, dnf/yum, pacman, zypper and apk.", `

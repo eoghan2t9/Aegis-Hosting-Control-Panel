@@ -6,6 +6,7 @@ addRoute("/databases", {
   title: "Databases",
   icon: "database",
   group: "Data",
+  order: 0,
   render: async (view) => {
     view.innerHTML = pageHead("Databases", "MariaDB and PostgreSQL. Aegis creates the database, a dedicated user and a strong random password for you.", `
       <button class="btn btn-primary" id="btn-db">${icon("plus")} New database</button>`);
