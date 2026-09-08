@@ -481,12 +481,15 @@ tr:hover .row-actions, .row-actions:hover { opacity: 1; }
 .app-card-vendor { margin-top: 1px; }
 .app-card-desc { color: var(--text-2); margin: 12px 0; flex: 1; line-height: 1.45; }
 .app-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.app-card-foot svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 2px; }
 .app-badge {
   flex-shrink: 0; width: 38px; height: 38px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700; letter-spacing: .02em;
   background: var(--bg2, rgba(255,255,255,.04)); border: 1px solid var(--line);
 }
+.tab-btn { display: inline-flex; align-items: center; gap: 5px; }
+.tab-btn svg { width: 14px; height: 14px; }
 
 /* ---------------------------------------------------------------- misc */
 .empty-state { text-align: center; padding: 46px 20px; color: var(--text-3); }
