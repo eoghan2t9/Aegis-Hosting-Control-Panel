@@ -37,11 +37,11 @@ addRoute("/updates", {
         d = await api.get("/system/distro");
       } catch (ex) {
         distroBody.innerHTML = `<p class="muted">${esc(ex.message)}</p>`;
-        return;
+        return null;
       }
       if (!d.name) {
         distroBody.innerHTML = `<p class="small dim">Could not read /etc/os-release on this host.</p>`;
-        return;
+        return null;
       }
       let statusHTML;
       if (d.upgrade_available) {
@@ -55,6 +55,7 @@ addRoute("/updates", {
         statusHTML = `<p class="small dim" style="margin-top:8px">Automatic release-upgrade checking isn't available for ${esc(d.id || "this distro")} — shown here is just the currently installed version.</p>`;
       }
       distroBody.innerHTML = `<p style="margin:0"><b>${esc(d.name)}</b> <span class="small dim mono">${esc(d.version || "")}</span></p>${statusHTML}`;
+      return d;
     }
 
     const updatesBody = document.getElementById("updates-body");
@@ -128,44 +129,74 @@ addRoute("/updates", {
 
     async function runCheckDialog() {
       const steps = [
-        { id: "pkg", label: "Refreshing package index and checking for updates" },
-        { id: "distro", label: "Checking distro release version" },
+        { id: "pkg", label: "Package updates" },
+        { id: "distro", label: "Distro release" },
       ];
       const body = document.createElement("div");
       body.innerHTML = steps.map((s) => `
-        <div id="cd-${s.id}" style="display:flex;align-items:center;gap:10px;padding:8px 0">
-          <span class="cd-icon" style="flex-shrink:0;width:15px">${loading()}</span>
-          <span class="cd-text small">${esc(s.label)}</span>
+        <div id="cd-${s.id}" style="padding:8px 0">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="cd-icon" style="flex-shrink:0;width:15px">${loading()}</span>
+            <span class="cd-text">${esc(s.label)}</span>
+          </div>
+          <div class="cd-log mono small dim" style="margin-left:25px;margin-top:4px;line-height:1.7"></div>
         </div>`).join("");
       const closeBtn = document.createElement("button");
       closeBtn.className = "btn";
       closeBtn.textContent = "Close";
       closeBtn.disabled = true;
-      const dm = modal({ title: "Checking for updates", body, actions: [closeBtn] });
+      const dm = modal({ title: "Checking for updates", wide: true, body, actions: [closeBtn] });
       closeBtn.onclick = () => dm.close();
 
-      const setStep = (id, state, text) => {
+      const setStep = (id, state, headline) => {
         const row = document.getElementById(`cd-${id}`);
         if (!row) return;
         row.querySelector(".cd-icon").innerHTML = state === "done" ? icon("check")
           : state === "error" ? icon("x") : loading();
-        if (text) row.querySelector(".cd-text").textContent = text;
+        if (headline) row.querySelector(".cd-text").textContent = headline;
+      };
+      const log = (id, text) => {
+        document.querySelector(`#cd-${id} .cd-log`)?.insertAdjacentHTML("beforeend", `<div>${esc(text)}</div>`);
       };
 
+      log("pkg", "→ POST /system/updates/check");
       let updateCount = null;
       try {
         const data = await api.post("/system/updates/check");
-        updateCount = (data.updates || []).length;
+        const updates = data.updates || [];
+        updateCount = updates.length;
+        const secCount = updates.filter((u) => u.security).length;
+        log("pkg", `← package manager: ${data.pkg_manager || "none detected"}`);
+        if (updateCount) {
+          log("pkg", `${updateCount} outdated package(s) found, ${secCount} flagged security`);
+          const names = updates.slice(0, 5).map((u) => u.name).join(", ");
+          log("pkg", `e.g. ${names}${updateCount > 5 ? `, +${updateCount - 5} more` : ""}`);
+        } else {
+          log("pkg", "no outdated packages — everything is up to date");
+        }
         setStep("pkg", "done", updateCount ? `${updateCount} update(s) available` : "Everything is up to date");
         renderUpdates(data);
       } catch (ex) {
-        setStep("pkg", "error", ex.message);
+        log("pkg", `✗ ${ex.message}`);
+        setStep("pkg", "error", "Check failed");
       }
 
-      // loadDistro reports its own failures inline in the distro card, so
-      // this step just tracks "ran", not "succeeded".
-      await loadDistro();
-      setStep("distro", "done", "Distro release check complete");
+      log("distro", "→ GET /system/distro");
+      const d = await loadDistro();
+      if (d) {
+        log("distro", `← ${d.name} (id: ${d.id || "?"}, version: ${d.version || "?"})`);
+        if (!d.upgrade_supported) {
+          log("distro", `release-upgrade checking not available for "${d.id}"`);
+        } else if (d.upgrade_available) {
+          log("distro", `newer release available: ${d.new_version}`);
+        } else {
+          log("distro", "already on the latest release");
+        }
+        setStep("distro", "done", d.upgrade_available ? `${d.new_version} available` : "Distro release checked");
+      } else {
+        log("distro", "✗ could not read distro info");
+        setStep("distro", "error", "Check failed");
+      }
 
       closeBtn.disabled = false;
       closeBtn.classList.add("btn-primary");
