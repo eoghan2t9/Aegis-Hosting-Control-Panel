@@ -2,8 +2,12 @@
 import { api, qs } from "./api.js";
 import { icon, esc, toast, debounce } from "./ui.js";
 
-// Views register themselves here: route -> {title, render, admin?, group}
+// Views register themselves here: route -> {title, render, admin?, group, order}
 export const routes = {};
+
+// Sidebar group display order. A route's position within its group comes
+// from its own `order` field (see buildShell's nav-construction loop).
+const GROUP_ORDER = ["Overview", "Websites", "Email", "Data", "Server", "Account", "Users"];
 
 export function addRoute(path, def) {
   routes[path] = def;
@@ -117,13 +121,19 @@ function buildShell() {
     bar.classList.add("hidden");
   }
 
-  // Navigation.
+  // Navigation. Group and item order is explicit (GROUP_ORDER + each
+  // route's `order`) rather than accidental import/registration order.
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
   const groups = {};
-  for (const [path, def] of Object.entries(routes)) {
-    if (def.adminOnly && !isAdmin()) continue;
-    if (def.resellerOnly && !isReseller()) continue;
+  const entries = Object.entries(routes)
+    .filter(([, def]) => !(def.adminOnly && !isAdmin()) && !(def.resellerOnly && !isReseller()))
+    .sort(([, a], [, b]) => {
+      const ga = GROUP_ORDER.indexOf(a.group || ""), gb = GROUP_ORDER.indexOf(b.group || "");
+      if (ga !== gb) return ga - gb;
+      return (a.order ?? 0) - (b.order ?? 0);
+    });
+  for (const [path, def] of entries) {
     const g = def.group || "";
     if (!groups[g]) {
       groups[g] = { el: document.createElement("div"), links: [] };

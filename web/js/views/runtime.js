@@ -6,6 +6,7 @@ addRoute("/runtime", {
   title: "Runtime",
   icon: "zap",
   group: "Server",
+  order: 1,
   render: async (view) => {
     view.innerHTML = pageHead("Runtime", "The PHP versions and web server powering this host. Each website picks its own PHP version from the installed set.");
     view.insertAdjacentHTML("beforeend", `<div id="rt-root">${loading()}</div>`);

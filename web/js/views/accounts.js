@@ -5,7 +5,8 @@ import { icon, esc, toast, promptDialog, confirmDialog, statusTag, fmtAgo, pageH
 addRoute("/accounts", {
   title: "Accounts",
   icon: "users",
-  group: "Manage",
+  group: "Users",
+  order: 0,
   resellerOnly: true,
   render: async (view) => {
     view.innerHTML = pageHead("Accounts", isAdmin()
