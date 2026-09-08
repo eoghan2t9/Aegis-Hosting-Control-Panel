@@ -188,10 +188,12 @@ async function editFile(p) {
     const m = modal({
       title: name,
       wide: true,
-      body: `<div class="editor-head" style="margin-bottom:8px">
-        <span class="small dim mono" style="flex:1;word-break:break-all">${esc(p)}</span>
-        <span class="tag">UTF-8 · text</span></div>
-        <textarea class="editor-body" spellcheck="false">${esc(content)}</textarea>`,
+      body: `<div>
+        <div class="editor-head" style="margin-bottom:8px">
+          <span class="small dim mono" style="flex:1;word-break:break-all">${esc(p)}</span>
+          <span class="tag">UTF-8 · text</span></div>
+        <textarea class="editor-body" spellcheck="false">${esc(content)}</textarea>
+      </div>`,
       actions: [],
     });
     const ta = m.bodyEl.querySelector("textarea");
@@ -235,12 +237,14 @@ function permDialog(tr) {
   const [owner, group] = (tr.querySelector("td:nth-child(4)")?.textContent || ":").split(":");
   const m = modal({
     title: "Permissions — " + path.split("/").pop(),
-    body: `<div class="grid grid-2">
-      <div><label class="field"><span class="field-label">Mode (octal)</span><input id="perm-mode" class="mono" value="${esc(mode)}" placeholder="755"></label></div>
-      <div><label class="field"><span class="field-label">Owner</span><input id="perm-owner" class="mono" value="${esc(owner || "")}"></label></div>
-      <div><label class="field"><span class="field-label">Group</span><input id="perm-group" class="mono" value="${esc(group || "")}"></label></div>
-    </div>
-    <p class="small dim">0755 dirs · 0644 files · 0600 secrets. Apply to the item only (not recursive).</p>`,
+    body: `<div>
+      <div class="grid grid-2">
+        <div><label class="field"><span class="field-label">Mode (octal)</span><input id="perm-mode" class="mono" value="${esc(mode)}" placeholder="755"></label></div>
+        <div><label class="field"><span class="field-label">Owner</span><input id="perm-owner" class="mono" value="${esc(owner || "")}"></label></div>
+        <div><label class="field"><span class="field-label">Group</span><input id="perm-group" class="mono" value="${esc(group || "")}"></label></div>
+      </div>
+      <p class="small dim">0755 dirs · 0644 files · 0600 secrets. Apply to the item only (not recursive).</p>
+    </div>`,
     actions: [],
   });
   const save = btn("Apply", "btn btn-primary");

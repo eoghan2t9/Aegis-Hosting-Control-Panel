@@ -77,8 +77,10 @@ addRoute("/mail", {
         const dm = modal({
           title: "DKIM key — " + md.domain,
           wide: true,
-          body: `<p class="small muted">Published as a TXT record at <span class="mono">default._domainkey.${esc(md.domain)}</span>:</p>
-            <pre class="mono small" style="white-space:pre-wrap;word-break:break-all">${esc(md.dkim_public_key)}</pre>`,
+          body: `<div>
+            <p class="small muted">Published as a TXT record at <span class="mono">default._domainkey.${esc(md.domain)}</span>:</p>
+            <pre class="mono small" style="white-space:pre-wrap;word-break:break-all">${esc(md.dkim_public_key)}</pre>
+          </div>`,
           actions: [close],
         });
         close.onclick = () => dm.close();

@@ -90,8 +90,10 @@ function credsModal(acct) {
   const close = btn("Close");
   const cm = modal({
     title: "FTP details — " + acct.username,
-    body: `<div class="creds-box">host <b>${esc(host)}</b> · port <b>21</b><br>username <b>${esc(acct.username)}</b><br>home <span class="dim">${esc(acct.home_dir)}</span></div>
-      <p class="small muted">Use any FTP client. FTPS available with explicit TLS. Passive range 40000–40100.</p>`,
+    body: `<div>
+      <div class="creds-box">host <b>${esc(host)}</b> · port <b>21</b><br>username <b>${esc(acct.username)}</b><br>home <span class="dim">${esc(acct.home_dir)}</span></div>
+      <p class="small muted">Use any FTP client. FTPS available with explicit TLS. Passive range 40000–40100.</p>
+    </div>`,
     actions: [close],
   });
   close.onclick = () => cm.close();

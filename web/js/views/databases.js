@@ -89,9 +89,11 @@ function credsModal(row, note) {
   const close = btn("Close");
   const cm = modal({
     title: "Database credentials" + (row.name ? " — " + row.name : ""),
-    body: `<div class="creds-box">${lines.map(([k, v]) => `${k}: <b>${esc(v)}</b>`).join("<br>")}</div>
+    body: `<div>
+      <div class="creds-box">${lines.map(([k, v]) => `${k}: <b>${esc(v)}</b>`).join("<br>")}</div>
       ${note ? `<p class="small dim">This is the only time the password is shown in full — record it now or reset by deleting and recreating.</p>` : ""}
-      <p class="small dim mono" style="word-break:break-all">dsn: ${esc(dsn)}</p>`,
+      <p class="small dim mono" style="word-break:break-all">dsn: ${esc(dsn)}</p>
+    </div>`,
     actions: [close],
   });
   close.onclick = () => cm.close();
