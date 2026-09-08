@@ -82,13 +82,15 @@ function credsModal(row, note) {
   const dsn = row.server === "postgres"
     ? `postgres://${row.db_user}:${row.db_password}@${host}/${row.name}`
     : `mysql://${row.db_user}:${row.db_password}@127.0.0.1:3306/${row.name}`;
-  modal({
+  const close = btn("Close");
+  const cm = modal({
     title: "Database credentials" + (row.name ? " — " + row.name : ""),
     body: `<div class="creds-box">${lines.map(([k, v]) => `${k}: <b>${esc(v)}</b>`).join("<br>")}</div>
       ${note ? `<p class="small dim">This is the only time the password is shown in full — record it now or reset by deleting and recreating.</p>` : ""}
       <p class="small dim mono" style="word-break:break-all">dsn: ${esc(dsn)}</p>`,
-    actions: [btn("Close")],
+    actions: [close],
   });
+  close.onclick = () => cm.close();
 }
 
 function btn(text) {

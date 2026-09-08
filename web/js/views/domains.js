@@ -161,6 +161,19 @@ function openDetail(id, onChanged) {
       });
       const dnsBtn = document.getElementById("dd-dns");
       if (dnsBtn) dnsBtn.onclick = () => { m.close(); location.hash = "#/dns"; };
+      const issueSsl = async (challenge, kind) => {
+        const btn = document.getElementById("ssl-" + (kind === "self" ? "self" : challenge));
+        if (btn) btn.classList.add("btn-busy");
+        try {
+          const order = await api.post(kind === "self" ? "/ssl/self-signed" : "/ssl/issue", { domain_id: id, challenge });
+          toast(order.status === "issued" ? "Certificate issued" : "Certificate order " + order.status);
+          m.close(); refresh();
+        } catch (ex) { toast(ex.message, "err"); }
+        if (btn) btn.classList.remove("btn-busy");
+      };
+      document.getElementById("ssl-http").onclick = () => issueSsl("http", "issue");
+      document.getElementById("ssl-dns").onclick = () => issueSsl("dns", "issue");
+      document.getElementById("ssl-self").onclick = () => issueSsl("", "self");
     });
   }).catch((ex) => toast(ex.message, "err"));
 }

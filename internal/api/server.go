@@ -130,7 +130,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/users/{id}", s.withAuth(s.withRole(s.handleUsersGet, store.RoleAdmin, store.RoleReseller)))
 	mux.HandleFunc("PATCH /api/users/{id}", s.withAuth(s.withRole(s.handleUsersUpdate, store.RoleAdmin, store.RoleReseller)))
 	mux.HandleFunc("DELETE /api/users/{id}", s.withAuth(s.withRole(s.handleUsersDelete, store.RoleAdmin, store.RoleReseller)))
-	mux.HandleFunc("POST /api/users/{id}/reset-password", s.withAuth(s.withRole(s.handleUsersResetPassword, store.RoleAdmin, store.RoleReseller)))
+	// No withRole gate: handleUsersResetPassword's own canManageUser check
+	// already allows a user to reset their own password (the dashboard's
+	// self-service "My account" form uses this same route), on top of
+	// admin/reseller managing others.
+	mux.HandleFunc("POST /api/users/{id}/reset-password", s.withAuth(s.handleUsersResetPassword))
 	mux.HandleFunc("POST /api/users/{id}/suspend", s.withAuth(s.withRole(s.handleUsersSuspend, store.RoleAdmin, store.RoleReseller)))
 	mux.HandleFunc("POST /api/users/{id}/unsuspend", s.withAuth(s.withRole(s.handleUsersSuspend, store.RoleAdmin, store.RoleReseller)))
 	mux.HandleFunc("GET /api/packages", s.withAuth(s.handlePackagesList))
