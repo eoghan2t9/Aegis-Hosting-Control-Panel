@@ -1,6 +1,6 @@
 import { addRoute, isAdmin } from "../app.js";
 import { api, qs } from "../api.js";
-import { icon, esc, toast, promptDialog, confirmDialog, pageHead, loading, fmtBytes, fmtAgo, modal, debounce } from "../ui.js";
+import { icon, esc, toast, promptDialog, confirmDialog, pageHead, loading, fmtBytes, fmtAgo, modal, debounce, copyText } from "../ui.js";
 
 let currentPath = "";
 let lastEntries = [];
@@ -151,14 +151,14 @@ function renderList(entries) {
     <thead><tr><th>Name</th><th>Size</th><th>Mode</th><th>Owner</th><th>Modified</th><th></th></tr></thead>
     <tbody>${entries.map((e) => `
       <tr data-path="${esc(e.path)}" data-type="${e.type}" data-name="${esc(e.name)}" data-mode="${esc(e.mode)}" data-owner="${esc(e.owner)}" data-group="${esc(e.group)}">
-        <td><div class="fm-name-cell"><span class="file-ico ${e.type === "dir" ? "dir" : fileCls(e.name)}">${e.type === "dir" ? "▸" : fileGlyph(e.name)}</span>
+        <td><div class="fm-name-cell"><span class="file-ico ${e.type === "dir" ? "dir" : fileCls(e.name)}">${e.type === "dir" ? icon("folder") : fileGlyph(e.name)}</span>
           <b>${esc(e.name)}</b>${e.type === "symlink" ? '<span class="tag small">link</span>' : ""}</div></td>
         <td class="num small">${e.type === "dir" ? "—" : fmtBytes(e.size)}</td>
         <td class="mono small dim">${e.mode}</td>
         <td class="small dim">${esc(e.owner)}:${esc(e.group)}</td>
         <td class="small dim">${fmtAgo(e.mod_time)}</td>
         <td><div class="row-actions">
-          ${e.type === "file" ? `<button class="btn btn-ghost act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost act-dl" title="Download">${icon("download")}</button>` : ""}
+          ${e.type === "file" ? `<button class="btn btn-ghost act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost act-dl" title="Download">${icon("download")}</button><button class="btn btn-ghost act-copy" title="Copy download link">${icon("copy")}</button>` : ""}
           <button class="btn btn-ghost act-perm" title="Permissions">${icon("lock")}</button>
           <button class="btn btn-ghost act-ren" title="Rename">${icon("edit")}</button>
           <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
@@ -188,7 +188,7 @@ function renderGallery(entries) {
     <div class="gal-tile" tabindex="0" data-path="${esc(e.path)}" data-type="${e.type}" data-name="${esc(e.name)}" data-mode="${esc(e.mode)}" data-owner="${esc(e.owner)}" data-group="${esc(e.group)}">
       <div class="gal-thumb-wrap">
         ${e.type === "dir"
-          ? `<span class="gal-thumb-glyph">▸</span>`
+          ? `<span class="gal-thumb-glyph gal-folder">${icon("folder")}</span>`
           : isThumbable(e.name)
             ? `<img class="gal-thumb" loading="lazy" alt="" src="${thumbUrl(e.path, "sm")}">`
             : `<span class="gal-thumb-glyph">${fileGlyph(e.name)}</span>`}
@@ -196,7 +196,7 @@ function renderGallery(entries) {
       <div class="gal-name">${esc(e.name)}</div>
       <div class="gal-meta small dim">${e.type === "dir" ? "—" : fmtBytes(e.size)}</div>
       <div class="gal-actions">
-        ${e.type === "file" ? `<button class="btn btn-ghost btn-xs act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost btn-xs act-dl" title="Download">${icon("download")}</button>` : ""}
+        ${e.type === "file" ? `<button class="btn btn-ghost btn-xs act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost btn-xs act-dl" title="Download">${icon("download")}</button><button class="btn btn-ghost btn-xs act-copy" title="Copy download link">${icon("copy")}</button>` : ""}
         <button class="btn btn-ghost btn-xs act-perm" title="Permissions">${icon("lock")}</button>
         <button class="btn btn-ghost btn-xs act-ren" title="Rename">${icon("edit")}</button>
         <button class="btn btn-ghost btn-xs act-del" title="Delete">${icon("trash")}</button>
@@ -228,6 +228,11 @@ function renderGallery(entries) {
 function bindItemActions(box, itemSel) {
   box.querySelectorAll(".act-edit").forEach((b) => b.onclick = (e) => { e.stopPropagation(); editFile(b.closest(itemSel).dataset.path); });
   box.querySelectorAll(".act-dl").forEach((b) => b.onclick = (e) => { e.stopPropagation(); location.href = downloadUrl(b.closest(itemSel).dataset.path); });
+  box.querySelectorAll(".act-copy").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const p = b.closest(itemSel).dataset.path;
+    copyText(location.origin + downloadUrl(p));
+  });
   box.querySelectorAll(".act-perm").forEach((b) => b.onclick = (e) => { e.stopPropagation(); permDialog(b.closest(itemSel)); });
   box.querySelectorAll(".act-ren").forEach((b) => b.onclick = (e) => { e.stopPropagation(); renameDialog(b.closest(itemSel).dataset.path); });
   box.querySelectorAll(".act-del").forEach((b) => b.onclick = async (e) => {
@@ -452,8 +457,12 @@ function openLightbox(startPath) {
       </div>
       <div class="small dim" style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">
         <span>${idx + 1} / ${media.length}</span>
-        <a href="${url}" download="${esc(e.name)}">${icon("download")} Download</a>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm lightbox-copy">${icon("copy")} Copy link</button>
+          <a class="btn btn-sm btn-primary" href="${url}" download="${esc(e.name)}">${icon("download")} Download</a>
+        </div>
       </div>`;
+    m.bodyEl.querySelector(".lightbox-copy").onclick = () => copyText(location.origin + url);
     const prevBtn = m.bodyEl.querySelector(".prev");
     const nextBtn = m.bodyEl.querySelector(".next");
     if (prevBtn) prevBtn.onclick = () => { idx = (idx - 1 + media.length) % media.length; render(); };
