@@ -631,8 +631,16 @@ pre.codeblock {
 /* Lightbox (image/video/PDF preview). */
 .lightbox-modal .modal { max-width: 92vw; }
 .lightbox-stage { display: flex; align-items: center; gap: 10px; }
-.lightbox-media { max-width: 100%; max-height: 72vh; margin: 0 auto; display: block; border-radius: var(--radius-sm); background: #000; }
-.lightbox-pdf { width: 100%; height: 72vh; border: none; }
+.lightbox-media {
+  max-width: 100%; max-height: 72vh; margin: 0 auto; display: block;
+  border-radius: var(--radius-sm); background: #000;
+  /* Flex items default to min-width:auto (their intrinsic size), so a
+     photo/video wider than the modal would ignore max-width and overflow
+     it -- this overrides that so large media can actually shrink to fit. */
+  min-width: 0;
+  min-height: 0;
+}
+.lightbox-pdf { width: 100%; height: 72vh; border: none; min-width: 0; }
 .lightbox-nav { background: var(--bg2); border: 1px solid var(--line); border-radius: 50%; width: 34px; height: 34px; flex: none; cursor: pointer; }
 .lightbox-nav svg { width: 16px; height: 16px; }
 .lightbox-nav.prev svg { transform: rotate(180deg); }
