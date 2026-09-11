@@ -182,6 +182,37 @@ func TestChownRecursiveSetsAllDescendants(t *testing.T) {
 	}
 }
 
+func TestListCreatesMissingHomeDir(t *testing.T) {
+	// Mirrors the bootstrap admin account: a HomeDir value that has never
+	// been provisioned on disk (no real system account, no `useradd -m`).
+	// Browsing the file manager for the first time must self-heal by
+	// creating it, not surface a raw "stat: no such file or directory".
+	cfg := config.Default()
+	f := NewFiles(cfg)
+	home := filepath.Join(t.TempDir(), "admin")
+	u := &store.User{Username: "admin", HomeDir: home}
+
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("test setup: home dir should not exist yet, stat err = %v", err)
+	}
+	entries, err := f.List(u, "")
+	if err != nil {
+		t.Fatalf("List on a missing home dir should self-heal, got: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("freshly created home dir should be empty, got %+v", entries)
+	}
+	if info, err := os.Stat(home); err != nil || !info.IsDir() {
+		t.Errorf("home dir was not created: stat err = %v", err)
+	}
+
+	// A missing subdirectory (as opposed to the home root itself) must
+	// still error rather than being silently recreated.
+	if _, err := f.List(u, "/does-not-exist"); err == nil {
+		t.Error("List on a missing non-root subdirectory should still error")
+	}
+}
+
 func TestSearchFinds(t *testing.T) {
 	f, u := newFilesT(t)
 	_ = f.Write(u, "/www/index.html", []byte("x"), 0o644)
