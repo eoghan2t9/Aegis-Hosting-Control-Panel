@@ -616,6 +616,8 @@ pre.codeblock {
 .gal-thumb-wrap { aspect-ratio: 1; background: var(--bg2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .gal-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gal-thumb-glyph { font-size: 30px; color: var(--text-3); }
+.gal-thumb-glyph svg { width: 34px; height: 34px; }
+.gal-folder { color: var(--warn); }
 .gal-name { padding: 6px 8px 2px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gal-meta { padding: 0 8px 8px; }
 .gal-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; background: rgba(6,8,11,.65); border-radius: var(--radius-sm); }
