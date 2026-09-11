@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -224,8 +225,12 @@ func (f *Files) Delete(user *store.User, rel string) error {
 	return os.Remove(abs)
 }
 
-// Chmod sets unix permissions (octal string like "755").
-func (f *Files) Chmod(user *store.User, rel, modeStr string) error {
+// Chmod sets unix permissions (octal string like "755"). When recursive is
+// true, mode is applied to every descendant too (dirs and files alike; there
+// is no separate dir-mode/file-mode split). Symlinks are skipped: Linux has
+// no real lchmod, so a symlink's own "permission bits" are meaningless, and
+// chmod-ing through one would silently affect whatever it points at.
+func (f *Files) Chmod(user *store.User, rel, modeStr string, recursive bool) error {
 	abs, err := f.Resolve(user, rel)
 	if err != nil {
 		return err
@@ -234,11 +239,28 @@ func (f *Files) Chmod(user *store.User, rel, modeStr string) error {
 	if err != nil {
 		return errors.New("invalid mode: use octal like 755")
 	}
-	return os.Chmod(abs, os.FileMode(m))
+	mode := os.FileMode(m)
+	if !recursive {
+		return os.Chmod(abs, mode)
+	}
+	return filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		return os.Chmod(path, mode)
+	})
 }
 
-// Chown changes file ownership (numeric or named user/group).
-func (f *Files) Chown(user *store.User, rel, owner, group string) error {
+// Chown changes file ownership (numeric or named user/group). When recursive
+// is true, ownership is applied to every descendant too. uid/gid are
+// resolved once up front rather than per-file, since lookupUID/lookupGID
+// re-parse /etc/passwd and /etc/group on every call. Symlinks use Lchown
+// (changes the link itself, not its target) so a symlink pointing outside
+// the jailed home can't be used to reach files this call shouldn't touch.
+func (f *Files) Chown(user *store.User, rel, owner, group string, recursive bool) error {
 	abs, err := f.Resolve(user, rel)
 	if err != nil {
 		return err
@@ -251,7 +273,18 @@ func (f *Files) Chown(user *store.User, rel, owner, group string) error {
 	if err != nil {
 		return err
 	}
-	return os.Chown(abs, uid, gid)
+	if !recursive {
+		return os.Chown(abs, uid, gid)
+	}
+	return filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return os.Lchown(path, uid, gid)
+		}
+		return os.Chown(path, uid, gid)
+	})
 }
 
 // Search walks the tree under rel and returns paths containing needle
