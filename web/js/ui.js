@@ -245,7 +245,37 @@ export function pageHead(title, sub, actionsHtml) {
 }
 
 export function copyText(text) {
-  navigator.clipboard?.writeText(text).then(() => toast("Copied to clipboard"), () => toast("Copy failed", "err"));
+  // navigator.clipboard only exists in secure contexts (HTTPS, or
+  // localhost) — the panel is commonly reached over plain HTTP on a bare
+  // IP/hostname before SSL is set up, where it's simply undefined. Optional
+  // chaining short-circuits the *whole* expression in that case, including
+  // the trailing .then(...), so the old `navigator.clipboard?.writeText(...)
+  // .then(...)` silently did nothing at all — no copy, no toast, no error.
+  // Fall back to the legacy execCommand copy, which works without a secure
+  // context.
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard"), () => copyTextFallback(text));
+  } else {
+    copyTextFallback(text);
+  }
+}
+
+function copyTextFallback(text) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    if (ok) toast("Copied to clipboard");
+    else toast("Copy failed", "err");
+  } catch {
+    toast("Copy failed", "err");
+  }
 }
 
 export function debounce(fn, ms = 250) {
