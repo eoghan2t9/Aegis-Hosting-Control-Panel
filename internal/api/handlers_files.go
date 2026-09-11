@@ -152,17 +152,22 @@ func (s *Server) handleFilesChmod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Path string `json:"path"`
-		Mode string `json:"mode"`
+		Path      string `json:"path"`
+		Mode      string `json:"mode"`
+		Recursive bool   `json:"recursive"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := s.Files.Chmod(u, req.Path, req.Mode); err != nil {
+	if err := s.Files.Chmod(u, req.Path, req.Mode, req.Recursive); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit(r, "file.chmod", req.Path+" "+req.Mode, "")
+	detail := ""
+	if req.Recursive {
+		detail = "recursive"
+	}
+	s.audit(r, "file.chmod", req.Path+" "+req.Mode, detail)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -173,19 +178,44 @@ func (s *Server) handleFilesChown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Path  string `json:"path"`
-		Owner string `json:"owner"`
-		Group string `json:"group"`
+		Path      string `json:"path"`
+		Owner     string `json:"owner"`
+		Group     string `json:"group"`
+		Recursive bool   `json:"recursive"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := s.Files.Chown(u, req.Path, req.Owner, req.Group); err != nil {
+	if err := s.Files.Chown(u, req.Path, req.Owner, req.Group, req.Recursive); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit(r, "file.chown", req.Path, "owner="+req.Owner+" group="+req.Group)
+	s.audit(r, "file.chown", req.Path, "owner="+req.Owner+" group="+req.Group+" recursive="+strconv.FormatBool(req.Recursive))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleFilesThumb(w http.ResponseWriter, r *http.Request) {
+	u, err := s.fileUser(r)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	size := r.URL.Query().Get("size")
+	if size == "" {
+		size = "sm"
+	}
+	data, ok, err := s.Thumbs.Get(u, r.URL.Query().Get("path"), size)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleFilesSearch(w http.ResponseWriter, r *http.Request) {

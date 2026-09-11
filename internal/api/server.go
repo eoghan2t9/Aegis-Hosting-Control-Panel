@@ -33,6 +33,7 @@ type Server struct {
 	FTP      *svc.FTP
 	DB       *svc.Databases
 	Files    *svc.Files
+	Thumbs   *svc.Thumbs
 	Backup   *svc.Backup
 	System   *svc.System
 	Tuner    *svc.Tuner
@@ -52,11 +53,11 @@ type Server struct {
 // New creates the API server.
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
-	ftp *svc.FTP, db *svc.Databases, files *svc.Files, backup *svc.Backup,
+	ftp *svc.FTP, db *svc.Databases, files *svc.Files, thumbs *svc.Thumbs, backup *svc.Backup,
 	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
-		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Backup: backup,
+		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
 		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages,
 		primaryIPv4: detectPrimaryIP(),
 	}
@@ -211,6 +212,7 @@ func (s *Server) Handler() http.Handler {
 	// Files.
 	mux.HandleFunc("GET /api/files", s.withAuth(s.handleFilesList))
 	mux.HandleFunc("GET /api/files/content", s.withAuth(s.handleFilesRead))
+	mux.HandleFunc("GET /api/files/thumb", s.withAuth(s.handleFilesThumb))
 	mux.HandleFunc("POST /api/files/write", s.withAuth(s.handleFilesWrite))
 	mux.HandleFunc("POST /api/files/mkdir", s.withAuth(s.handleFilesMkdir))
 	mux.HandleFunc("POST /api/files/rename", s.withAuth(s.handleFilesRename))

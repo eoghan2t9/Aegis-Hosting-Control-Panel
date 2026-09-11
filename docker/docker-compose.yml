@@ -45,6 +45,7 @@ services:
       - aegis-php:/run/php
       - aegis-logs:/var/log
       - aegis-backups:/var/backups/aegis
+      - aegis-cache:/var/cache/aegis
     environment:
       AEGIS_ADMIN_USER: admin
       AEGIS_ADMIN_PASSWORD: admin
@@ -84,3 +85,4 @@ volumes:
   aegis-php:
   aegis-logs:
   aegis-backups:
+  aegis-cache:
