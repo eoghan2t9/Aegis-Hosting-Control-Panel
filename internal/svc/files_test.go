@@ -87,7 +87,7 @@ func TestFileCRUD(t *testing.T) {
 	if _, err := f.Read(u, "/public/hello.txt"); err == nil {
 		t.Error("old name should be gone")
 	}
-	if err := f.Chmod(u, "/public/goodbye.txt", "600"); err != nil {
+	if err := f.Chmod(u, "/public/goodbye.txt", "600", false); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := f.Stat(u, "/public/goodbye.txt")
@@ -103,6 +103,82 @@ func TestFileCRUD(t *testing.T) {
 	}
 	if _, err := f.List(u, "/public/deep"); err == nil {
 		t.Error("deleted dir should be gone")
+	}
+}
+
+func TestChmodRecursiveAppliesToAllDescendants(t *testing.T) {
+	f, u := newFilesT(t)
+	if err := f.Write(u, "/d/a.txt", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Write(u, "/d/sub/b.txt", []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Chmod(u, "/d", "700", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/d", "/d/a.txt", "/d/sub", "/d/sub/b.txt"} {
+		st, err := f.Stat(u, p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if st.Mode != "700" {
+			t.Errorf("recursive chmod: %s mode = %s, want 700", p, st.Mode)
+		}
+	}
+}
+
+func TestChmodRecursiveSkipsSymlinks(t *testing.T) {
+	f, u := newFilesT(t)
+	if err := f.Mkdir(u, "/d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "target.txt")
+	if err := os.WriteFile(outsideFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(u.HomeDir, "d", "link")); err != nil {
+		t.Skip("symlink not permitted")
+	}
+	before, err := os.Stat(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Chmod(u, "/d", "700", true); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Errorf("recursive chmod followed a symlink: outside file mode changed %v -> %v", before.Mode().Perm(), after.Mode().Perm())
+	}
+}
+
+func TestChownRecursiveSetsAllDescendants(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root; dev container runs as root")
+	}
+	f, u := newFilesT(t)
+	if err := f.Write(u, "/d/a.txt", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Write(u, "/d/sub/b.txt", []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Chown(u, "/d", "root", "root", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/d", "/d/a.txt", "/d/sub", "/d/sub/b.txt"} {
+		st, err := f.Stat(u, p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if st.Owner != "root" || st.Group != "root" {
+			t.Errorf("recursive chown: %s owner:group = %s:%s, want root:root", p, st.Owner, st.Group)
+		}
 	}
 }
 

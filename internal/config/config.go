@@ -25,9 +25,10 @@ const (
 	DefaultBackupDir  = "/var/backups/aegis"
 	DefaultCertDir    = "/var/lib/aegis/certs"
 	DefaultTunedDir   = "/etc/aegis/tuned"
-	DefaultDNSDir     = "/var/lib/aegis/dns"
-	DefaultSecretFile = "/etc/aegis/secret.key"
-	DefaultListenAddr = ":8080"
+	DefaultDNSDir        = "/var/lib/aegis/dns"
+	DefaultSecretFile    = "/etc/aegis/secret.key"
+	DefaultListenAddr    = ":8080"
+	DefaultThumbCacheDir = "/var/cache/aegis/thumbs"
 )
 
 // Credentials for the database servers the panel manages. These are the
@@ -85,6 +86,9 @@ type Config struct {
 	DNSDir     string `json:"dns_dir"`
 	SecretFile string `json:"secret_file"`
 	ListenAddr string `json:"listen_addr"`
+	// ThumbCacheDir stores generated file-manager thumbnails (images, video
+	// frames, PDF first pages), keyed by content so edits auto-invalidate.
+	ThumbCacheDir string `json:"thumb_cache_dir"`
 
 	// PublicHost is the hostname the panel is reachable at (used in UI/links).
 	PublicHost string `json:"public_host"`
@@ -117,6 +121,7 @@ func Default() *Config {
 		DNSDir:          envOr("AEGIS_DNS_DIR", DefaultDNSDir),
 		SecretFile:      envOr("AEGIS_SECRET_FILE", DefaultSecretFile),
 		ListenAddr:      envOr("AEGIS_LISTEN", DefaultListenAddr),
+		ThumbCacheDir:   envOr("AEGIS_THUMB_CACHE_DIR", DefaultThumbCacheDir),
 		PublicHost:      envOr("AEGIS_PUBLIC_HOST", ""),
 		SessionTTLHours: 24,
 		MariaDB: MariaDBCreds{
@@ -213,7 +218,7 @@ func (c *Config) Validate() error {
 // EnsureDirs creates every directory the panel needs and generates the secret
 // key file when missing.
 func (c *Config) EnsureDirs() error {
-	for _, d := range []string{c.Dir, filepath.Dir(c.DBPath), c.HomeRoot, c.BackupDir, c.CertDir, c.TunedDir, c.DNSDir} {
+	for _, d := range []string{c.Dir, filepath.Dir(c.DBPath), c.HomeRoot, c.BackupDir, c.CertDir, c.TunedDir, c.DNSDir, c.ThumbCacheDir} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}

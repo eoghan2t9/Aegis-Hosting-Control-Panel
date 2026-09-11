@@ -90,6 +90,7 @@ func run(configPath string) error {
 	ftpSvc := svc.NewFTP(cfg, st)
 	dbSvc := svc.NewDatabases(cfg, st)
 	files := svc.NewFiles(cfg)
+	thumbsSvc := svc.NewThumbs(cfg, files)
 	backupSvc := svc.NewBackup(cfg, st, dbSvc, ftpSvc, webSvc, php, am, cipher)
 	term := svc.NewTerminal(cfg)
 	cronSvc := svc.NewCron(cfg, st)
@@ -106,7 +107,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc)
+		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

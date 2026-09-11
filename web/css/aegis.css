@@ -583,6 +583,9 @@ pre.codeblock {
   .grid-4, .grid-3 { grid-template-columns: 1fr; }
   .toolbar input[type=search] { width: 100%; }
   .toasts { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+  .gal-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .lightbox-media, .lightbox-pdf { max-height: 60vh; }
+  .perm-row { grid-template-columns: 56px repeat(3, 1fr); gap: 4px; }
 }
 @media (min-width: 861px) {
   .sidebar-backdrop { display: none !important; }
@@ -602,6 +605,38 @@ pre.codeblock {
 .file-ico.zip { color: var(--accent); }
 .dropzone { border: 1.5px dashed var(--line-strong); border-radius: var(--radius-sm); padding: 26px; text-align: center; color: var(--text-3); font-size: 13px; }
 .dropzone.over { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+/* Gallery grid view. */
+.view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.view-toggle .view-btn { border-radius: 0; border: none; }
+.view-toggle .view-btn.active { background: var(--accent-dim); color: var(--accent); }
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.gal-tile { background: var(--bg1); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; position: relative; transition: border-color .12s; }
+.gal-tile:hover, .gal-tile:focus-within { border-color: var(--accent); }
+.gal-thumb-wrap { aspect-ratio: 1; background: var(--bg2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.gal-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gal-thumb-glyph { font-size: 30px; color: var(--text-3); }
+.gal-name { padding: 6px 8px 2px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gal-meta { padding: 0 8px 8px; }
+.gal-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; background: rgba(6,8,11,.65); border-radius: var(--radius-sm); }
+.gal-tile:hover .gal-actions, .gal-tile:focus-within .gal-actions { opacity: 1; }
+
+/* Recursive rwx permission grid. */
+.perm-grid { display: grid; gap: 6px; margin-bottom: 4px; }
+.perm-row { display: grid; grid-template-columns: 70px repeat(3, 1fr); align-items: center; gap: 8px; }
+.perm-row.perm-head span { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+.perm-row-label { font-weight: 600; color: var(--text-1); }
+.perm-cell { justify-content: center; }
+
+/* Lightbox (image/video/PDF preview). */
+.lightbox-modal .modal { max-width: 92vw; }
+.lightbox-stage { display: flex; align-items: center; gap: 10px; }
+.lightbox-media { max-width: 100%; max-height: 72vh; margin: 0 auto; display: block; border-radius: var(--radius-sm); background: #000; }
+.lightbox-pdf { width: 100%; height: 72vh; border: none; }
+.lightbox-nav { background: var(--bg2); border: 1px solid var(--line); border-radius: 50%; width: 34px; height: 34px; flex: none; cursor: pointer; }
+.lightbox-nav svg { width: 16px; height: 16px; }
+.lightbox-nav.prev svg { transform: rotate(180deg); }
+.lightbox-nav:disabled { opacity: .35; cursor: default; }
 
 /* editor */
 .editor-head { display: flex; gap: 8px; align-items: center; }
