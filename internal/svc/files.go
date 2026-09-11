@@ -31,10 +31,7 @@ var ErrForbidden = errors.New("path escapes your home directory")
 // Resolve maps a panel-relative path (e.g. "/public/index.html") to an
 // absolute path inside the user's home, rejecting traversal.
 func (f *Files) Resolve(user *store.User, rel string) (string, error) {
-	root := user.HomeDir
-	if root == "" {
-		root = filepath.Join(f.Cfg.HomeRoot, user.Username)
-	}
+	root := homeRoot(f.Cfg, user)
 	if rel == "" || rel == "/" {
 		return root, nil
 	}
@@ -84,6 +81,16 @@ func (f *Files) List(user *store.User, rel string) ([]Entry, error) {
 		return nil, err
 	}
 	info, err := os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) && dir == homeRoot(f.Cfg, user) {
+		// Not every account has a home directory on disk yet — the
+		// bootstrap admin, in particular, is a superuser construct with no
+		// real system account or provisioned home. Rather than error on
+		// the very first visit to the file manager, create it lazily.
+		if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
+			return nil, err
+		}
+		info, err = os.Stat(dir)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -431,6 +438,15 @@ func (f *Files) Unzip(user *store.User, zipRel, destRel string) error {
 		}
 	}
 	return nil
+}
+
+// homeRoot returns the absolute path of user's home directory, falling back
+// to <HomeRoot>/<username> when the account record has none set.
+func homeRoot(cfg *config.Config, user *store.User) string {
+	if user.HomeDir != "" {
+		return user.HomeDir
+	}
+	return filepath.Join(cfg.HomeRoot, user.Username)
 }
 
 func ownerName(info os.FileInfo) string { return lookupUserName(info) }
