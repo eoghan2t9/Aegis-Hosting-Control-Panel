@@ -101,6 +101,7 @@ func run(configPath string) error {
 	quotaSvc := svc.NewQuota(cfg, st)
 	webAppsSvc := svc.NewWebApps(cfg, dbSvc)
 	packagesSvc := svc.NewPackages(st)
+	metricsHist := svc.NewMetricsHistory(sys)
 
 	// First-run bootstrap.
 	if err := bootstrap(cfg, st, tuner, webSvc); err != nil {
@@ -108,7 +109,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc)
+		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -162,6 +163,7 @@ func run(configPath string) error {
 	go backupSvc.AutoBackup(ctx)
 	go quotaSvc.EnforceLoop(ctx)
 	go packagesSvc.CheckUpdatesLoop(ctx)
+	go metricsHist.SamplerLoop(ctx)
 	// One-off check shortly after boot so the update badge isn't empty for
 	// up to 6h waiting on CheckUpdatesLoop's first tick.
 	go func() {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"aegis/internal/config"
 	"aegis/internal/store"
@@ -28,6 +29,12 @@ func NewDomains(cfg *config.Config, st *store.Store, web *WebServer, php *PHP) *
 type CreateOptions struct {
 	PHPVersion string `json:"php_version"`
 	WebServer  string `json:"webserver"`
+	// RelPath optionally overrides where the document root is created,
+	// relative to the user's home directory (e.g. "example.com/sub" to
+	// nest a subdomain inside the master domain's folder, or
+	// "shop.example.com" for its own top-level folder). Empty uses the
+	// default <domain>/public. Must stay inside the home directory.
+	RelPath string `json:"rel_root"`
 }
 
 // UserHome returns the home directory for a panel user.
@@ -38,9 +45,70 @@ func (d *Domains) UserHome(user *store.User) string {
 	return filepath.Join(d.Cfg.HomeRoot, user.Username)
 }
 
-// DocumentRoot is where site files live for a domain.
+// DocumentRoot is where site files live for a domain (default layout).
 func (d *Domains) DocumentRoot(user *store.User, domain string) string {
 	return filepath.Join(d.UserHome(user), domain, "public")
+}
+
+// ResolveDocRoot turns a user-supplied relative docroot into an absolute
+// path inside the user's home directory, rejecting anything that escapes
+// it: absolute paths, ".." segments, traversal via symlinks, and the home
+// directory itself (a docroot at ~ would expose every other domain's
+// files, and the placeholder writer would race the home dir).
+func (d *Domains) ResolveDocRoot(user *store.User, rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", errors.New("relative document root is empty")
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("document root must be relative to your home directory")
+	}
+	clean := filepath.ToSlash(filepath.Clean(rel))
+	if clean == "." || clean == "/" || strings.HasPrefix(clean, "../") || clean == ".." || strings.Contains(clean, "/../") {
+		return "", fmt.Errorf("document root cannot contain '..'")
+	}
+	for _, seg := range strings.Split(clean, "/") {
+		if seg == "" || seg == "." {
+			return "", fmt.Errorf("document root has an invalid path segment")
+		}
+		// "~/..." means home to a shell; here it is already home-relative,
+		// so a literal tilde folder is almost certainly a mistake.
+		if seg == "~" || strings.HasPrefix(seg, "~") {
+			return "", fmt.Errorf("document root cannot start a segment with '~'")
+		}
+		// Whitespace would break the unquoted root directives in generated
+		// nginx/apache vhosts.
+		if strings.ContainsFunc(seg, func(r rune) bool { return r == ' ' || r == '\t' }) {
+			return "", fmt.Errorf("document root segment %q must not contain spaces", seg)
+		}
+		// Keep names filesystem-safe and hidden files out of the layout.
+		if seg[0] == '.' || strings.ContainsAny(seg, `\:*?"<>|`) {
+			return "", fmt.Errorf("document root segment %q is not a valid folder name", seg)
+		}
+	}
+	abs := filepath.Join(d.UserHome(user), filepath.FromSlash(clean))
+	// Symlink escape check: every component created/verified below home.
+	probe := d.UserHome(user)
+	for _, seg := range strings.Split(filepath.FromSlash(clean), "/") {
+		probe = filepath.Join(probe, seg)
+		if st, err := os.Lstat(probe); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("document root path %q is a symlink", seg)
+		}
+	}
+	if abs == filepath.Clean(d.UserHome(user)) {
+		return "", fmt.Errorf("document root cannot be the home directory itself")
+	}
+	return abs, nil
+}
+
+// docrootFor picks the document root for a new domain: the caller's
+// relative path when given (validated to stay inside the home directory),
+// else the default <domain>/public layout.
+func (d *Domains) docrootFor(user *store.User, domain string, opts CreateOptions) (string, error) {
+	if strings.TrimSpace(opts.RelPath) != "" {
+		return d.ResolveDocRoot(user, opts.RelPath)
+	}
+	return d.DocumentRoot(user, domain), nil
 }
 
 // Create validates and provisions a domain for a user.
@@ -88,7 +156,10 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 
 	// Create document root and seed a styled under-construction placeholder
 	// (skipped when the docroot already has content — see placeholder.go).
-	root := d.DocumentRoot(user, domain)
+	root, err := d.docrootFor(user, domain, opts)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create docroot: %w", err)
 	}

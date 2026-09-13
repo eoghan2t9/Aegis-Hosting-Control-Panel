@@ -77,6 +77,8 @@ function openCreate(phpVersions, webServers) {
     { name: "domain", label: "Domain name", placeholder: "example.com", required: true, mono: true },
     { name: "php_version", label: "PHP version", type: "select", options: phpOptions },
     { name: "webserver", label: "Web server", type: "select", options: wsOptions },
+    { name: "rel_root", label: "Document folder (relative to your home, optional)", placeholder: "example.com/sub — default: <domain>/public", mono: true,
+      help: "Nest a subdomain inside an existing domain's folder (example.com/sub) or give it its own root folder (shop.example.com). Must stay inside your home directory." },
   ];
   if (isAdmin()) fields.splice(0, 0, { name: "user_id", label: "Owner username", placeholder: "leave blank for self" });
   promptDialog("Add a domain", fields).then(async (vals) => {
@@ -92,6 +94,7 @@ function openCreate(phpVersions, webServers) {
       }
       const created = await api.post("/domains", {
         domain: vals.domain, php_version: vals.php_version || "", webserver: vals.webserver || "",
+        ...(vals.rel_root && vals.rel_root.trim() ? { rel_root: vals.rel_root.trim() } : {}),
         ...(uid ? { user_id: uid } : {}),
       });
       toast(`Domain ${created.domain} is live`);
@@ -146,6 +149,18 @@ function openDetail(id, onChanged) {
           </div>
         </div>
         <div style="height:16px"></div>
+        <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Logs</b>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <select id="dd-log-kind" style="width:auto">
+            <option value="access">Access log</option>
+            <option value="error">Error log</option>
+            <option value="caddy">Caddy log</option>
+          </select>
+          <button class="btn btn-sm" id="dd-log-refresh">${icon("clock")} Refresh</button>
+          <span class="small dim" id="dd-log-meta"></span>
+        </div>
+        <pre id="dd-log-view" class="mono small" style="margin-top:8px;max-height:260px;overflow:auto;background:var(--bg-1,#14161a);padding:10px;border-radius:8px;white-space:pre-wrap;word-break:break-all"> </pre>
+        <div style="height:16px"></div>
         <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Web app installer</b>
         <div id="dd-apps" style="margin-top:8px;display:flex;gap:8px;align-items:center">
           <button class="btn btn-sm" id="dd-install">${icon("plus")} Install an app…</button>
@@ -154,6 +169,20 @@ function openDetail(id, onChanged) {
         <div style="height:16px"></div>
         ${sslBlock(dom, id)}`;
       document.getElementById("dd-install").onclick = () => appPickerDialog(dom, id, m);
+      const logView = document.getElementById("dd-log-view");
+      const loadLog = async () => {
+        const kind = document.getElementById("dd-log-kind").value;
+        try {
+          const data = await api.get(`/domains/${id}/logs?kind=${encodeURIComponent(kind)}&lines=300`);
+          logView.textContent = data.exists
+            ? (data.lines.join("\n") || "(empty)")
+            : `No ${kind} log yet for this domain.`;
+          document.getElementById("dd-log-meta").textContent = data.exists ? data.lines.length + " lines" : "";
+        } catch (ex) { logView.textContent = "Failed to load log: " + ex.message; }
+      };
+      document.getElementById("dd-log-refresh").onclick = loadLog;
+      document.getElementById("dd-log-kind").onchange = loadLog;
+      loadLog();
       document.getElementById("dd-wpcli").onclick = () => wpCliDialog(id);
       document.getElementById("dd-apply-php").onclick = async () => {
         const ver = document.getElementById("dd-php").value;

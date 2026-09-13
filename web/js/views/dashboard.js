@@ -61,7 +61,10 @@ addRoute("/dashboard", {
       </div>
       <div style="height:16px"></div>
       <div id="live-charts" class="card">
-        <div class="card-head"><span class="card-title">Realtime activity</span><span class="card-actions"><span class="tag tag-lime" id="ws-state">live</span></span></div>
+        <div class="card-head"><span class="card-title">Realtime activity</span><span class="card-actions">
+          <button class="btn btn-ghost btn-sm chart-range" data-range="hour">hour</button>
+          <button class="btn btn-ghost btn-sm chart-range" data-range="day">day</button>
+          <span class="tag tag-lime" id="ws-state">live</span></span></div>
         <div class="grid grid-2">
           <div><div class="meter-label"><span>CPU</span><span id="cpu-val">—</span></div><div id="chart-cpu"></div></div>
           <div><div class="meter-label"><span>Memory used</span><span id="mem-val">—</span></div><div id="chart-mem"></div></div>
@@ -80,13 +83,40 @@ addRoute("/dashboard", {
     `);
 
     startLiveCharts(ov);
+    loadHistory("hour");
     loadUsage(view);
+    view.querySelectorAll(".chart-range").forEach((b) => b.onclick = () => loadHistory(b.dataset.range));
   },
 });
 
 function fmtDur(secs) {
   const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
   return (d ? d + "d " : "") + (h || d ? h + "h " : "") + m + "m";
+}
+
+// loadHistory seeds/refreshes the four trend charts from the server-side
+// ring buffer (30s samples). Called on render and when a range button is
+// clicked; the live WebSocket keeps appending on top between loads.
+async function loadHistory(range) {
+  try {
+    const data = await api.get("/system/metrics/history?range=" + range);
+    const pts = data.points || [];
+    if (!pts.length || !document.getElementById("chart-cpu")) return;
+    const cpu = pts.map((p) => p.cpu);
+    const mem = pts.map((p) => (p.mem_total ? (p.mem_used / p.mem_total) * 100 : 0));
+    // Network: convert cumulative counters to per-sample deltas.
+    const rx = [], tx = [];
+    for (let i = 1; i < pts.length; i++) {
+      const dt = Math.max(1, (pts[i].t - pts[i - 1].t) / 1000);
+      rx.push(Math.max(0, (pts[i].net_rx - pts[i - 1].net_rx) / dt));
+      tx.push(Math.max(0, (pts[i].net_tx - pts[i - 1].net_tx) / dt));
+    }
+    const mx = (n) => Math.max(...n) || 1;
+    document.getElementById("chart-cpu").innerHTML = sparkline(cpu, { max: 100, color: "var(--accent)", dot: true });
+    document.getElementById("chart-mem").innerHTML = sparkline(mem, { max: 100, color: "var(--teal)", dot: true, extraCls: "teal" });
+    document.getElementById("chart-rx").innerHTML = sparkline(rx, { max: mx(rx), color: "var(--teal)", extraCls: "teal" });
+    document.getElementById("chart-tx").innerHTML = sparkline(tx, { max: mx(tx), color: "var(--accent)" });
+  } catch { /* history unavailable (fresh boot) — live charts still run */ }
 }
 
 function startLiveCharts(ov) {
