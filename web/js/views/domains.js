@@ -37,18 +37,27 @@ addRoute("/domains", {
           <td class="small dim">${fmtAgo(d.created_at)}</td>
           <td><div class="row-actions">
             <button class="btn btn-ghost act-open" title="Manage">${icon("settings")}</button>
+            <button class="btn btn-ghost act-preview" title="Preview (works before DNS propagates)">${icon("eye")}</button>
             <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
           </div></td>
         </tr>`).join("")}</tbody></table></div>`;
 
     listEl.querySelectorAll("tr[data-id]").forEach((tr) => {
       tr.querySelector(".act-open")?.addEventListener("click", () => openDetail(+tr.dataset.id));
+      tr.querySelector(".act-preview")?.addEventListener("click", (e) => { e.stopPropagation(); openPreview(+tr.dataset.id); });
       tr.querySelector(".act-del")?.addEventListener("click", (e) => { e.stopPropagation(); del(tr.dataset.id); });
     });
 
     document.getElementById("btn-add-domain").onclick = () => openCreate(phpVersions, wsInfo.available);
   },
 });
+
+function openPreview(id) {
+  // The panel accepts the JWT as ?token= (same fallback the WebSocket
+  // endpoints use), so the preview opens in a new tab with full auth.
+  const url = `/api/domains/${id}/preview/?token=${encodeURIComponent(api.token)}`;
+  window.open(url, "_blank", "noopener");
+}
 
 async function del(id) {
   const ok = await confirmDialog("Delete this domain? Its web config and PHP pool are removed; files stay on disk.", { danger: true, title: "Delete domain", okText: "Delete" });
@@ -98,7 +107,7 @@ function openDetail(id, onChanged) {
       title: dom.domain,
       wide: true,
       body: `<div id="detail-body">${loading()}</div>`,
-      actions: [mkAction("Apply config", "btn", () => applyConfig(dom)), closeBtn],
+      actions: [mkAction("Preview site", "btn", () => openPreview(id)), mkAction("Apply config", "btn", () => applyConfig(dom)), closeBtn],
     });
     closeBtn.onclick = () => m.close();
     const body = document.getElementById("detail-body");
