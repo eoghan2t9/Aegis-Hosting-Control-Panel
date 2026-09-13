@@ -117,6 +117,9 @@ Checklist before finishing any task:
 
 1. **Read first.** Start at `docs/ARCHITECTURE.md`, then the narrow slice of
    code you are changing. Do not guess APIs from memory — read them.
+   A prebuilt knowledge graph of this repo lives in `graphify-out/` — see
+   `AGENTS.md` for how to query it (`graphify query ...`, MCP server) before
+   you grep, and refresh it with `graphify --update` after code changes.
 2. **Smallest correct change.** Favour editing existing files. If a feature
    spans the stack, thread it through api/svc/store in one coherent change.
 3. **Ask before guessing** when a choice is genuinely ambiguous and expensive
@@ -159,7 +162,7 @@ host/container first.
 - `internal/svc` commands assume the panel runs as **root** (standard for
   hosting panels) or inside the dev container. Document, don't "fix", when a
   command needs privileges.
-- Email (SMTP, mailboxes) and cron are explicitly **roadmap** — don't
-  half-build a mail stack inside an unrelated change.
+- Multi-server mode is explicitly **roadmap** (`docs/ROADMAP.md`) — don't
+  half-build multi-host orchestration inside an unrelated change.
 - The dev container exists so new developers never touch a real machine.
   Prefer improving it over testing on production hosts.
