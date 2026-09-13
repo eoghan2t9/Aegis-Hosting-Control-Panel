@@ -59,6 +59,24 @@ func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, procs)
 }
 
+// handleMetricsHistory serves recorded resource history for trend charts.
+// Query: range=hour|day (default hour). Data comes from the panel's in-process
+// ring buffer (30s samples, ~26h retained).
+func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
+	since := time.Now().Add(-time.Hour)
+	max := 180
+	switch r.URL.Query().Get("range") {
+	case "day":
+		since = time.Now().Add(-24 * time.Hour)
+		max = 288
+	}
+	points := s.Metrics.Range(since, max)
+	if points == nil {
+		points = []svc.Metrics{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"points": points})
+}
+
 // handleMetricsWS streams realtime resource snapshots to the dashboard.
 func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})

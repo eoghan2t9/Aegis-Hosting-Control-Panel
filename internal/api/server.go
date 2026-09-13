@@ -46,6 +46,7 @@ type Server struct {
 	Quota    *svc.Quota
 	WebApps  *svc.WebApps
 	Packages *svc.Packages
+	Metrics  *svc.MetricsHistory
 
 	primaryIPv4 string
 }
@@ -54,11 +55,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, thumbs *svc.Thumbs, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages, metrics *svc.MetricsHistory) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -124,6 +125,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/system/metrics", s.withAuth(s.handleMetricsWS))
 
 	// Tuning (admin).
+	mux.HandleFunc("GET /api/settings", s.withAuth(s.withRole(s.handleSettingsGet, store.RoleAdmin)))
+	mux.HandleFunc("PUT /api/settings", s.withAuth(s.withRole(s.handleSettingsPut, store.RoleAdmin)))
 	mux.HandleFunc("GET /api/tuning/report", s.withAuth(s.withRole(s.handleTuningReport, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/tuning/inspect", s.withAuth(s.withRole(s.handleTuningInspect, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/tuning/apply", s.withAuth(s.withRole(s.handleTuningApply, store.RoleAdmin)))
@@ -154,6 +157,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/packages", s.withAuth(s.withRole(s.handlePackagesCreate, store.RoleAdmin)))
 	mux.HandleFunc("PATCH /api/packages/{id}", s.withAuth(s.withRole(s.handlePackagesUpdate, store.RoleAdmin)))
 	mux.HandleFunc("DELETE /api/packages/{id}", s.withAuth(s.withRole(s.handlePackagesDelete, store.RoleAdmin)))
+
+	// Domain logs (access/error tails in the domain detail dialog).
+	mux.HandleFunc("GET /api/domains/{id}/logs", s.withAuth(s.handleDomainLogs))
 
 	// Domains.
 	mux.HandleFunc("GET /api/domains", s.withAuth(s.handleDomainsList))
@@ -282,6 +288,9 @@ func (s *Server) Handler() http.Handler {
 	// Quota.
 	mux.HandleFunc("GET /api/quota/usage", s.withAuth(s.handleQuotaUsage))
 	mux.HandleFunc("POST /api/quota/enforce", s.withAuth(s.withRole(s.handleQuotaEnforce, store.RoleAdmin)))
+
+	// Metrics history (hour/day trend charts on the dashboard).
+	mux.HandleFunc("GET /api/system/metrics/history", s.withAuth(s.handleMetricsHistory))
 
 	// Terminal. handleTerminalWS re-checks the flag itself (WebSocket
 	// handshake-specific messaging), the route gate keeps it consistent.
