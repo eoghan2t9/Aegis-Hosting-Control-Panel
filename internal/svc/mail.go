@@ -175,8 +175,22 @@ func (m *Mail) regenerateDKIMTables(ctx context.Context) error {
 		return err
 	}
 	_, _ = RunTimeout(10*time.Second, "chown", "opendkim:opendkim", dkimKeyTbl, dkimSignTbl)
-	_, _ = RunTimeout(10*time.Second, "supervisorctl", "restart", "opendkim")
+	restartService("opendkim")
 	return nil
+}
+
+// restartService (re)starts a mail-stack daemon: supervisord inside the dev
+// container, systemd on bare metal. Both attempts are best-effort — the
+// caller reports success even if the daemon needs a manual restart.
+func restartService(name string) {
+	if _, err := RunTimeout(10*time.Second, "supervisorctl", "restart", name); err == nil {
+		return
+	}
+	if systemdIsInit() {
+		if _, err := RunTimeout(15*time.Second, "systemctl", "restart", name); err == nil {
+			return
+		}
+	}
 }
 
 // upsertRecord creates or updates a DNS record by (name, type) within a zone.

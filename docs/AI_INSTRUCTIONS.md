@@ -162,6 +162,12 @@ host/container first.
 - `internal/svc` commands assume the panel runs as **root** (standard for
   hosting panels) or inside the dev container. Document, don't "fix", when a
   command needs privileges.
+- **Docker is development-only.** The `docker/` directory, `make docker-*`
+  targets and any container logic exist purely for the disposable dev
+  container. Bare-metal installs (`scripts/install-stack.sh`, the `aegis`
+  binary) must never require, shell out to, or configure docker — don't add
+  runtime docker dependencies, and don't ship docker-compose files as a
+  deployment story.
 - Multi-server mode is explicitly **roadmap** (`docs/ROADMAP.md`) — don't
   half-build multi-host orchestration inside an unrelated change.
 - The dev container exists so new developers never touch a real machine.

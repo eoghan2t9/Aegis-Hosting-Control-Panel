@@ -182,7 +182,7 @@ func generatePDFThumb(src, dstTmp string, px int) error {
 	}
 	// The scratch dir must live next to dstTmp: os.Rename below can't cross
 	// filesystems, and Cfg.ThumbCacheDir is commonly a separate mount (e.g.
-	// its own Docker volume) from the system temp dir.
+	// its own volume in the dev container) from the system temp dir.
 	tmpDir, err := os.MkdirTemp(filepath.Dir(dstTmp), "aegis-pdf-*")
 	if err != nil {
 		return err

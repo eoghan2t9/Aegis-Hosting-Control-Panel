@@ -13,7 +13,7 @@ inside a disposable Docker container, and administered from a browser or the
 | Area | Status |
 |---|---|
 | Panel + API + CLI + frontend | working scaffold with full flows |
-| Docker dev environment | included (`make docker-up`) |
+| Docker dev environment | included (`make docker-up`) — **development only; a bare-metal install uses no docker at all** |
 | Production hardening | roadmap (see `docs/ROADMAP.md`) |
 
 > **Project status:** a functional foundation. Core provisioning (users,
@@ -22,6 +22,26 @@ inside a disposable Docker container, and administered from a browser or the
 > container. Treat as pre-1.0.
 
 ---
+
+## Quick start (bare metal)
+
+One command installs the complete stack from distro packages — PHP-FPM 7.4→8.4,
+MariaDB + PostgreSQL (admin credentials seeded), a web server, vsftpd, the mail
+stack, fail2ban, ffmpeg/poppler/composer — then builds the panel and installs a
+systemd service:
+
+```bash
+git clone <this repo> && cd hosting
+sudo scripts/install-stack.sh                 # everything
+sudo scripts/install-stack.sh --no-mail       # tailor with --no-ftp --no-db
+                                              # --php-versions 8.2,8.3
+                                              # --with-caddy / --with-apache
+```
+
+Packages stay distro-managed on purpose: PHP CVE fixes and friends arrive via
+`apt upgrade` — the panel only ever *detects* what's installed. **Docker is not
+part of a bare-metal install** — it exists solely for development (the disposable
+dev container below), and the panel binary itself has no docker dependency.
 
 ## Quick start (development)
 
@@ -80,7 +100,7 @@ make test && make vet   # go test ./... && go vet ./...
 15. **Backup & restore** — full or per-account `tar.gz` archives containing
     homes, database dumps, FTP credentials, domains and DNS records, with a
     JSON manifest; restore recreates accounts.
-16. **Docker dev** — see above.
+16. **Docker dev** — development only (see above); bare-metal installs use none.
 17. **CLI** — `aegisctl` for setup, users, password resets, domains, DNS sync,
     SSL, FTP, databases, backups, tuning and status.
 18. **Auto tuning** — first boot inspects the host and sizes php-fpm/nginx and
@@ -102,6 +122,7 @@ internal/svc     services: domains, php, webserver(+fastcgi), dns(+dnsserver,
                  system, tuning, terminal
 internal/api     REST API + WebSocket handlers
 web/             frontend (embedded via go:embed; disk-served in dev)
+scripts/         bare-metal installer (install-stack.sh)
 docker/          dev container (full stack, bind-mounted)
 docs/            architecture, AI session instructions, roadmap
 ```

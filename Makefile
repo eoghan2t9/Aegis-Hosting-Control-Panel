@@ -1,11 +1,13 @@
 # Aegis — Linux hosting control panel
 # Targets are safe to run from a checked-out tree; they never touch production.
+# Docker targets are for DEVELOPMENT ONLY — a bare-metal install never uses
+# docker (see scripts/install-stack.sh).
 
 GO      ?= go
 BIN_DIR  = bin
 GOFLAGS ?=
 
-.PHONY: all build server cli test lint vet fmt tidy dev docker-up docker-down clean
+.PHONY: all build server cli test lint vet fmt tidy dev docker-up docker-down docker-shell clean
 
 all: build
 
