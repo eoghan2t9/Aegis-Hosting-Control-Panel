@@ -86,15 +86,15 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 		return nil, fmt.Errorf("php %s is not installed", opts.PHPVersion)
 	}
 
-	// Create document root.
+	// Create document root and seed a styled under-construction placeholder
+	// (skipped when the docroot already has content — see placeholder.go).
 	root := d.DocumentRoot(user, domain)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create docroot: %w", err)
 	}
-	// Write a friendly default index when empty.
-	if _, err := os.Stat(filepath.Join(root, "index.html")); os.IsNotExist(err) {
-		_ = os.WriteFile(filepath.Join(root, "index.html"),
-			[]byte(fmt.Sprintf("<!doctype html><html><head><title>%s</title><style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#0a0e12;color:#b6f542;margin:0}</style></head><body><h1>%s is online</h1></body></html>", domain, domain)), 0o644)
+	if err := writePlaceholderPage(root, domain); err != nil {
+		_ = os.Remove(root) // only succeeds when the dir we just made is empty
+		return nil, fmt.Errorf("seed placeholder page: %w", err)
 	}
 
 	dom := &store.Domain{
