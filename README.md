@@ -85,7 +85,9 @@ make test && make vet   # go test ./... && go vet ./...
     SSL, FTP, databases, backups, tuning and status.
 18. **Auto tuning** — first boot inspects the host and sizes php-fpm/nginx and
     kernel parameters (`/etc/aegis/tuned/`), applyable via `sysctl`.
-19. **Extras** — see `docs/ROADMAP.md` for email, cron, AppArmor, CDN, etc.
+19. **Extras** — see `docs/ROADMAP.md` for what's still on the roadmap
+    (2FA, kernel quotas, Node/reverse-proxy apps, …). Email, cron, web apps,
+    fail2ban, quotas and backup targets are already implemented.
 
 ## Repository layout
 
@@ -106,10 +108,13 @@ docs/            architecture, AI session instructions, roadmap
 
 ## Documentation
 
+- `AGENTS.md` — knowledge-graph access for AI agents (query CLI + MCP server
+  over `graphify-out/graph.json`).
 - `docs/AI_INSTRUCTIONS.md` — the instruction set every AI session must follow
   when working on this repository.
 - `docs/ARCHITECTURE.md` — design, data model, extension points.
-- `docs/ROADMAP.md` — what a professional panel still needs (mail, cron…).
+- `docs/ROADMAP.md` — what a professional panel still needs (2FA, kernel
+  quotas, Node/reverse-proxy apps, …).
 
 ## License
 

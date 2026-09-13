@@ -1,45 +1,41 @@
 # Aegis — Roadmap & professional-level features
 
-The user brief said *"also add features I might have forgotten"*. This file
-collects what a professional hosting panel still needs on top of the current
-foundation, in rough priority order.
+This file tracks what a professional hosting panel **still** needs on top of
+the current foundation, in rough priority order.
+
+> **Status note (2026-09):** an earlier version of this list included email,
+> cron jobs, the web-application manager, fail2ban/security centre, backup
+> scheduling with remote targets, per-account quotas and API tokens as
+> missing. All of those are **implemented** now (see the feature map in
+> `README.md`; the knowledge graph in `AGENTS.md` maps each one to its
+> service, store and handler files). The list below reflects verified gaps —
+> nothing here exists in `internal/` today.
 
 ## High priority
 
-- **Email** (the biggest gap): SMTP (Postfix/Exim) + IMAP/POP (Dovecot),
-  virtual mailboxes per domain, aliases, forwarders, quotas, SPF/DKIM/DMARC
-  publishing straight into the DNS zone editor, webmail (Roundcube/SnappyMail)
-  install and password sync.
-- **Cron jobs**: per-user crontab management through the UI + API with a log
-  viewer.
-- **Web application manager**: one-click WordPress/Laravel installers,
-  `composer create-project` templates, PHP-FPM per-site restart, opcache
-  control, `php artisan`/`wp-cli` helpers in the file manager.
-- **Per-account resource enforcement**: setquota/edquota for hard disk
-  limits, cgroup-based CPU/memory caps per site, and bandwidth accounting
-  (nfacct/iptables or vnstat per vhost log analysis).
-- **Two-factor authentication** (TOTP) for panel logins and recovery codes;
+- **Two-factor authentication (TOTP)** for panel logins and recovery codes;
   optional WebAuthn/passkeys.
-- **Backup scheduler + retention**: cron-driven nightly backups, offsite
-  target (S3/B2/SFTP), retention policies, and per-user self-service restores
-  from the file manager.
+- **Per-site PHP settings editor**: `php_admin_value` UI for
+  `upload_max_filesize`, `memory_limit`, `opcache`, extensions — regenerating
+  the pool config. (Today only `open_basedir` is written per pool, in
+  `internal/svc/php.go`.)
+- **Kernel-level disk quotas**: enforcement is currently application-level —
+  periodic `du` + access-log bandwidth accounting that **suspends** the
+  account over its hard limit (`internal/svc/quota.go`, cPanel-style non-strict
+  mode). `setquota`/XFS project quotas would make limits hard instead of
+  eventual; cgroup-based CPU/memory caps fall in the same bucket.
+- **Reverse proxy / Node.js apps**: proxy domains to application ports,
+  PM2-style process manager for Node/Python apps, WebSocket support in vhosts.
+- **Resource usage history**: time-series storage of per-user CPU/mem/disk/
+  bandwidth (currently realtime only) with monthly billing reports.
 
 ## Medium priority
 
-- **Reverse proxy / Node.js apps**: proxy domains to application ports,
-  PM2-style process manager for Node/Python apps, WebSocket support in vhosts.
-- **Full audit & security centre**: fail2ban integration, login throttling
-  with lockout, panel security log, suspicious-login emails, malware scanner
-  hooks (ClamAV), firewall presets per package.
-- **PHP settings editor per site**: `php_admin_value` UI for
-  upload_max_filesize, memory_limit, opcache, extensions — regenerating the
-  pool config.
 - **DNS editor hardening**: DNSSEC management where the provider supports it,
-  zone import/export (AXFR/zone files), CAA presets.
+  zone import (AXFR/zone-file import; RFC1035 *export* already exists via
+  `DNS.WriteZoneFile`), CAA presets.
 - **White-label theming**: logo, accent color, custom login page, reseller
   branding.
-- **API tokens for automation**: scoped, expiring tokens so users can script
-  their own provisioning (PaaS-style).
 - **Notifications**: email + webhooks on events (cert renewal failure, disk
   full, account suspended).
 
@@ -48,8 +44,6 @@ foundation, in rough priority order.
 - **Multi-server mode**: one control node managing several worker hosts
   (like Plesk's extension model) — a large architectural step, deferred.
 - **AppArmor/SELinux profiles** generated alongside web server configs.
-- **Resource usage history**: time-series storage of per-user CPU/mem/disk
-  (currently realtime only) with monthly billing reports.
 - **Localisation** (i18n) framework in the frontend.
 - **Marketplace**: installable plugins (new DNS providers, web server
   templates, app installers) shipped as signed zip bundles.
@@ -57,9 +51,9 @@ foundation, in rough priority order.
 
 ## Notes for implementers
 
-- Email and cron are deliberately absent from the first pass: they are large,
-  self-contained domains. Add them as first-class sections (store tables +
-  svc + view) following `docs/AI_INSTRUCTIONS.md`, not as ad-hoc scripts.
+- New large domains (e.g. multi-server mode) must be added as first-class
+  sections (store tables + svc + view) following `docs/AI_INSTRUCTIONS.md`,
+  not as ad-hoc scripts.
 - Anything that enforces quotas must fail closed (refuse the operation) and
   log to the audit trail.
 - Keep the dev container the source of truth for testing new integrations
