@@ -59,10 +59,20 @@ code files and rebuilds the graph automatically (no LLM needed; it requires
 `graphify` on PATH, provided by `~/.local/bin/env` in this machine's shell
 profiles). Skip it for one commit with `GRAPHIFY_SKIP_HOOK=1 git commit`.
 
-For doc changes (which the hook ignores) or manual refreshes:
+Two hook caveats:
+
+- The hook's code-only rebuild regenerates community labels as hash IDs,
+  dropping the curated human-readable names in the committed graph. If a
+  commit replaces curated labels, restore with
+  `git checkout -- graphify-out/`.
+- Doc changes are ignored by the hook. Doc concepts live in
+  `graphify-out/.graphify_semantic.json`; update that file and rebuild to
+  reflect them (or set `GEMINI_API_KEY` for automatic semantic extraction).
+
+For code-only refreshes without a commit:
 
 ```bash
-graphify --update      # incremental: re-extract only new/changed files
+graphify update .      # re-extract code files, rebuild graph (no LLM)
 ```
 
 ## Known docs-vs-code drift (as of graph build)
