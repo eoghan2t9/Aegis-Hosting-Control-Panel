@@ -30,6 +30,15 @@ func (w *WebServer) GoHandler() http.Handler {
 	})
 }
 
+// ServePreviewRoute serves one domain's docroot through the panel (static
+// files + FastCGI), used by the API's domain-preview endpoint. This is the
+// same serving path the native Go web server uses — only the host-based route
+// resolution is skipped, because a preview request arrives on the panel's own
+// hostname rather than the domain's.
+func (w *WebServer) ServePreviewRoute(rw http.ResponseWriter, r *http.Request, route GoRoute) {
+	w.serveGoRoute(rw, r, route)
+}
+
 func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route GoRoute) {
 	root := route.Root
 	upath := path.Clean("/" + r.URL.Path)

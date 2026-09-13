@@ -113,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
 	mux.HandleFunc("POST /api/admin/impersonate", s.withAuth(s.handleImpersonate))
 	mux.HandleFunc("POST /api/admin/unimpersonate", s.withAuth(s.handleUnimpersonate))
+	mux.HandleFunc("GET /api/domains/{id}/preview/", s.withAuth(s.handlePreview))
+	mux.HandleFunc("GET /api/domains/{id}/preview", s.withAuth(s.handlePreview))
 	mux.HandleFunc("GET /api/admin/audit", s.withAuth(s.withRole(s.handleAudit, store.RoleAdmin)))
 
 	// System.
