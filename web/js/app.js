@@ -20,7 +20,7 @@ async function boot() {
   if (!api.token) {
     const res = await api.get("/system/overview").catch(() => null);
     if (res?.hostname) {
-      hint.innerHTML = `host: ${esc(res.hostname)} · kernel ${esc(res.kernel)}<br>default credentials (dev): admin / admin`;
+      hint.innerHTML = `host: ${esc(res.hostname)} · kernel ${esc(res.kernel)}`;
     }
   }
   loginForm.addEventListener("submit", async (e) => {
