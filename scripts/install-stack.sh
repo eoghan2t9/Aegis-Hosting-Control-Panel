@@ -16,7 +16,9 @@
 #   5. Installs the mail stack (postfix+dovecot+opendkim) unless --no-mail
 #   6. Installs Go from the distro (or downloads the toolchain) and builds
 #      the aegis binary — unless --skip-build
-#   7. Installs the panel as a systemd service and prints next steps
+#   7. Installs the panel as a systemd service, generates the secret key and
+#      an admin password, starts it, verifies the login, and prints the
+#      one-time admin credentials
 #
 # Packages stay distro-managed on purpose: security updates for PHP CVEs and
 # friends keep flowing through `apt upgrade` — nothing here is vendored.
@@ -118,6 +120,51 @@ if [ "$WITH_DB" = 1 ]; then
 else
   log "skipping databases (--no-db)"
 fi
+
+# --------------------- 2b. panel credentials (root-only) ----------------------
+# Credentials live in root-only systemd EnvironmentFile= snippets — never in the
+# unit itself, which any local user can read via `systemctl show`.
+#
+#   /etc/aegis/aegis.env    persistent: DB admin passwords (survive reboots)
+#   /run/aegis-boot.env     one boot: AEGIS_ADMIN_* (deleted after bootstrap so
+#                           the generated admin password exists only until the
+#                           admin changes it or the panel restarts)
+#
+# The JWT/crypto secret key is pre-provisioned at /etc/aegis/secret.key (0600)
+# so it is stable from the very first boot.
+mkdir -p /etc/aegis
+umask 077
+if [ ! -f /etc/aegis/secret.key ]; then
+  head -c32 /dev/urandom | base64 > /etc/aegis/secret.key
+  log "generated panel secret key: /etc/aegis/secret.key"
+fi
+
+# Persistent env file: when databases were (re)seeded this run, always rewrite
+# so the file matches what the servers actually accept; otherwise create once.
+if [ "$WITH_DB" = 1 ] || [ ! -f /etc/aegis/aegis.env ]; then
+  {
+    echo "AEGIS_MARIADB_PASSWORD=${MARIADB_PASSWORD:-}"
+    echo "AEGIS_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}"
+  } > /etc/aegis/aegis.env
+fi
+
+ADMIN_USER="${AEGIS_ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${AEGIS_ADMIN_PASSWORD:-}"
+FIRST_BOOT=0
+if [ -f /var/lib/aegis/aegis.db ]; then
+  # The panel's database exists: bootstrap already ran (or is mid-flight with
+  # credentials the operator supplied). Never generate a new password here —
+  # the panel would ignore it anyway once any account exists.
+  log "panel database exists — admin account stays as-is"
+else
+  # Genuine first boot: provision credentials for the panel's own bootstrap.
+  if [ -z "$ADMIN_PASSWORD" ]; then
+    ADMIN_PASSWORD="$(head -c18 /dev/urandom | base64 | tr -d '/+=')"
+    warn "generated panel admin password: $ADMIN_PASSWORD"
+  fi
+  FIRST_BOOT=1
+fi
+umask 022   # restore: Go build + unit file must not inherit the 077 above
 
 # ----------------------------- 3. web server ---------------------------------
 case "$WEB_SERVER" in
@@ -234,7 +281,7 @@ else
   log "skipping build (--skip-build); install aegis binary to $AEGIS_BIN yourself"
 fi
 
-# ----------------------------- 6. systemd unit -------------------------------
+# ----------------------------- 6. systemd unit + start -----------------------
 if [ "$WITH_BUILD" = 1 ] || [ -x "$AEGIS_BIN" ]; then
   log "installing systemd unit $SERVICE_NAME.service"
   cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
@@ -247,24 +294,78 @@ Type=simple
 ExecStart=${AEGIS_BIN}
 Environment=AEGIS_LISTEN=:8080
 Environment=AEGIS_PANEL_BASE=${BASE}
-Environment=AEGIS_MARIADB_PASSWORD=${MARIADB_PASSWORD:-}
-Environment=AEGIS_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
+# Credentials live in root-only env files — never inline here: any local user
+# can read unit properties (incl. Environment=) via `systemctl show`.
+EnvironmentFile=/etc/aegis/aegis.env
+EnvironmentFile=-/run/aegis-boot.env
+# The panel manages users/services; it must run as root (see docs/ARCHITECTURE.md).
 Restart=on-failure
 RestartSec=3
-# The panel manages users/services; it must run as root (see docs/ARCHITECTURE.md).
 
 [Install]
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable "${SERVICE_NAME}.service"
-  log "credentials written into the unit file (chmod 600 below)"
-  chmod 600 "/etc/systemd/system/${SERVICE_NAME}.service"
+
+  # First-boot credentials: staged where systemd picks them up for exactly one
+  # start, then deleted below. With --skip-build nothing is written here and
+  # the operator bootstraps manually (password printed in the summary).
+  if [ "$FIRST_BOOT" = 1 ]; then
+    umask 077
+    : > /run/aegis-boot.env
+    echo "AEGIS_ADMIN_USER=$ADMIN_USER"  >> /run/aegis-boot.env
+    echo "AEGIS_ADMIN_PASSWORD=$ADMIN_PASSWORD" >> /run/aegis-boot.env
+    umask 022
+  fi
+
+  # Start the panel now and wait until it answers on the panel listener.
+  log "starting ${SERVICE_NAME}.service"
+  systemctl restart "${SERVICE_NAME}.service"
+  UP=0
+  for _ in $(seq 1 30); do
+    if curl -fsS -o /dev/null "http://127.0.0.1:8080${BASE}/"; then UP=1; break; fi
+    sleep 1
+  done
+  if [ "$UP" = 1 ]; then
+    log "panel is up on http://127.0.0.1:8080${BASE}/"
+  else
+    warn "panel did not answer within 30s — check: journalctl -u ${SERVICE_NAME} -e"
+  fi
+
+  # Verify the bootstrap actually created the admin (one attempt, loopback).
+  if [ "$FIRST_BOOT" = 1 ] && [ "$UP" = 1 ]; then
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST "http://127.0.0.1:8080${BASE}/api/auth/login" \
+      -H 'Content-Type: application/json' -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}") || CODE=000
+    if [ "$CODE" = "200" ]; then
+      log "admin '$ADMIN_USER' created and verified (login OK)"
+    else
+      warn "admin login probe returned HTTP $CODE — verify manually"
+    fi
+  fi
+
+  # The generated admin password must not outlive bootstrap: drop the boot env
+  # file so a later restart can never re-read it. Kept only if the panel never
+  # came up — otherwise a failed start would destroy the only copy of the
+  # credentials and a healthy restart could never create the admin.
+  if [ "$UP" = 1 ]; then
+    rm -f /run/aegis-boot.env
+    systemctl reset-failed "${SERVICE_NAME}.service" 2>/dev/null || true
+    log "first-boot credentials wiped from /run (admin must change the generated password)"
+  else
+    warn "kept /run/aegis-boot.env for the next start — remove it once the panel is up"
+  fi
 fi
 
 # ----------------------------- 7. summary ------------------------------------
 PANEL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 PANEL_IP=${PANEL_IP:-<server-ip>}
+MDB_NOTE="skipped";  [ -n "$MARIADB_PASSWORD" ]  && MDB_NOTE="set — see /etc/aegis/aegis.env"
+PG_NOTE="skipped";   [ -n "$POSTGRES_PASSWORD" ] && PG_NOTE="set — see /etc/aegis/aegis.env"
+BOOTSTRAP_NOTE="(binary not installed — bootstrap manually, see below)"
+if [ "$WITH_BUILD" = 1 ] || [ -x "$AEGIS_BIN" ]; then
+  BOOTSTRAP_NOTE="running as a systemd service, ready to use"
+fi
 cat <<EOF
 
 ============================================================
@@ -272,29 +373,46 @@ cat <<EOF
 ============================================================
  PHP-FPM:        $(for v in $PHP_VERSIONS; do printf "php$v "; done)
  Web server:     $WEB_SERVER (default vhost proxies the panel)
- MariaDB admin:  root@127.0.0.1  (password: ${MARIADB_PASSWORD:+set}${MARIADB_PASSWORD:-skipped})
- PostgreSQL:     postgres        (password: ${POSTGRES_PASSWORD:+set}${POSTGRES_PASSWORD:-skipped})
+ MariaDB admin:  root@127.0.0.1  (password: $MDB_NOTE)
+ PostgreSQL:     postgres        (password: $PG_NOTE)
  Mail:           $([ "$WITH_MAIL" = 1 ] && echo postfix+dovecot+opendkim || echo skipped)
  FTP:            $([ "$WITH_FTP" = 1 ] && echo vsftpd || echo skipped)
  fail2ban:       $([ "$WITH_FAIL2BAN" = 1 ] && echo yes || echo no)
  Binary:         $([ -x "$AEGIS_BIN" ] && echo "$AEGIS_BIN" || echo "(not built)")
+ Panel:          $BOOTSTRAP_NOTE
 
  Panel access:
    URL:            http://${PANEL_IP}${BASE}
    Any hostname:   http://<your-domain>${BASE} — every generated vhost
                    (nginx/Apache/Caddy) proxies the /aegis prefix, and the
                    native Go web server falls through to the panel too
-   Change prefix:  AEGIS_PANEL_BASE in ${SERVICE_NAME}.service
+   Change prefix:  AEGIS_PANEL_BASE in /etc/systemd/system/${SERVICE_NAME}.service
                    (set it empty to serve the panel at /)
-   Admin login:    created on first boot from AEGIS_ADMIN_USER +
-                   AEGIS_ADMIN_PASSWORD — the login page shows no
-                   default credentials
-
- Next steps:
-   1. AEGIS_ADMIN_USER=admin AEGIS_ADMIN_PASSWORD='<secret>' \\
-        systemctl start ${SERVICE_NAME}.service
-      (admin env vars are read on first boot only, before the admin user exists)
-   2. open the Panel access URL above
-   3. run 'aegisctl setup' if you want guided tuning + admin creation
 ============================================================
 EOF
+
+# The generated admin password is printed once, in the user's terminal — it is
+# wiped from /run after bootstrap and never written to any file.
+if [ "$FIRST_BOOT" = 1 ]; then
+cat <<EOF
+
+ Admin account (password shown ONCE):
+   username:  $ADMIN_USER
+   password:  $ADMIN_PASSWORD
+EOF
+if [ "$WITH_BUILD" = 1 ] || [ -x "$AEGIS_BIN" ]; then
+  echo "   The panel is running — log in at the URL above and change the password."
+  echo "   Lost it later? Reset with:  aegisctl user reset-pass $ADMIN_USER -p '<new>'"
+else
+  echo "   Bootstrap manually when the binary is installed:"
+  echo "     AEGIS_ADMIN_USER=$ADMIN_USER AEGIS_ADMIN_PASSWORD='$ADMIN_PASSWORD' \\"
+  echo "       systemctl enable --now ${SERVICE_NAME}.service"
+fi
+echo "============================================================"
+else
+cat <<EOF
+
+ Admin account: existing credentials kept (panel was already bootstrapped).
+============================================================
+EOF
+fi
