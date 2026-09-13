@@ -38,20 +38,27 @@ sudo scripts/install-stack.sh --no-mail       # tailor with --no-ftp --no-db
                                               # --with-caddy / --with-apache
 ```
 
-**Panel access after install** (the installer prints this too):
+**Panel access after install** — fully automatic: the installer generates the
+secret key and an admin password, starts the panel, verifies the login works,
+then wipes the one-time credentials from `/run`. When it finishes, the panel is
+**already running** at `http://<server-ip>/aegis` — the admin password is
+printed once at the end of the install output:
 
 ```bash
 open http://<server-ip>/aegis        # any hostname on the server works: http://<domain>/aegis
-systemctl start aegis.service \
-  AEGIS_ADMIN_USER=admin AEGIS_ADMIN_PASSWORD='<secret>'   # creates the admin on first boot
+# log in with the admin password printed by the installer (shown once)
+# lost it?  aegisctl user reset-pass admin -p '<new-password>'
 ```
 
-The admin user is read from `AEGIS_ADMIN_USER`/`AEGIS_ADMIN_PASSWORD` on
-first boot only (before the admin account exists); `aegisctl setup` offers
-guided tuning + admin creation afterwards. The `/aegis` prefix is proxied
-through every generated vhost (nginx, Apache, Caddy) and the native Go web
-server, so the panel stays reachable on any hostname — including the bare
-server IP before you host a single site.
+Credentials never live in the systemd unit (any local user can read unit
+properties via `systemctl show`): DB admin passwords are in the root-only
+`/etc/aegis/aegis.env`, and the first-boot admin env file is deleted after
+bootstrap. Prefer your own credentials? Pass `AEGIS_ADMIN_USER` /
+`AEGIS_ADMIN_PASSWORD` to the installer. Re-running the installer never
+resets an existing admin account. The `/aegis` prefix is proxied through
+every generated vhost (nginx, Apache, Caddy) and the native Go web server,
+so the panel stays reachable on any hostname — including the bare server IP
+before you host a single site.
 
 ## Quick start (development)
 
