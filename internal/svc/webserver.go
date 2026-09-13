@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,94 @@ func (w *WebServer) Available() []string {
 		}
 	}
 	return avail
+}
+
+// IsAvailable reports whether a server is installed (detectable).
+func (w *WebServer) IsAvailable(server string) bool {
+	for _, a := range w.Available() {
+		if a == server {
+			return true
+		}
+	}
+	return false
+}
+
+// Install installs the distro package for a web server and, for Apache,
+// enables the modules the panel's vhost template and typical .htaccess
+// files rely on. Errors when the package manager is missing or the install
+// fails; a successful install is picked up by the next Available() call.
+func (w *WebServer) Install(server string) error {
+	switch server {
+	case "nginx":
+		return installAptPackages("nginx")
+	case "caddy":
+		// Caddy usually needs its own repo; try plain apt first, then add
+		// the official stable repo and retry (Debian/Ubuntu).
+		if err := installAptPackages("caddy"); err == nil {
+			return nil
+		}
+		return installCaddyRepo()
+	case "apache":
+		if err := installAptPackages("apache2"); err != nil {
+			return err
+		}
+		return w.enableApacheModules()
+	default:
+		return fmt.Errorf("webserver: nothing to install for %q", server)
+	}
+}
+
+// installAptPackages installs distro packages when apt is present.
+func installAptPackages(pkgs ...string) error {
+	if !LookPath("apt-get") {
+		return fmt.Errorf("webserver: automatic install requires apt (Debian/Ubuntu)")
+	}
+	args := append([]string{"install", "-y"}, pkgs...)
+	if _, err := RunTimeout(10*time.Minute, "apt-get", args...); err != nil {
+		return fmt.Errorf("webserver: apt-get install %s: %w", strings.Join(pkgs, " "), err)
+	}
+	return nil
+}
+
+// installCaddyRepo adds Caddy's official apt repository and installs it.
+func installCaddyRepo() error {
+	if !LookPath("apt-get") {
+		return fmt.Errorf("webserver: automatic caddy install requires apt (Debian/Ubuntu)")
+	}
+	steps := [][]string{
+		{"bash", "-c", "install -d /usr/share/keyrings && curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null || true"},
+		{"bash", "-c", "curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list"},
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "caddy"},
+	}
+	for _, step := range steps {
+		if _, err := RunTimeout(5*time.Minute, step[0], step[1:]...); err != nil {
+			return fmt.Errorf("webserver: caddy repo install: %w", err)
+		}
+	}
+	return nil
+}
+
+// enableApacheModules turns on the modules the panel's vhosts and common
+// .htaccess files depend on: proxy (panel + PHP vhost handler), rewrite and
+// headers (per-site rules), expires, deflate and mime (Caching/encoding
+// directives), setenvif, and fcgi setup helpers. Best-effort per module —
+// a2enmod lists what exists; individual failures are non-fatal.
+func (w *WebServer) enableApacheModules() error {
+	if !LookPath("a2enmod") {
+		return nil // not a Debian-layout Apache; a2enmod is a no-op there
+	}
+	mods := []string{
+		"proxy", "proxy_http", "proxy_fcgi", "proxy_wstunnel",
+		"rewrite", "headers", "expires", "deflate", "mime", "setenvif",
+	}
+	for _, m := range mods {
+		if _, err := RunTimeout(30*time.Second, "a2enmod", m); err != nil {
+			// Module not shipped in this distro build: skip it.
+			continue
+		}
+	}
+	return nil
 }
 
 // Generate renders the config for a domain on the active web server.
@@ -427,18 +516,127 @@ func (w *WebServer) generateCaddy(d *store.Domain, aliases []string, systemUser 
 	fmt.Fprintf(&sb, "# Aegis-managed site for %s\n", d.Domain)
 	fmt.Fprintf(&sb, "%s {\n", names)
 	fmt.Fprintf(&sb, "    root * %s\n", d.DocumentRoot)
+	// Apache default <Files ".ht*"> semantics: never serve dotfiles that
+	// carry access/rewrite configuration.
+	fmt.Fprintf(&sb, "    @htblocked path_regexp (^|/)\\.ht\n")
+	fmt.Fprintf(&sb, "    respond @htblocked 403\n")
 	if sock != "" {
 		fmt.Fprintf(&sb, "    php_fastcgi unix//%s\n", sock)
 	}
 	fmt.Fprintf(&sb, "    encode zstd gzip\n")
 	sb.WriteString(w.panelProxyCaddy())
-	fmt.Fprintf(&sb, "    file_server\n")
+	sb.WriteString(w.caddyHtSnippet(d))
+	// DirectoryIndex from .htaccess overrides the file_server defaults.
+	if ht := w.htConfigFor(d.DocumentRoot, "/"); ht != nil && len(ht.DirectoryIndex) > 0 {
+		fmt.Fprintf(&sb, "    file_server {\n        index %s\n    }\n", strings.Join(ht.DirectoryIndex, " "))
+	} else {
+		fmt.Fprintf(&sb, "    file_server\n")
+	}
 	if !d.SSLEnabled {
 		fmt.Fprintf(&sb, "    tls internal\n")
 	}
 	fmt.Fprintf(&sb, "    log { output file /var/log/caddy/%s.log }\n", d.Domain)
 	fmt.Fprintf(&sb, "}\n")
 	return sb.String()
+}
+
+// caddyHtSnippet translates a docroot's .htaccess into Caddyfile directives.
+// Caddy reads its config only at load time — per-directory .htaccess
+// semantics can't be reproduced dynamically — so this covers the static
+// core: Redirect/RedirectMatch, unconditional RewriteRules (regex rewrites
+// and R-flag redirects), deny-all, and DirectoryIndex (handled by the
+// caller). File-existence RewriteConds (-f/-d) have no static Caddy
+// equivalent; the canonical front-controller pattern they drive is already
+// php_fastcgi's built-in fallback, so those are intentionally skipped.
+func (w *WebServer) caddyHtSnippet(d *store.Domain) string {
+	cfg := w.htConfigFor(d.DocumentRoot, "/")
+	if cfg == nil || (!cfg.RewriteEngine && len(cfg.Redirects) == 0) {
+		return ""
+	}
+	var sb strings.Builder
+	wrote := false
+	section := func() {
+		if !wrote {
+			fmt.Fprintf(&sb, "    # --- translated from .htaccess ---\n")
+			wrote = true
+		}
+	}
+
+	if cfg.DenyAll {
+		section()
+		fmt.Fprintf(&sb, "    @htdeny path_regexp .*\n")
+		fmt.Fprintf(&sb, "    respond @htdeny 403\n")
+	}
+
+	// Redirect/RedirectMatch.
+	for i, rd := range cfg.Redirects {
+		section()
+		if rd.Match {
+			name := fmt.Sprintf("htredir%d", i)
+			fmt.Fprintf(&sb, "    @%s path_regexp %s %s\n", name, name, rd.From)
+			if rd.Status == 410 {
+				fmt.Fprintf(&sb, "    respond @%s 410\n", name)
+			} else {
+				fmt.Fprintf(&sb, "    redir @%s %s %d\n", name, htCaddyTarget(rd.Target, name), rd.Status)
+			}
+			continue
+		}
+		if rd.Status == 410 {
+			fmt.Fprintf(&sb, "    @htgone%d path %s %s/*\n", i, rd.From, strings.TrimSuffix(rd.From, "/"))
+			fmt.Fprintf(&sb, "    respond @htgone%d 410\n", i)
+			continue
+		}
+		// Exact path plus subtree: handle_path strips the prefix so {uri}
+		// carries just the remainder ("Redirect /old /new" sends /old/x to
+		// /new/x, like mod_alias).
+		fmt.Fprintf(&sb, "    redir %s %s %d\n", rd.From, rd.Target, rd.Status)
+		fmt.Fprintf(&sb, "    handle_path %s/* { redir %s{uri} %d }\n", strings.TrimSuffix(rd.From, "/"), rd.Target, rd.Status)
+	}
+
+	// Unconditional RewriteRules.
+	for i, rule := range cfg.Rules {
+		if len(rule.Conds) > 0 || rule.Sub == "-" || rule.Flags.Proxy {
+			continue // conditional/pass-through rules: php_fastcgi covers the common case
+		}
+		re := htCompile(rule.Pattern, rule.Flags.NoCase)
+		if re == nil {
+			continue // PCRE-only pattern: leave to the front-controller fallback
+		}
+		section()
+		name := fmt.Sprintf("htrw%d", i)
+		fmt.Fprintf(&sb, "    @%s path_regexp %s %s\n", name, name, rule.Pattern)
+		sub := htCaddyTarget(rule.Sub, name)
+		switch {
+		case rule.Flags.Forbidden:
+			fmt.Fprintf(&sb, "    respond @%s 403\n", name)
+		case rule.Flags.Gone:
+			fmt.Fprintf(&sb, "    respond @%s 410\n", name)
+		case rule.Flags.Redirect != 0 || htIsAbsoluteURL(sub):
+			code := rule.Flags.Redirect
+			if code == 0 {
+				code = 302
+			}
+			fmt.Fprintf(&sb, "    redir @%s %s %d\n", name, sub, code)
+		default:
+			fmt.Fprintf(&sb, "    rewrite @%s %s\n", name, sub)
+		}
+	}
+	if !wrote {
+		return ""
+	}
+	return sb.String()
+}
+
+// htCaddyTarget converts a .htaccess substitution into Caddy placeholders:
+// $N → {re.<name>.N} capture groups and the common server variables.
+func htCaddyTarget(sub, name string) string {
+	out := sub
+	for n := 9; n >= 1; n-- {
+		out = strings.ReplaceAll(out, "$"+strconv.Itoa(n), "{re."+name+"."+strconv.Itoa(n)+"}")
+	}
+	out = strings.ReplaceAll(out, "%{HTTP_HOST}", "{http.request.host}")
+	out = strings.ReplaceAll(out, "%{REQUEST_URI}", "{http.request.uri}")
+	return out
 }
 
 func (w *WebServer) applyCaddy(d *store.Domain, aliases []string, systemUser string) error {

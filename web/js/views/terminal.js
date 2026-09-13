@@ -8,6 +8,7 @@ addRoute("/terminal", {
   icon: "terminal",
   group: "Server",
   order: 5,
+  feature: "terminal",
   render: async (view) => {
     const u = me();
     view.innerHTML = pageHead("Terminal", "Interactive shell inside your account (" + u.username + "). Use it to run composer, artisan, wp-cli or inspect your files.", `

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -332,6 +333,23 @@ func (s *Server) handleWebmailLogin(w http.ResponseWriter, r *http.Request) {
 	var req webmailLoginReq
 	if !readJSON(w, r, &req) {
 		return
+	}
+	// Package gate: webmail sessions authenticate with mailbox credentials,
+	// not the panel JWT, so resolve the mailbox's mail domain back to its
+	// owning panel user and check their package's allow_webmail flag.
+	localpart, domain, ok := strings.Cut(req.Address, "@")
+	if ok {
+		if mb, err := s.Store.GetMailboxByAddress(r.Context(), domain, localpart); err == nil {
+			if md, err := s.Store.GetMailDomain(r.Context(), mb.MailDomainID); err == nil {
+				if dom, err := s.Store.GetDomain(r.Context(), md.DomainID); err == nil {
+					if owner, err := s.Store.GetUserByID(r.Context(), dom.UserID); err == nil &&
+						!s.packageAllows(owner, s.featuresFor(r.Context(), owner)[FeatureWebmail]) {
+						writeErr(w, http.StatusForbidden, "webmail is not enabled for this account's package")
+						return
+					}
+				}
+			}
+		}
 	}
 	// A cheap login+logout round trip both validates the credentials and
 	// avoids ever persisting the password anywhere but this in-memory session.

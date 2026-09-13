@@ -143,6 +143,7 @@ func (s *Server) handleWebServerStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Server string `json:"server"`
+		Install bool `json:"install"` // install the package when missing
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -153,16 +154,20 @@ func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid server (nginx|apache|caddy|go)")
 		return
 	}
-	if req.Server != "go" {
-		avail := s.Web.Available()
-		found := false
-		for _, a := range avail {
-			if a == req.Server {
-				found = true
-			}
-		}
-		if !found {
+	if req.Server != "go" && !s.Web.IsAvailable(req.Server) {
+		if !req.Install {
 			writeErr(w, http.StatusBadRequest, req.Server+" is not installed on this server")
+			return
+		}
+		// Install the distro package on demand, then re-check. This is what
+		// makes an installed-but-unlisted server (or a fresh pick from the
+		// Runtime page) actually switchable without shelling in by hand.
+		if err := s.Web.Install(req.Server); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !s.Web.IsAvailable(req.Server) {
+			writeErr(w, http.StatusInternalServerError, req.Server+" was installed but is still not detected")
 			return
 		}
 	}

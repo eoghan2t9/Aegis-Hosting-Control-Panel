@@ -7,6 +7,7 @@ addRoute("/mail", {
   icon: "mail",
   group: "Email",
   order: 0,
+  feature: "mail",
   render: async (view) => {
     view.innerHTML = pageHead("Email", "Mailboxes, aliases and SPF/DKIM/DMARC for your domains. Enabling mail publishes DNS records automatically into the DNS tab.", "");
     view.insertAdjacentHTML("beforeend", `<div id="mail-root">${loading()}</div>`);

@@ -96,9 +96,25 @@ if [ "$DIST_ID" = "debian" ] || dpkg -l sury-keyring >/dev/null 2>&1 || true; th
 fi
 PHP_PKGS=""
 for v in $PHP_VERSIONS; do
-  PHP_PKGS="$PHP_PKGS php$v-fpm php$v-cli php$v-common php$v-mysql php$v-pgsql php$v-curl php$v-gd php$v-xml php$v-mbstring php$v-zip php$v-intl php$v-bcmath php$v-imagick"
+  # The modules most sites actually use: database drivers (mysql/pgsql/sqlite),
+  # imaging (gd/imagick), strings & encodings (mbstring/iconv), XML stack,
+  # compression (zip/zlib via common), intl, bcmath, curl, soap, opcache and
+  # the extensions Composer/WP-CLI/Laravel/WordPress expect at runtime.
+  PHP_PKGS="$PHP_PKGS php$v-fpm php$v-cli php$v-common php$v-mysql php$v-pgsql php$v-sqlite3 \
+    php$v-curl php$v-gd php$v-xml php$v-mbstring php$v-zip php$v-intl php$v-bcmath \
+    php$v-imagick php$v-soap php$v-opcache php$v-readline php$v-ldap"
 done
 apt_get install $PHP_PKGS
+
+# Enable the extension modules explicitly (phpenmod): the -mysql/-gd/...
+# packages drop ini fragments that phpenmod wires up; extensions ship enabled
+# by default on Debian/Ubuntu but the explicit pass makes the state
+# deterministic and picks up anything a distro leaves disabled.
+for v in $PHP_VERSIONS; do
+  phpenmod -v "$v" curl gd mbstring xml xmlreader xmlwriter simplexml zip intl \
+    bcmath soap mysqli pdo_mysql pgsql pdo_pgsql sqlite3 pdo_sqlite imagick \
+    opcache ldap 2>/dev/null || true
+done
 log "PHP installed: $(ls -1 /usr/bin/php* 2>/dev/null | grep -E 'php[0-9.]+$' | tr '\n' ' ')"
 
 # ----------------------------- 2. databases ----------------------------------
@@ -169,7 +185,15 @@ umask 022   # restore: Go build + unit file must not inherit the 077 above
 # ----------------------------- 3. web server ---------------------------------
 case "$WEB_SERVER" in
   nginx)  log "installing nginx";  apt_get install nginx;  systemctl enable --now nginx ;;
-  apache) log "installing apache2"; apt_get install apache2; systemctl enable --now apache2 ;;
+  apache)
+    log "installing apache2"
+    apt_get install apache2
+    # Modules the panel's vhost template and typical .htaccess files rely on:
+    # proxy (panel + PHP vhost handler), rewrite/headers (per-site rules),
+    # expires/deflate (caching), and the FCGI set for php-fpm.
+    a2enmod proxy proxy_http proxy_fcgi proxy_wstunnel rewrite headers \
+      expires deflate mime setenvif 2>/dev/null || true
+    systemctl enable --now apache2 ;;
   caddy)  log "installing caddy"
           apt_get install -y debian-keyring debian-archive-keyring apt-transport-https curl
           curl -fsSL "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null

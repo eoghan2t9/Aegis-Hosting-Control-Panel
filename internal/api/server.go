@@ -168,26 +168,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/domains/{id}/aliases", s.withAuth(s.handleAliasesAdd))
 	mux.HandleFunc("DELETE /api/domains/{id}/aliases/{alias}", s.withAuth(s.handleAliasesRemove))
 
-	// DNS.
-	mux.HandleFunc("GET /api/dns/zones", s.withAuth(s.handleZonesList))
-	mux.HandleFunc("POST /api/dns/zones", s.withAuth(s.handleZonesCreate))
-	mux.HandleFunc("GET /api/dns/zones/{id}", s.withAuth(s.handleZonesGet))
-	mux.HandleFunc("PATCH /api/dns/zones/{id}", s.withAuth(s.handleZonesUpdate))
-	mux.HandleFunc("DELETE /api/dns/zones/{id}", s.withAuth(s.handleZonesDelete))
-	mux.HandleFunc("POST /api/dns/zones/{id}/sync", s.withAuth(s.handleZonesSync))
-	mux.HandleFunc("POST /api/dns/zones/{id}/records", s.withAuth(s.handleRecordsCreate))
-	mux.HandleFunc("PATCH /api/dns/records/{id}", s.withAuth(s.handleRecordsUpdate))
-	mux.HandleFunc("DELETE /api/dns/records/{id}", s.withAuth(s.handleRecordsDelete))
-	mux.HandleFunc("GET /api/dns/providers", s.withAuth(s.handleProvidersList))
+	// DNS. Zone/record routes are package-gated (allow_dns); provider
+	// credentials stay admin-only on top of that.
+	mux.HandleFunc("GET /api/dns/zones", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesList)))
+	mux.HandleFunc("POST /api/dns/zones", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesCreate)))
+	mux.HandleFunc("GET /api/dns/zones/{id}", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesGet)))
+	mux.HandleFunc("PATCH /api/dns/zones/{id}", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesUpdate)))
+	mux.HandleFunc("DELETE /api/dns/zones/{id}", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesDelete)))
+	mux.HandleFunc("POST /api/dns/zones/{id}/sync", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesSync)))
+	mux.HandleFunc("POST /api/dns/zones/{id}/records", s.withAuth(s.withFeature(FeatureDNS, s.handleRecordsCreate)))
+	mux.HandleFunc("PATCH /api/dns/records/{id}", s.withAuth(s.withFeature(FeatureDNS, s.handleRecordsUpdate)))
+	mux.HandleFunc("DELETE /api/dns/records/{id}", s.withAuth(s.withFeature(FeatureDNS, s.handleRecordsDelete)))
+	mux.HandleFunc("GET /api/dns/providers", s.withAuth(s.withFeature(FeatureDNS, s.handleProvidersList)))
 	mux.HandleFunc("POST /api/dns/providers", s.withAuth(s.withRole(s.handleProvidersCreate, store.RoleAdmin)))
 	mux.HandleFunc("PATCH /api/dns/providers/{id}", s.withAuth(s.withRole(s.handleProvidersUpdate, store.RoleAdmin)))
 	mux.HandleFunc("DELETE /api/dns/providers/{id}", s.withAuth(s.withRole(s.handleProvidersDelete, store.RoleAdmin)))
 
 	// SSL.
-	mux.HandleFunc("GET /api/ssl/orders", s.withAuth(s.handleSSLOrders))
-	mux.HandleFunc("POST /api/ssl/issue", s.withAuth(s.handleSSLIssue))
-	mux.HandleFunc("POST /api/ssl/self-signed", s.withAuth(s.handleSSLSelfSigned))
-	mux.HandleFunc("GET /api/ssl/info", s.withAuth(s.handleSSLInfo))
+	mux.HandleFunc("GET /api/ssl/orders", s.withAuth(s.withFeature(FeatureSSL, s.handleSSLOrders)))
+	mux.HandleFunc("POST /api/ssl/issue", s.withAuth(s.withFeature(FeatureSSL, s.handleSSLIssue)))
+	mux.HandleFunc("POST /api/ssl/self-signed", s.withAuth(s.withFeature(FeatureSSL, s.handleSSLSelfSigned)))
+	mux.HandleFunc("GET /api/ssl/info", s.withAuth(s.withFeature(FeatureSSL, s.handleSSLInfo)))
 
 	// PHP.
 	mux.HandleFunc("GET /api/php/versions", s.withAuth(s.handlePHPVersions))
@@ -198,37 +199,38 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/webserver/preview", s.withAuth(s.handleWebServerPreview))
 
 	// FTP.
-	mux.HandleFunc("GET /api/ftp/accounts", s.withAuth(s.handleFTPList))
-	mux.HandleFunc("POST /api/ftp/accounts", s.withAuth(s.handleFTPCreate))
-	mux.HandleFunc("POST /api/ftp/accounts/{id}/password", s.withAuth(s.handleFTPPassword))
-	mux.HandleFunc("POST /api/ftp/accounts/{id}/toggle", s.withAuth(s.handleFTPToggle))
-	mux.HandleFunc("DELETE /api/ftp/accounts/{id}", s.withAuth(s.handleFTPDelete))
+	mux.HandleFunc("GET /api/ftp/accounts", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPList)))
+	mux.HandleFunc("POST /api/ftp/accounts", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPCreate)))
+	mux.HandleFunc("POST /api/ftp/accounts/{id}/password", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPPassword)))
+	mux.HandleFunc("POST /api/ftp/accounts/{id}/toggle", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPToggle)))
+	mux.HandleFunc("DELETE /api/ftp/accounts/{id}", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPDelete)))
 
 	// Databases.
-	mux.HandleFunc("GET /api/databases/servers", s.withAuth(s.handleDBServers))
-	mux.HandleFunc("GET /api/databases", s.withAuth(s.handleDBList))
-	mux.HandleFunc("POST /api/databases", s.withAuth(s.handleDBCreate))
-	mux.HandleFunc("DELETE /api/databases/{id}", s.withAuth(s.handleDBDelete))
-	mux.HandleFunc("GET /api/databases/{id}/dump", s.withAuth(s.handleDBDump))
+	mux.HandleFunc("GET /api/databases/servers", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBServers)))
+	mux.HandleFunc("GET /api/databases", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBList)))
+	mux.HandleFunc("POST /api/databases", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBCreate)))
+	mux.HandleFunc("DELETE /api/databases/{id}", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDelete)))
+	mux.HandleFunc("GET /api/databases/{id}/dump", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDump)))
 
 	// Files.
-	mux.HandleFunc("GET /api/files", s.withAuth(s.handleFilesList))
-	mux.HandleFunc("GET /api/files/content", s.withAuth(s.handleFilesRead))
-	mux.HandleFunc("GET /api/files/thumb", s.withAuth(s.handleFilesThumb))
-	mux.HandleFunc("POST /api/files/write", s.withAuth(s.handleFilesWrite))
-	mux.HandleFunc("POST /api/files/mkdir", s.withAuth(s.handleFilesMkdir))
-	mux.HandleFunc("POST /api/files/rename", s.withAuth(s.handleFilesRename))
-	mux.HandleFunc("POST /api/files/delete", s.withAuth(s.handleFilesDelete))
-	mux.HandleFunc("POST /api/files/chmod", s.withAuth(s.handleFilesChmod))
-	mux.HandleFunc("POST /api/files/chown", s.withAuth(s.handleFilesChown))
-	mux.HandleFunc("POST /api/files/search", s.withAuth(s.handleFilesSearch))
-	mux.HandleFunc("POST /api/files/zip", s.withAuth(s.handleFilesZip))
-	mux.HandleFunc("POST /api/files/unzip", s.withAuth(s.handleFilesUnzip))
-	mux.HandleFunc("GET /api/files/download", s.withAuth(s.handleFilesDownload))
-	mux.HandleFunc("POST /api/files/upload", s.withAuth(s.handleFilesUpload))
+	mux.HandleFunc("GET /api/files", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesList)))
+	mux.HandleFunc("GET /api/files/content", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesRead)))
+	mux.HandleFunc("GET /api/files/thumb", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesThumb)))
+	mux.HandleFunc("POST /api/files/write", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesWrite)))
+	mux.HandleFunc("POST /api/files/mkdir", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesMkdir)))
+	mux.HandleFunc("POST /api/files/rename", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesRename)))
+	mux.HandleFunc("POST /api/files/delete", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesDelete)))
+	mux.HandleFunc("POST /api/files/chmod", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesChmod)))
+	mux.HandleFunc("POST /api/files/chown", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesChown)))
+	mux.HandleFunc("POST /api/files/search", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesSearch)))
+	mux.HandleFunc("POST /api/files/zip", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesZip)))
+	mux.HandleFunc("POST /api/files/unzip", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesUnzip)))
+	mux.HandleFunc("GET /api/files/download", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesDownload)))
+	mux.HandleFunc("POST /api/files/upload", s.withAuth(s.withFeature(FeatureFiles, s.handleFilesUpload)))
 
-	// Backups (admin).
-	mux.HandleFunc("GET /api/backups", s.withAuth(s.withRole(s.handleBackupsList, store.RoleAdmin)))
+	// Backups (admin). Feature-gated too so the allow_backups flag stays
+	// meaningful if backup routes ever open up to resellers/users.
+	mux.HandleFunc("GET /api/backups", s.withAuth(s.withRole(s.withFeature(FeatureBackups, s.handleBackupsList), store.RoleAdmin)))
 	mux.HandleFunc("POST /api/backups", s.withAuth(s.withRole(s.handleBackupsCreate, store.RoleAdmin)))
 	mux.HandleFunc("GET /api/backups/download", s.withAuth(s.withRole(s.handleBackupsDownload, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/backups/restore", s.withAuth(s.withRole(s.handleBackupsRestore, store.RoleAdmin)))
@@ -240,17 +242,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/backups/schedule", s.withAuth(s.withRole(s.handleBackupSchedule, store.RoleAdmin)))
 
 	// Mail: domain enablement + mailboxes + aliases.
-	mux.HandleFunc("GET /api/mail/domains", s.withAuth(s.handleMailDomainsList))
-	mux.HandleFunc("POST /api/mail/domains", s.withAuth(s.handleMailDomainsCreate))
-	mux.HandleFunc("DELETE /api/mail/domains/{id}", s.withAuth(s.handleMailDomainsDelete))
-	mux.HandleFunc("GET /api/mail/domains/{id}/mailboxes", s.withAuth(s.handleMailboxesList))
-	mux.HandleFunc("POST /api/mail/domains/{id}/mailboxes", s.withAuth(s.handleMailboxesCreate))
-	mux.HandleFunc("POST /api/mail/mailboxes/{id}/password", s.withAuth(s.handleMailboxPassword))
-	mux.HandleFunc("POST /api/mail/mailboxes/{id}/toggle", s.withAuth(s.handleMailboxToggle))
-	mux.HandleFunc("DELETE /api/mail/mailboxes/{id}", s.withAuth(s.handleMailboxDelete))
-	mux.HandleFunc("GET /api/mail/domains/{id}/aliases", s.withAuth(s.handleMailAliasesList))
-	mux.HandleFunc("POST /api/mail/domains/{id}/aliases", s.withAuth(s.handleMailAliasesCreate))
-	mux.HandleFunc("DELETE /api/mail/aliases/{id}", s.withAuth(s.handleMailAliasesDelete))
+	mux.HandleFunc("GET /api/mail/domains", s.withAuth(s.withFeature(FeatureMail, s.handleMailDomainsList)))
+	mux.HandleFunc("POST /api/mail/domains", s.withAuth(s.withFeature(FeatureMail, s.handleMailDomainsCreate)))
+	mux.HandleFunc("DELETE /api/mail/domains/{id}", s.withAuth(s.withFeature(FeatureMail, s.handleMailDomainsDelete)))
+	mux.HandleFunc("GET /api/mail/domains/{id}/mailboxes", s.withAuth(s.withFeature(FeatureMail, s.handleMailboxesList)))
+	mux.HandleFunc("POST /api/mail/domains/{id}/mailboxes", s.withAuth(s.withFeature(FeatureMail, s.handleMailboxesCreate)))
+	mux.HandleFunc("POST /api/mail/mailboxes/{id}/password", s.withAuth(s.withFeature(FeatureMail, s.handleMailboxPassword)))
+	mux.HandleFunc("POST /api/mail/mailboxes/{id}/toggle", s.withAuth(s.withFeature(FeatureMail, s.handleMailboxToggle)))
+	mux.HandleFunc("DELETE /api/mail/mailboxes/{id}", s.withAuth(s.withFeature(FeatureMail, s.handleMailboxDelete)))
+	mux.HandleFunc("GET /api/mail/domains/{id}/aliases", s.withAuth(s.withFeature(FeatureMail, s.handleMailAliasesList)))
+	mux.HandleFunc("POST /api/mail/domains/{id}/aliases", s.withAuth(s.withFeature(FeatureMail, s.handleMailAliasesCreate)))
+	mux.HandleFunc("DELETE /api/mail/aliases/{id}", s.withAuth(s.withFeature(FeatureMail, s.handleMailAliasesDelete)))
 
 	// Webmail: its own credential-based session, not the panel JWT.
 	mux.HandleFunc("POST /api/webmail/login", s.handleWebmailLogin)
@@ -260,12 +262,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/webmail/send", s.withWebmailAuth(s.handleWebmailSend))
 
 	// Cron.
-	mux.HandleFunc("GET /api/cron/jobs", s.withAuth(s.handleCronList))
-	mux.HandleFunc("POST /api/cron/jobs", s.withAuth(s.handleCronCreate))
-	mux.HandleFunc("PATCH /api/cron/jobs/{id}", s.withAuth(s.handleCronUpdate))
-	mux.HandleFunc("POST /api/cron/jobs/{id}/toggle", s.withAuth(s.handleCronToggle))
-	mux.HandleFunc("DELETE /api/cron/jobs/{id}", s.withAuth(s.handleCronDelete))
-	mux.HandleFunc("GET /api/cron/jobs/{id}/log", s.withAuth(s.handleCronLog))
+	mux.HandleFunc("GET /api/cron/jobs", s.withAuth(s.withFeature(FeatureCron, s.handleCronList)))
+	mux.HandleFunc("POST /api/cron/jobs", s.withAuth(s.withFeature(FeatureCron, s.handleCronCreate)))
+	mux.HandleFunc("PATCH /api/cron/jobs/{id}", s.withAuth(s.withFeature(FeatureCron, s.handleCronUpdate)))
+	mux.HandleFunc("POST /api/cron/jobs/{id}/toggle", s.withAuth(s.withFeature(FeatureCron, s.handleCronToggle)))
+	mux.HandleFunc("DELETE /api/cron/jobs/{id}", s.withAuth(s.withFeature(FeatureCron, s.handleCronDelete)))
+	mux.HandleFunc("GET /api/cron/jobs/{id}/log", s.withAuth(s.withFeature(FeatureCron, s.handleCronLog)))
 
 	// API tokens.
 	mux.HandleFunc("GET /api/tokens", s.withAuth(s.handleTokensList))
@@ -281,8 +283,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/quota/usage", s.withAuth(s.handleQuotaUsage))
 	mux.HandleFunc("POST /api/quota/enforce", s.withAuth(s.withRole(s.handleQuotaEnforce, store.RoleAdmin)))
 
-	// Terminal.
-	mux.HandleFunc("GET /api/terminal", s.withAuth(s.handleTerminalWS))
+	// Terminal. handleTerminalWS re-checks the flag itself (WebSocket
+	// handshake-specific messaging), the route gate keeps it consistent.
+	mux.HandleFunc("GET /api/terminal", s.withAuth(s.withFeature(FeatureTerminal, s.handleTerminalWS)))
 
 	return s.withCommon(mux)
 }

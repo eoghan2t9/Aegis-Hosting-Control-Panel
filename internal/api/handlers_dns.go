@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 
 	"aegis/internal/store"
@@ -82,7 +81,7 @@ func (s *Server) handleZonesCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "cannot manage this domain")
 		return
 	}
-	if !s.pkgAllowsDNS(u) {
+	if !s.packageAllows(u, s.featuresFor(r.Context(), u)[FeatureDNS]) {
 		writeErr(w, http.StatusForbidden, "your package does not allow DNS management")
 		return
 	}
@@ -456,14 +455,3 @@ func (s *Server) primaryIP() string {
 	return s.primaryIPv4
 }
 
-// pkgAllowsDNS checks the user's package for the DNS feature flag.
-func (s *Server) pkgAllowsDNS(u *store.User) bool {
-	if u.Role == store.RoleAdmin {
-		return true
-	}
-	pkg, err := s.Store.GetPackage(context.Background(), u.PackageID)
-	if err != nil {
-		pkg, _ = s.Store.GetDefaultPackage(context.Background())
-	}
-	return pkg == nil || pkg.AllowDNS
-}

@@ -10,6 +10,7 @@ addRoute("/backups", {
   order: 4,
   resellerOnly: true,
   adminOnly: true,
+  feature: "backups",
   render: async (view) => {
     view.innerHTML = pageHead("Backups", "Full-account archives: home directories, databases, FTP accounts, domains, DNS records and package data — one tar.gz with a JSON manifest.", `
       <button class="btn btn-primary" id="btn-full">${icon("plus")} Full backup</button>

@@ -35,7 +35,10 @@ type User struct {
 	PackageName   string `json:"package_name,omitempty"`
 }
 
-// Package is a hosting plan: quotas and feature flags.
+// Package is a hosting plan: quotas and feature flags. The Allow* flags
+// control which areas of the control panel a package grants access to; they
+// gate the API (withFeature in internal/api) and drive the frontend nav
+// (features list on /auth/me).
 type Package struct {
 	ID                  int64     `json:"id"`
 	Name                string    `json:"name"`
@@ -49,6 +52,12 @@ type Package struct {
 	AllowDNS            bool      `json:"allow_dns"`
 	AllowTerminal       bool      `json:"allow_terminal"`
 	AllowBackups        bool      `json:"allow_backups"`
+	AllowMail           bool      `json:"allow_mail"`
+	AllowWebmail        bool      `json:"allow_webmail"`
+	AllowDatabases      bool      `json:"allow_databases"`
+	AllowFiles          bool      `json:"allow_files"`
+	AllowFTP            bool      `json:"allow_ftp"`
+	AllowCron           bool      `json:"allow_cron"`
 	IsDefault           bool      `json:"is_default"`
 	CreatedAt           time.Time `json:"created_at"`
 }

@@ -12,6 +12,7 @@ addRoute("/files", {
   icon: "folder",
   group: "Data",
   order: 1,
+  feature: "files",
   render: async (view) => {
     view.innerHTML = pageHead("File manager", "Full file access inside your account — create, edit, rename, upload, set permissions, zip and more. You never leave your home directory.");
     view.insertAdjacentHTML("beforeend", `<div id="fm">${loading()}</div>`);

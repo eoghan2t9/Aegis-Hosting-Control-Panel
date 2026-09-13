@@ -180,14 +180,39 @@ func DetectPHP() []Binary {
 }
 
 // DetectWebServers returns installed web servers among nginx/apache/caddy.
+// Detection is broader than LookPath alone: distro packages install the
+// binaries in fixed locations that are not always on the panel process's
+// PATH (e.g. systemd's default PATH lacks /usr/local/bin), and a stopped
+// service would otherwise hide an installed server — which made Caddy
+// disappear from the Runtime page's picker.
 func DetectWebServers() []string {
 	out := []string{}
 	for _, s := range []string{"nginx", "apache2", "caddy"} {
-		if LookPath(s) || ServiceRunning(s) {
+		if LookPath(s) || ServiceRunning(s) || webServerBinExists(s) {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// webServerBinExists checks the standard install locations for a web server
+// binary when PATH lookup fails.
+func webServerBinExists(server string) bool {
+	var candidates []string
+	switch server {
+	case "nginx":
+		candidates = []string{"/usr/sbin/nginx", "/usr/bin/nginx", "/usr/local/sbin/nginx", "/usr/local/bin/nginx"}
+	case "apache2":
+		candidates = []string{"/usr/sbin/apache2", "/usr/sbin/apache2ctl", "/usr/sbin/httpd", "/usr/local/apache2/bin/httpd"}
+	case "caddy":
+		candidates = []string{"/usr/bin/caddy", "/usr/local/bin/caddy", "/opt/caddy/caddy"}
+	}
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // DetectDatabases returns installed database servers.
