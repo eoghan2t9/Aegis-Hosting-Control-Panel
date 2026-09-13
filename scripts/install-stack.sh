@@ -131,6 +131,59 @@ case "$WEB_SERVER" in
   *) die "unknown web server '$WEB_SERVER'" ;;
 esac
 
+# Default vhost so the panel is reachable at http://<server-ip>/aegis before
+# any customer domain exists (the first generated vhost takes over afterwards).
+BASE="${AEGIS_PANEL_BASE:-/aegis}"; UP="127.0.0.1:${AEGIS_PANEL_PORT:-8080}"
+case "$WEB_SERVER" in
+  nginx)
+    cat > /etc/nginx/sites-available/aegis-panel <<EOF
+server {
+    listen 80 default_server;
+    server_name _;
+    location = ${BASE} { return 301 ${BASE}/; }
+    location ${BASE}/ {
+        proxy_pass http://${UP};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$http_connection;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+EOF
+    ln -sf /etc/nginx/sites-available/aegis-panel /etc/nginx/sites-enabled/aegis-panel
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t && systemctl reload nginx ;;
+  apache)
+    cat > /etc/apache2/conf-available/aegis-panel.conf <<EOF
+<Location ${BASE}>
+    ProxyPass http://${UP}${BASE} retry=0 upgrade=websocket
+    ProxyPassReverse http://${UP}${BASE}
+</Location>
+EOF
+    a2enmod proxy proxy_http proxy_wstunnel >/dev/null
+    a2enconf aegis-panel >/dev/null
+    systemctl reload apache2 ;;
+  caddy)
+    # Install-time convenience only; the panel rewrites the Caddyfile when it
+    # manages vhosts, which replaces this block.
+    cat > /etc/caddy/Caddyfile <<EOF
+:80 {
+    handle_path ${BASE}/* {
+        rewrite * ${BASE}/{*}
+        reverse_proxy ${UP}
+    }
+    handle {
+        respond "Aegis is being configured. Panel: http://<server-ip>${BASE}/" 200
+    }
+}
+EOF
+    systemctl reload caddy || systemctl restart caddy ;;
+esac
+
 # ----------------------------- 4. ftp / mail / tools -------------------------
 if [ "$WITH_FTP" = 1 ]; then
   log "installing vsftpd"
@@ -193,6 +246,7 @@ After=network.target mariadb.service postgresql.service
 Type=simple
 ExecStart=${AEGIS_BIN}
 Environment=AEGIS_LISTEN=:8080
+Environment=AEGIS_PANEL_BASE=/aegis
 Environment=AEGIS_MARIADB_PASSWORD=${MARIADB_PASSWORD:-}
 Environment=AEGIS_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
 Restart=on-failure
@@ -227,7 +281,8 @@ cat <<EOF
    1. AEGIS_ADMIN_USER=admin AEGIS_ADMIN_PASSWORD='<secret>' \\
         systemctl start ${SERVICE_NAME}.service
       (admin env vars are read on first boot only, before the admin user exists)
-   2. open http://<server-ip>:8080
+   2. open http://<server-ip>/aegis   (no port needed — the panel serves
+      under /aegis; every generated vhost proxies it)
    3. run 'aegisctl setup' if you want guided tuning + admin creation
 ============================================================
 EOF

@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -114,18 +115,29 @@ func run(configPath string) error {
 
 	errCh := make(chan error, 1)
 
-	// Panel API + frontend.
+	// Panel API + frontend. On the dedicated listener, any request outside
+	// PanelBase is redirected to the panel path so a bare http://host:8080
+	// visit lands on http://host:8080/aegis/.
 	panelAddr := cfg.ListenAddr
+	panelRoot := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := cfg.PanelBase + "/"
+		if cfg.PanelBase == "" {
+			target = "/"
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+	})
 	go func() {
-		slog.Info("panel listening", "addr", panelAddr)
-		if err := http.ListenAndServe(panelAddr, panelHandler(server)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Info("panel listening", "addr", panelAddr, "base", cfg.PanelBase)
+		if err := http.ListenAndServe(panelAddr, panelHandler(server, panelRoot)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("panel server: %w", err)
 		}
 	}()
 
-	// Native Go web server for customer sites.
+	// Native Go web server for customer sites. Its listener also serves the
+	// panel under PanelBase so http://<ip>/aegis works without DNS or a
+	// dedicated panel port.
 	if cfg.WebServer.Server == "go" {
-		startGoSiteServers(ctx, webSvc, cfg, errCh)
+		startGoSiteServers(ctx, webSvc, cfg, panelHandler(server, nil), errCh)
 	}
 
 	// Built-in DNS server.
@@ -243,7 +255,14 @@ func createAdmin(ctx context.Context, st *store.Store, homeRoot, username, passw
 
 // panelHandler serves the API and the frontend. In dev (AEGIS_DEV_WEB set)
 // assets are read from disk so frontend edits appear without a rebuild.
-func panelHandler(server *api.Server) http.Handler {
+// assets are read from disk so frontend edits appear without a rebuild.
+//
+// With PanelBase set (default "/aegis") the panel lives at that path prefix:
+// requests under it have the prefix stripped before routing; requests outside
+// it are handed to `outside` — a redirect-to-panel handler on the dedicated
+// listener, or the site handler when mounted on a customer vhost via the
+// web-server proxy blocks.
+func panelHandler(server *api.Server, outside http.Handler) http.Handler {
 	apiHandler := server.Handler()
 	var assets fs.FS
 	if devRoot := os.Getenv("AEGIS_DEV_WEB"); devRoot != "" {
@@ -260,7 +279,48 @@ func panelHandler(server *api.Server) http.Handler {
 		assets = sub
 	}
 	fileHandler := http.FileServer(http.FS(assets))
+
+	// index.html with the panel base injected so the frontend can build
+	// base-aware absolute URLs (/api/..., WebSocket endpoints, download links).
+	base := server.Cfg.PanelBase
+	var indexHTML []byte
+	if data, err := fs.ReadFile(assets, "index.html"); err == nil {
+		idx := string(data)
+		if base != "" {
+			b, _ := json.Marshal(base)
+			idx = strings.Replace(idx, "<head>",
+				"<head>\n<script>window.AEGIS_PANEL_BASE="+string(b)+"</script>", 1)
+		}
+		indexHTML = []byte(idx)
+	}
+
+	serveIndex := func(w http.ResponseWriter) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(indexHTML)
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if base != "" {
+			prefix := base + "/"
+			if r.URL.Path == base {
+				u := *r.URL
+				u.Path = prefix
+				http.Redirect(w, r, u.RequestURI(), http.StatusPermanentRedirect)
+				return
+			}
+			if !strings.HasPrefix(r.URL.Path, prefix) {
+				if outside != nil {
+					outside.ServeHTTP(w, r)
+				} else {
+					http.NotFound(w, r)
+				}
+				return
+			}
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = strings.TrimPrefix(r.URL.Path, base)
+			r = r2
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			apiHandler.ServeHTTP(w, r)
 			return
@@ -276,8 +336,17 @@ func panelHandler(server *api.Server) http.Handler {
 		if isAsset || p == "" || p == "index.html" {
 			w.Header().Set("Cache-Control", "no-store")
 		}
+		if indexHTML != nil && (p == "" || p == "index.html") {
+			serveIndex(w)
+			return
+		}
 		if p != "" {
 			if _, err := fs.Stat(assets, p); err != nil && !isAsset {
+				// Unknown path: SPA fallback to the injected index.
+				if indexHTML != nil {
+					serveIndex(w)
+					return
+				}
 				r2 := r.Clone(r.Context())
 				r2.URL.Path = "/"
 				fileHandler.ServeHTTP(w, r2)
@@ -289,11 +358,25 @@ func panelHandler(server *api.Server) http.Handler {
 }
 
 // startGoSiteServers runs the native Go web server on :80 and :443.
-func startGoSiteServers(ctx context.Context, webSvc *svc.WebServer, cfg *config.Config, errCh chan<- error) {
+func startGoSiteServers(ctx context.Context, webSvc *svc.WebServer, cfg *config.Config, panelOnVhost http.Handler, errCh chan<- error) {
 	httpAddr := envOr("AEGIS_GO_HTTP", ":80")
 	httpsAddr := envOr("AEGIS_GO_HTTPS", ":443")
 
-	httpSrv := &http.Server{Addr: httpAddr, Handler: webSvc.GoHandler()}
+	// The Go site server doubles as the reverse proxy for the panel path
+	// (ip/aegis): requests under PanelBase go to the panel, everything else
+	// to the customer site routes.
+	var site http.Handler = webSvc.GoHandler()
+	if panelOnVhost != nil {
+		site = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cfg.PanelBase != "" && (r.URL.Path == cfg.PanelBase || strings.HasPrefix(r.URL.Path, cfg.PanelBase+"/")) {
+				panelOnVhost.ServeHTTP(w, r)
+				return
+			}
+			site.ServeHTTP(w, r)
+		})
+	}
+
+	httpSrv := &http.Server{Addr: httpAddr, Handler: site}
 	go func() {
 		slog.Info("go web server listening (http)", "addr", httpAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -303,7 +386,7 @@ func startGoSiteServers(ctx context.Context, webSvc *svc.WebServer, cfg *config.
 
 	httpsSrv := &http.Server{
 		Addr:    httpsAddr,
-		Handler: webSvc.GoHandler(),
+		Handler: site,
 		TLSConfig: &tls.Config{
 			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				return webSvc.GoTLSCert(hello.ServerName)

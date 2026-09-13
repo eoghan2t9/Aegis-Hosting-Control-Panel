@@ -5,7 +5,7 @@
 # changes).
 #
 #   make docker-up          # or: docker compose -f docker/docker-compose.yml up -d --build
-#   open http://localhost:8080   (admin / admin by default)
+#   open http://localhost:8080/aegis   (admin / admin by default)
 #
 # Default credentials come from the env block; change before any real use.
 services:
@@ -53,6 +53,7 @@ services:
       AEGIS_POSTGRES_PASSWORD: postgres_dev
       AEGIS_DEV_WEB: /app/web
       AEGIS_LISTEN: ":8080"
+      AEGIS_PANEL_BASE: "/aegis"   # panel reachable at http://localhost:8080/aegis
       AEGIS_APACHE_LISTEN: "8081"
       # Reuse the host Go module + build caches (bind-mounted under /app/.tools)
       # so `go run` in the entrypoint doesn't re-download everything.

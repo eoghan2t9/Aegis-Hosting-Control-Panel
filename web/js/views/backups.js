@@ -1,4 +1,5 @@
 import { addRoute, isAdmin, refresh } from "../app.js";
+import { p } from "../base.js";
 import { api, qs } from "../api.js";
 import { icon, esc, toast, confirmDialog, promptDialog, fmtBytes, fmtAgo, pageHead, loading } from "../ui.js";
 
@@ -34,7 +35,7 @@ addRoute("/backups", {
 
     root.querySelectorAll("tbody tr").forEach((tr) => {
       const name = tr.dataset.name;
-      tr.querySelector(".act-dl")?.addEventListener("click", () => { location.href = "/api/backups/download?name=" + encodeURIComponent(name); });
+      tr.querySelector(".act-dl")?.addEventListener("click", () => { location.href = p("/api/backups/download?name=" + encodeURIComponent(name)); });
       tr.querySelector(".act-restore")?.addEventListener("click", async () => {
         const warn = "Restoring overwrites/recreates accounts from the manifest. This is not reversible. Continue?";
         if (!await confirmDialog(warn, { danger: true, title: "Restore " + name, okText: "Restore now" })) return;

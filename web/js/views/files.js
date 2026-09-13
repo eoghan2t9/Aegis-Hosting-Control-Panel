@@ -1,4 +1,5 @@
 import { addRoute, isAdmin } from "../app.js";
+import { p } from "../base.js";
 import { api, qs } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, pageHead, loading, fmtBytes, fmtAgo, modal, debounce, copyText } from "../ui.js";
 
@@ -27,10 +28,10 @@ function pagerPath(p) {
 // Authorization header — the token must ride along in the query string,
 // same as the WebSocket views already do.
 function downloadUrl(path) {
-  return "/api/files/download" + qs({ path, token: api.token });
+  return p("/api/files/download") + qs({ path, token: api.token });
 }
 function thumbUrl(path, size) {
-  return "/api/files/thumb" + qs({ path, size, token: api.token });
+  return p("/api/files/thumb") + qs({ path, size, token: api.token });
 }
 
 const VIDEO_EXTS = ["mp4", "mov", "mkv", "webm", "avi", "m4v"];
