@@ -93,7 +93,10 @@ holds an in-memory route table; `cmd/aegis` starts:
 - an HTTPS listener (`AEGIS_GO_HTTPS`, default `:443`) with a
   `GetCertificate` hook resolving certs from the route table (SNI),
 - PHP requests proxied through the in-tree FastCGI client to the domain's
-  php-fpm socket.
+  php-fpm socket,
+- requests under the panel base path (`AEGIS_PANEL_BASE`, default `/aegis`)
+  fall through to the control panel, so `http://<ip>/aegis` works without
+  a dedicated port.
 
 ## Frontend
 
@@ -118,6 +121,10 @@ volumes persist DB data and `/etc/aegis`.
 
 - JSON at `/etc/aegis/config.json` (or `AEGIS_CONFIG`); every path/credential
   is overridable with `AEGIS_*` env vars (see `config.Default()`).
+- `AEGIS_PANEL_BASE` (default `/aegis`) sets the URL prefix the panel serves
+  under; empty restores root-level serving. Generated vhosts (nginx/Apache/
+  Caddy) proxy that prefix to the panel listener, so the panel is reachable
+  at `http://<host>/aegis` on any domain or the bare server IP.
 - A 32-byte random secret at `/etc/aegis/secret.key` (0600) derives the JWT
   key and the AES key for provider tokens.
 - DB admin credentials for MariaDB/PostgreSQL live in the config so the panel

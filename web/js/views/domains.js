@@ -1,4 +1,5 @@
 import { addRoute, isAdmin, me, refresh } from "../app.js";
+import { p } from "../base.js";
 import { api } from "../api.js";
 import { icon, esc, toast, modal, confirmDialog, promptDialog, statusTag, fmtAgo, pageHead, loading } from "../ui.js";
 
@@ -55,7 +56,7 @@ addRoute("/domains", {
 function openPreview(id) {
   // The panel accepts the JWT as ?token= (same fallback the WebSocket
   // endpoints use), so the preview opens in a new tab with full auth.
-  const url = `/api/domains/${id}/preview/?token=${encodeURIComponent(api.token)}`;
+  const url = p(`/api/domains/${id}/preview/`) + `?token=${encodeURIComponent(api.token)}`;
   window.open(url, "_blank", "noopener");
 }
 

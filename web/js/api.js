@@ -1,4 +1,6 @@
 // Thin JSON API client. Stores the JWT in memory + localStorage for reloads.
+import { p } from "./base.js";
+
 const TOKEN_KEY = "aegis.token";
 
 export const api = {
@@ -12,7 +14,7 @@ export const api = {
       headers["Content-Type"] = "application/json";
       payload = JSON.stringify(body);
     }
-    const res = await fetch("/api" + path, { method, headers, body: payload ?? (body instanceof FormData ? body : undefined) });
+    const res = await fetch(p("/api") + path, { method, headers, body: payload ?? (body instanceof FormData ? body : undefined) });
     if (res.status === 401) {
       this.token = "";
       localStorage.removeItem(TOKEN_KEY);

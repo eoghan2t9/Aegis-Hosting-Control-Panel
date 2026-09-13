@@ -201,6 +201,85 @@ func hostnames(d *store.Domain, aliases []string) []string {
 	return out
 }
 
+// panelProxyBlocks renders the reverse-proxy snippet that exposes the panel
+// under PanelBase on customer vhosts, so the panel is reachable as
+// http://domain/aegis (or the server IP) without a dedicated port. Returns ""
+// when the panel is served from the root or the active server has no proxy
+// support. The upstream is the panel listener forced onto loopback.
+func (w *WebServer) panelProxyNginx() string {
+	base, up := w.Cfg.PanelBase, w.Cfg.PanelUpstream()
+	if base == "" {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "    # Aegis panel (proxied to the panel listener)\n")
+	fmt.Fprintf(&sb, "    location = %s { return 301 %s/; }\n", base, base)
+	fmt.Fprintf(&sb, "    location %s/ {\n", base)
+	fmt.Fprintf(&sb, "        proxy_pass http://%s;\n", up)
+	fmt.Fprintf(&sb, "        proxy_http_version 1.1;\n")
+	fmt.Fprintf(&sb, "        proxy_set_header Host $host;\n")
+	fmt.Fprintf(&sb, "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+	fmt.Fprintf(&sb, "        proxy_set_header X-Forwarded-Proto $scheme;\n")
+	// $http_connection instead of a map: browsers send "Upgrade" on the WS
+	// handshake and "keep-alive" otherwise, so both work without an http{}-level map.
+	fmt.Fprintf(&sb, "        proxy_set_header Upgrade $http_upgrade;\n")
+	fmt.Fprintf(&sb, "        proxy_set_header Connection $http_connection;\n")
+	fmt.Fprintf(&sb, "        proxy_read_timeout 3600s;\n")
+	fmt.Fprintf(&sb, "        proxy_send_timeout 3600s;\n")
+	fmt.Fprintf(&sb, "    }\n\n")
+	return sb.String()
+}
+
+var (
+	apacheProxyOnce sync.Once
+	apacheProxyOK   bool
+)
+
+// apachePanelProxyAvailable reports whether mod_proxy + proxy_http +
+// proxy_wstunnel are loaded (needed to proxy the panel incl. WebSockets).
+// Checked once; vhosts simply omit the panel block when unavailable.
+func apachePanelProxyAvailable() bool {
+	apacheProxyOnce.Do(func() {
+		if !LookPath("apachectl") {
+			return
+		}
+		out, err := RunTimeout(15*time.Second, "apachectl", "-M")
+		if err != nil {
+			return
+		}
+		apacheProxyOK = strings.Contains(out, "proxy_http") && strings.Contains(out, "proxy_wstunnel")
+	})
+	return apacheProxyOK
+}
+
+func (w *WebServer) panelProxyApache() string {
+	base, up := w.Cfg.PanelBase, w.Cfg.PanelUpstream()
+	if base == "" || !apachePanelProxyAvailable() {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "    # Aegis panel (proxied to the panel listener)\n")
+	fmt.Fprintf(&sb, "    ProxyPass %s http://%s%s retry=0 upgrade=websocket\n", base, up, base)
+	fmt.Fprintf(&sb, "    ProxyPassReverse %s http://%s%s\n", base, up, base)
+	return sb.String()
+}
+
+func (w *WebServer) panelProxyCaddy() string {
+	base, up := w.Cfg.PanelBase, w.Cfg.PanelUpstream()
+	if base == "" {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "    # Aegis panel (proxied to the panel listener)\n")
+	fmt.Fprintf(&sb, "    handle %s {\n", base)
+	fmt.Fprintf(&sb, "        redir %s/ 308\n", base)
+	fmt.Fprintf(&sb, "    }\n")
+	fmt.Fprintf(&sb, "    handle %s/* {\n", base)
+	fmt.Fprintf(&sb, "        reverse_proxy %s\n", up)
+	fmt.Fprintf(&sb, "    }\n")
+	return sb.String()
+}
+
 // --- nginx ---------------------------------------------------------------------
 
 func (w *WebServer) generateNginx(d *store.Domain, aliases []string, systemUser string) string {
@@ -225,6 +304,7 @@ func (w *WebServer) generateNginx(d *store.Domain, aliases []string, systemUser 
 	if sock != "" {
 		fmt.Fprintf(&sb, "    location ~ \\.php$ {\n        include fastcgi_params;\n        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n        fastcgi_pass unix:%s;\n        fastcgi_index index.php;\n    }\n\n", sock)
 	}
+	sb.WriteString(w.panelProxyNginx())
 	fmt.Fprintf(&sb, "    location ~ /\\.(?!well-known).* { deny all; }\n\n")
 	fmt.Fprintf(&sb, "    location ~ /\\.well-known/acme-challenge { allow all; }\n")
 	fmt.Fprintf(&sb, "}\n")
@@ -300,6 +380,7 @@ func (w *WebServer) writeApacheVhost(sb *strings.Builder, d *store.Domain, port 
 	if sock != "" {
 		fmt.Fprintf(sb, "    <FilesMatch \\.php$>\n        SetHandler \"proxy:unix:%s|fcgi://localhost\"\n    </FilesMatch>\n", sock)
 	}
+	sb.WriteString(w.panelProxyApache())
 	fmt.Fprintf(sb, "    ErrorLog ${APACHE_LOG_DIR}/%s-error.log\n    CustomLog ${APACHE_LOG_DIR}/%s-access.log combined\n", d.Domain, d.Domain)
 	fmt.Fprintf(sb, "</VirtualHost>\n\n")
 }
@@ -350,6 +431,7 @@ func (w *WebServer) generateCaddy(d *store.Domain, aliases []string, systemUser 
 		fmt.Fprintf(&sb, "    php_fastcgi unix//%s\n", sock)
 	}
 	fmt.Fprintf(&sb, "    encode zstd gzip\n")
+	sb.WriteString(w.panelProxyCaddy())
 	fmt.Fprintf(&sb, "    file_server\n")
 	if !d.SSLEnabled {
 		fmt.Fprintf(&sb, "    tls internal\n")

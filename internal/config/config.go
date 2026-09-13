@@ -19,12 +19,12 @@ import (
 
 // Default locations (Debian/Ubuntu style). Override via env or config file.
 const (
-	DefaultDir        = "/etc/aegis"
-	DefaultDBPath     = "/var/lib/aegis/aegis.db"
-	DefaultHomeRoot   = "/home"
-	DefaultBackupDir  = "/var/backups/aegis"
-	DefaultCertDir    = "/var/lib/aegis/certs"
-	DefaultTunedDir   = "/etc/aegis/tuned"
+	DefaultDir           = "/etc/aegis"
+	DefaultDBPath        = "/var/lib/aegis/aegis.db"
+	DefaultHomeRoot      = "/home"
+	DefaultBackupDir     = "/var/backups/aegis"
+	DefaultCertDir       = "/var/lib/aegis/certs"
+	DefaultTunedDir      = "/etc/aegis/tuned"
 	DefaultDNSDir        = "/var/lib/aegis/dns"
 	DefaultSecretFile    = "/etc/aegis/secret.key"
 	DefaultListenAddr    = ":8080"
@@ -86,6 +86,11 @@ type Config struct {
 	DNSDir     string `json:"dns_dir"`
 	SecretFile string `json:"secret_file"`
 	ListenAddr string `json:"listen_addr"`
+	// PanelBase is the URL path prefix the panel is served under (default
+	// "/aegis"), so the panel is reachable as http://host/aegis without a
+	// dedicated port. Empty (AEGIS_PANEL_BASE="-") serves from the root.
+	// Web-server vhosts proxy this prefix to the panel listener.
+	PanelBase string `json:"panel_base"`
 	// ThumbCacheDir stores generated file-manager thumbnails (images, video
 	// frames, PDF first pages), keyed by content so edits auto-invalidate.
 	ThumbCacheDir string `json:"thumb_cache_dir"`
@@ -121,6 +126,7 @@ func Default() *Config {
 		DNSDir:          envOr("AEGIS_DNS_DIR", DefaultDNSDir),
 		SecretFile:      envOr("AEGIS_SECRET_FILE", DefaultSecretFile),
 		ListenAddr:      envOr("AEGIS_LISTEN", DefaultListenAddr),
+		PanelBase:       normalizePanelBase(envOr("AEGIS_PANEL_BASE", "/aegis")),
 		ThumbCacheDir:   envOr("AEGIS_THUMB_CACHE_DIR", DefaultThumbCacheDir),
 		PublicHost:      envOr("AEGIS_PUBLIC_HOST", ""),
 		SessionTTLHours: 24,
@@ -207,12 +213,41 @@ func (c *Config) Validate() error {
 	if c.SessionTTLHours <= 0 {
 		c.SessionTTLHours = 24
 	}
+	c.PanelBase = normalizePanelBase(c.PanelBase)
 	switch c.WebServer.Server {
 	case "nginx", "apache", "caddy", "go":
 	default:
 		return fmt.Errorf("config: unsupported webserver %q (nginx|apache|caddy|go)", c.WebServer.Server)
 	}
 	return nil
+}
+
+// normalizePanelBase accepts "/aegis", "aegis", "/" (root) and "-" (root) and
+// returns "" for root serving or "/aegis"-style with no trailing slash.
+func normalizePanelBase(b string) string {
+	b = strings.TrimSpace(b)
+	if b == "" || b == "/" || b == "-" {
+		return ""
+	}
+	if !strings.HasPrefix(b, "/") {
+		b = "/" + b
+	}
+	return strings.TrimSuffix(b, "/")
+}
+
+// PanelUpstream is the host:port the web-server vhosts proxy the panel to —
+// the panel listener, forced onto the loopback side (vhosts run on the same
+// host; the panel should never be proxied over an external interface).
+func (c *Config) PanelUpstream() string {
+	a := c.ListenAddr
+	switch {
+	case strings.HasPrefix(a, ":"):
+		return "127.0.0.1" + a
+	case strings.HasPrefix(a, "0.0.0.0:"):
+		return "127.0.0.1" + strings.TrimPrefix(a, "0.0.0.0")
+	default:
+		return a
+	}
 }
 
 // EnsureDirs creates every directory the panel needs and generates the secret

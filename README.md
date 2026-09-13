@@ -47,9 +47,15 @@ dev container below), and the panel binary itself has no docker dependency.
 
 ```bash
 make docker-up          # builds the dev container (first run takes a while)
-open http://localhost:8080
+open http://localhost:8080/aegis
 # login: admin / admin   (from AEGIS_ADMIN_PASSWORD in docker/docker-compose.yml)
 ```
+
+The panel serves at the `/aegis` path prefix by default (`AEGIS_PANEL_BASE`),
+so on a bare-metal install it is reachable as `http://<server-ip>/aegis` —
+no port number in the URL. The `/aegis` prefix is proxied through every
+generated vhost (nginx, Apache, Caddy) and the native Go web server, so it
+works on any hostname pointing at the server, even before you host a site.
 
 The repo is bind-mounted into the container, so **edits never require an image
 rebuild**:
