@@ -16,6 +16,7 @@ addRoute("/cron", {
   icon: "clock",
   group: "Websites",
   order: 4,
+  feature: "cron",
   render: async (view) => {
     view.innerHTML = pageHead("Cron jobs", "Scheduled commands, run under your own account via the system crontab. Output is captured to a log you can view here.", `
       <button class="btn btn-primary" id="btn-cron">${icon("plus")} New job</button>`);

@@ -7,6 +7,7 @@ addRoute("/ftp", {
   icon: "server",
   group: "Data",
   order: 2,
+  feature: "ftp",
   render: async (view) => {
     view.innerHTML = pageHead("FTP accounts", "FTP access to your files, chrooted to your account. The primary account matches your panel login; extra accounts are rooted inside your home.", `
       <button class="btn btn-primary" id="btn-ftp">${icon("plus")} New account</button>`);

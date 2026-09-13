@@ -9,6 +9,7 @@ addRoute("/dns", {
   icon: "cloud",
   group: "Websites",
   order: 1,
+  feature: "dns",
   render: async (view) => {
     selectedZone = null;
     view.innerHTML = pageHead("DNS", "Authoritative DNS per domain. Zones can be served by the built-in name server (local) or synced to Cloudflare and other providers through plugins.", `

@@ -67,17 +67,24 @@ async function showLoginHint() {
   if (res?.hostname) hint.innerHTML = `host: ${esc(res.hostname)}`;
 }
 
-let state = { user: null, claims: null };
+let state = { user: null, claims: null, features: {} };
 
 export function me() { return state.user; }
 export function isAdmin() { return state.user && state.user.role === "admin"; }
 export function isReseller() { return state.user && (state.user.role === "admin" || state.user.role === "reseller"); }
+// can(feature) reports whether the signed-in user's hosting package grants a
+// panel area ("ssl", "dns", "terminal", "backups", "mail", "webmail",
+// "databases", "files", "ftp", "cron"). Mirrors the server's withFeature
+// gate — UI convenience only, the API enforces it for real. Admins,
+// resellers and plan-less accounts are always allowed (same rule server-side).
+export function can(feature) { return state.features[feature] !== false; }
 
 async function enterApp() {
   document.getElementById("screen-login").classList.add("hidden");
   const meData = await api.get("/auth/me");
   state.user = meData.user;
   state.claims = meData.claims;
+  state.features = meData.features || {}
   document.getElementById("screen-app").classList.remove("hidden");
   buildShell();
   startPoller();
@@ -127,7 +134,8 @@ function buildShell() {
   nav.innerHTML = "";
   const groups = {};
   const entries = Object.entries(routes)
-    .filter(([, def]) => !(def.adminOnly && !isAdmin()) && !(def.resellerOnly && !isReseller()))
+    .filter(([, def]) => !(def.adminOnly && !isAdmin()) && !(def.resellerOnly && !isReseller())
+      && !(def.feature && !can(def.feature)))
     .sort(([, a], [, b]) => {
       const ga = GROUP_ORDER.indexOf(a.group || ""), gb = GROUP_ORDER.indexOf(b.group || "");
       if (ga !== gb) return ga - gb;
@@ -176,6 +184,10 @@ async function navigate(hash) {
   const path = (hash || "#/dashboard").slice(1).split("?")[0] || "/dashboard";
   const def = routes[path];
   if (!def) return navigate("#/dashboard");
+  // Package gate mirrors the nav filter: a hand-typed/bookmarked hash for an
+  // area the user's plan doesn't include falls back to the dashboard rather
+  // than rendering a view whose every API call would 403.
+  if (def.feature && !can(def.feature)) return navigate("#/dashboard");
   // Highlight nav.
   document.querySelectorAll(".nav-link").forEach((a) => {
     a.classList.toggle("active", a.dataset.route === path);

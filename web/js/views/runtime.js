@@ -42,8 +42,10 @@ addRoute("/runtime", {
               <span class="card-actions"><span class="tag tag-teal">active: ${esc(ws.active || "—")}</span></span></div>
             <p class="small muted">The active server generates vhosts for every new domain. Native Go and the classic servers are all supported.</p>
             <div class="pill-group" id="ws-picker">
-              ${(ws.available || []).map((s) => `
-                <button class="btn btn-sm ${s === ws.active ? "btn-primary" : ""}" data-ws="${esc(s)}">${esc(s)}</button>`).join("")}
+              ${["go", "nginx", "apache", "caddy"].map((s) => {
+                const installed = (ws.available || []).includes(s);
+                return `<button class="btn btn-sm ${s === ws.active ? "btn-primary" : ""}" data-ws="${esc(s)}" ${installed ? "" : "data-install=\"1\""} title="${installed ? "Installed" : "Not installed — will be installed automatically when selected"}">${esc(s)}${installed ? "" : " <span class=\"small dim\">(install)</span>"}</button>`;
+              }).join("")}
             </div>
             ${isAdmin() ? `<p class="small dim" style="margin-top:10px">Switching re-targets new domains only; existing vhosts are regenerated when you click “Apply config” on each domain.</p>`
             : `<p class="small dim" style="margin-top:10px">Contact an administrator to change the active web server.</p>`}
@@ -67,8 +69,14 @@ addRoute("/runtime", {
         b.onclick = async () => {
           const target = b.dataset.ws;
           if (target === ws.active) return;
-          if (!await confirmDialog(`Set the active web server to ${target}?`, { title: "Switch web server", okText: "Switch" })) return;
-          try { await api.patch("/webserver", { server: target }); toast("Active web server: " + target); refresh(); }
+          const needsInstall = b.dataset.install === "1";
+          const ok = await confirmDialog(
+            needsInstall
+              ? `${target} is not installed yet. Install it via the package manager and set it as the active web server?`
+              : `Set the active web server to ${target}?`,
+            { title: "Switch web server", okText: needsInstall ? "Install & switch" : "Switch" });
+          if (!ok) return;
+          try { await api.patch("/webserver", { server: target, install: true }); toast("Active web server: " + target); refresh(); }
           catch (ex) { toast(ex.message, "err"); }
         };
       });
