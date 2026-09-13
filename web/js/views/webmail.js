@@ -11,7 +11,7 @@ async function wmFetch(path, opts = {}) {
   const token = sessionStorage.getItem(TOKEN_KEY);
   const headers = { "Content-Type": "application/json" };
   if (token) headers["X-Webmail-Token"] = token;
-  const res = await fetch("/api/webmail" + path, { ...opts, headers });
+  const res = await fetch(p("/api") + "/webmail" + path, { ...opts, headers });
   if (res.status === 401) {
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(ADDR_KEY);
@@ -59,7 +59,7 @@ function renderLogin(view) {
     const address = form.address.value.trim();
     const password = form.password.value;
     try {
-      const res = await fetch("/api/webmail/login", {
+      const res = await fetch(p("/api") + "/webmail/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address, password }),

@@ -1,4 +1,5 @@
 import { addRoute, isAdmin, me } from "../app.js";
+import { p } from "../base.js";
 import { api } from "../api.js";
 import { icon, fmtBytes, fmtPct, fmtNum, fmtAgo, statusTag, sparkline, ring, esc, pageHead, toast } from "../ui.js";
 
@@ -105,7 +106,7 @@ function startLiveCharts(ov) {
   const stop = () => { try { ws?.close(); } catch {} };
   try {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/system/metrics?token=${encodeURIComponent(api.token)}`);
+    ws = new WebSocket(`${proto}://${location.host}${p("/api")}/system/metrics?token=${encodeURIComponent(api.token)}`);
     ws.onmessage = (e) => {
       if (!document.getElementById("cpu-val")) return stop();
       const m = JSON.parse(e.data);
