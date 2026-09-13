@@ -7,10 +7,6 @@ import (
 	"aegis/internal/svc"
 )
 
-func svcCreateOptions(phpVersion, webserver string) svc.CreateOptions {
-	return svc.CreateOptions{PHPVersion: phpVersion, WebServer: webserver}
-}
-
 func validAlias(a string) bool {
 	return svc.ValidDomain(a)
 }
@@ -55,7 +51,11 @@ type createDomainReq struct {
 	Domain     string `json:"domain"`
 	PHPVersion string `json:"php_version"`
 	WebServer  string `json:"webserver"`
-	UserID     int64  `json:"user_id,omitempty"` // admin: create for another user
+	// RelRoot optionally places the document root at a custom folder
+	// relative to the owner's home (e.g. "example.com/sub" to nest a
+	// subdomain inside the master domain's folder). Empty = <domain>/public.
+	RelRoot string `json:"rel_root,omitempty"`
+	UserID  int64  `json:"user_id,omitempty"` // admin: create for another user
 }
 
 func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +76,11 @@ func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "only admins can create domains for other users")
 		return
 	}
-	dom, err := s.Domains.Create(r.Context(), owner, req.Domain, svcCreateOptions(req.PHPVersion, req.WebServer))
+	dom, err := s.Domains.Create(r.Context(), owner, req.Domain, svc.CreateOptions{
+		PHPVersion: req.PHPVersion,
+		WebServer:  req.WebServer,
+		RelPath:    req.RelRoot,
+	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
