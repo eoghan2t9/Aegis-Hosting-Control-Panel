@@ -28,6 +28,7 @@ addRoute("/webmail", {
   icon: "mail",
   group: "Email",
   order: 1,
+  feature: "webmail",
   render: async (view) => {
     const token = sessionStorage.getItem(TOKEN_KEY);
     const address = sessionStorage.getItem(ADDR_KEY);

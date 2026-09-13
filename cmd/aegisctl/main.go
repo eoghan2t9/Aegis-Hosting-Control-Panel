@@ -430,7 +430,9 @@ func cmdPackage(ctx context.Context, args []string) error {
 			return fmt.Errorf("package create: -n required")
 		}
 		p := &store.Package{Name: *n, MaxDomains: *domains, MaxDatabases: *databases, MaxFTPAccounts: *ftpAcc,
-			DiskQuotaBytes: *disk << 20, AllowSSL: true, AllowDNS: true, AllowTerminal: true, AllowBackups: true, IsDefault: *def}
+			DiskQuotaBytes: *disk << 20, AllowSSL: true, AllowDNS: true, AllowTerminal: true, AllowBackups: true,
+			AllowMail: true, AllowWebmail: true, AllowDatabases: true, AllowFiles: true, AllowFTP: true,
+			AllowCron: true, IsDefault: *def}
 		return st.CreatePackage(ctx, p)
 	default:
 		return fmt.Errorf("package: unknown subcommand")

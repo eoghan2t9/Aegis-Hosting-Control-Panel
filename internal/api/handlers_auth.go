@@ -59,6 +59,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			"impersonating":   auth.IsImpersonating(claims),
 			"impersonated_by": acting.Username,
 		},
+		// Which panel areas the user's hosting package grants. The frontend
+		// uses this to hide gated nav areas; the API enforces the same flags
+		// server-side via withFeature, so this is convenience, not security.
+		"features": s.featuresFor(r.Context(), user),
 	})
 }
 

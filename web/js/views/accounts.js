@@ -113,7 +113,7 @@ addRoute("/accounts", {
             <dt>databases</dt><dd>${p.max_databases || "∞"}</dd>
             <dt>ftp accounts</dt><dd>${p.max_ftp_accounts || "∞"}</dd>
             <dt>disk</dt><dd>${p.disk_quota_bytes ? fmtBytesShort(p.disk_quota_bytes) : "unlimited"}</dd>
-            <dt>features</dt><dd>${[p.allow_ssl && "ssl", p.allow_dns && "dns", p.allow_terminal && "terminal", p.allow_backups && "backups"].filter(Boolean).join(" · ") || "—"}</dd>
+            <dt>features</dt><dd>${[p.allow_ssl && "ssl", p.allow_dns && "dns", p.allow_terminal && "terminal", p.allow_backups && "backups", p.allow_mail && "mail", p.allow_webmail && "webmail", p.allow_databases && "databases", p.allow_files && "files", p.allow_ftp && "ftp", p.allow_cron && "cron"].filter(Boolean).join(" · ") || "—"}</dd>
           </dl>
         </div>`).join("")}</div>` : "");
 
@@ -155,6 +155,12 @@ function pkgModal(pkg, done) {
     { name: "allow_dns", label: "DNS", type: "select", options: yesNo, value: String(b("allow_dns", true)) },
     { name: "allow_terminal", label: "Terminal", type: "select", options: yesNo, value: String(b("allow_terminal", true)) },
     { name: "allow_backups", label: "Backups", type: "select", options: yesNo, value: String(b("allow_backups", true)) },
+    { name: "allow_mail", label: "Email (mailboxes & aliases)", type: "select", options: yesNo, value: String(b("allow_mail", true)) },
+    { name: "allow_webmail", label: "Webmail", type: "select", options: yesNo, value: String(b("allow_webmail", true)) },
+    { name: "allow_databases", label: "Databases", type: "select", options: yesNo, value: String(b("allow_databases", true)) },
+    { name: "allow_files", label: "File manager", type: "select", options: yesNo, value: String(b("allow_files", true)) },
+    { name: "allow_ftp", label: "FTP", type: "select", options: yesNo, value: String(b("allow_ftp", true)) },
+    { name: "allow_cron", label: "Cron jobs", type: "select", options: yesNo, value: String(b("allow_cron", true)) },
     { name: "is_default", label: "Default package", type: "select", options: yesNo, value: String(b("is_default", false)) },
   ]);
   valsPromise.then(async (vals) => {
@@ -165,6 +171,9 @@ function pkgModal(pkg, done) {
       disk_quota_bytes: Math.round(+vals.disk_quota_bytes * 1024 * 1024),
       allow_ssl: vals.allow_ssl === "true", allow_dns: vals.allow_dns === "true",
       allow_terminal: vals.allow_terminal === "true", allow_backups: vals.allow_backups === "true",
+      allow_mail: vals.allow_mail === "true", allow_webmail: vals.allow_webmail === "true",
+      allow_databases: vals.allow_databases === "true", allow_files: vals.allow_files === "true",
+      allow_ftp: vals.allow_ftp === "true", allow_cron: vals.allow_cron === "true",
       is_default: vals.is_default === "true",
     };
     try {

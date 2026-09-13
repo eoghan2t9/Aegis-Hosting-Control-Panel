@@ -78,6 +78,52 @@ func TestPackageDefaultSeed(t *testing.T) {
 	}
 }
 
+func TestPackageFeatureFlagsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Seeded default: every panel area enabled.
+	seeded, err := s.GetDefaultPackage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, on := range map[string]bool{
+		"ssl": seeded.AllowSSL, "dns": seeded.AllowDNS,
+		"terminal": seeded.AllowTerminal, "backups": seeded.AllowBackups,
+		"mail": seeded.AllowMail, "webmail": seeded.AllowWebmail,
+		"databases": seeded.AllowDatabases, "files": seeded.AllowFiles,
+		"ftp": seeded.AllowFTP, "cron": seeded.AllowCron,
+	} {
+		if !on {
+			t.Errorf("seeded package: allow_%s = false, want true", name)
+		}
+	}
+
+	// Create with a mixed feature set, update it, and read it back —
+	// exercises column ordering in pkgCols vs the INSERT/UPDATE lists.
+	p := &Package{Name: "basic", MaxDomains: 1, AllowSSL: true, AllowFiles: true}
+	if err := s.CreatePackage(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetPackage(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AllowSSL || !got.AllowFiles || got.AllowDNS || got.AllowCron || got.AllowMail {
+		t.Errorf("created package flags wrong: %+v", got)
+	}
+	got.AllowSSL = false
+	got.AllowCron = true
+	got.AllowWebmail = true
+	if err := s.UpdatePackage(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.GetPackage(ctx, p.ID)
+	if again.AllowSSL || !again.AllowCron || !again.AllowWebmail || !again.AllowFiles {
+		t.Errorf("updated package flags wrong: %+v", again)
+	}
+}
+
 func TestDomainWithZoneAndRecords(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

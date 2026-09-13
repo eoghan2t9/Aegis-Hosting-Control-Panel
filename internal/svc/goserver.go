@@ -42,6 +42,28 @@ func (w *WebServer) ServePreviewRoute(rw http.ResponseWriter, r *http.Request, r
 func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route GoRoute) {
 	root := route.Root
 	upath := path.Clean("/" + r.URL.Path)
+
+	// .htaccess interpretation: block sensitive/dot paths, then apply
+	// redirects and rewrite rules. A rewritten path swaps into the request.
+	if w.htGate(rw, r, upath) {
+		return
+	}
+	if out := htEngine(w.htConfigFor(root, upath), r, root, upath, r.URL.RawQuery); out.Status == 403 || out.Status == 410 {
+		http.Error(rw, http.StatusText(out.Status), out.Status)
+		return
+	} else if out.Redirect != "" {
+		http.Redirect(rw, r, out.Redirect, out.Status)
+		return
+	} else if out.Path != "" {
+		upath = path.Clean("/" + out.Path)
+		u := *r.URL
+		u.Path = upath
+		u.RawQuery = out.Query
+		r2 := r.Clone(r.Context())
+		r2.URL = &u
+		r = r2
+	}
+
 	fsPath := filepath.Join(root, filepath.FromSlash(upath))
 
 	// Guard against traversal outside the docroot.
@@ -58,6 +80,26 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		// Serve static files directly.
 		http.ServeFile(rw, r, fsPath)
 		return
+	}
+
+	// Directory request: serve the directory index (from .htaccess
+	// DirectoryIndex when present, else the usual defaults) when one of the
+	// index files exists — before the PHP fallback, so static sites work.
+	if statErr == nil && info.IsDir() {
+		idx := w.htConfigFor(root, upath).DirectoryIndex
+		if len(idx) == 0 {
+			idx = []string{"index.php", "index.html", "index.htm"}
+		}
+		for _, name := range idx {
+			ip := filepath.Join(fsPath, filepath.FromSlash(path.Clean("/"+name)))
+			if st, err := os.Stat(ip); err == nil && !st.IsDir() {
+				if strings.HasSuffix(name, ".php") && route.Socket != "" {
+					break // let the PHP path below handle it
+				}
+				http.ServeFile(rw, r, ip)
+				return
+			}
+		}
 	}
 
 	// PHP or pretty-URL fallback: run through php-fpm.
@@ -95,6 +137,28 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	}
 	rw.WriteHeader(status)
 	_, _ = rw.Write(body)
+}
+
+// htGate blocks dotfile paths before anything else is served: .ht* returns
+// 403 (Apache's default <Files ".ht*"> semantics — the file may contain
+// rewrite rules worth keeping secret), other dotfiles 404. .well-known stays
+// reachable for ACME challenges, matching the panel's nginx template.
+func (w *WebServer) htGate(rw http.ResponseWriter, r *http.Request, upath string) bool {
+	for _, seg := range strings.Split(upath, "/") {
+		if !strings.HasPrefix(seg, ".") || seg == "." || seg == "" {
+			continue
+		}
+		if seg == ".well-known" {
+			continue
+		}
+		if strings.HasPrefix(seg, ".ht") {
+			http.Error(rw, "forbidden", http.StatusForbidden)
+		} else {
+			http.NotFound(rw, r)
+		}
+		return true
+	}
+	return false
 }
 
 // fcgiExec builds FastCGI params from the HTTP request and calls php-fpm.

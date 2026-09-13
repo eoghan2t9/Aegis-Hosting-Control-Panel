@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS packages (
 	allow_dns INTEGER NOT NULL DEFAULT 1,
 	allow_terminal INTEGER NOT NULL DEFAULT 1,
 	allow_backups INTEGER NOT NULL DEFAULT 1,
+	allow_mail INTEGER NOT NULL DEFAULT 1,
+	allow_webmail INTEGER NOT NULL DEFAULT 1,
+	allow_databases INTEGER NOT NULL DEFAULT 1,
+	allow_files INTEGER NOT NULL DEFAULT 1,
+	allow_ftp INTEGER NOT NULL DEFAULT 1,
+	allow_cron INTEGER NOT NULL DEFAULT 1,
 	is_default INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL
 );
@@ -272,6 +278,21 @@ CREATE TABLE IF NOT EXISTS system_package_updates (
 	// a table that already existed from an older schema version.
 	if err := s.addColumnIfMissing(ctx, "users", "suspended_by_quota", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return fmt.Errorf("migrate users.suspended_by_quota: %w", err)
+	}
+	// Package feature flags added after the first release: retrofit them so
+	// existing databases keep every panel area enabled (matching the old
+	// behaviour, where the flags didn't exist and nothing was gated).
+	for _, c := range []struct{ col, def string }{
+		{"allow_mail", "INTEGER NOT NULL DEFAULT 1"},
+		{"allow_webmail", "INTEGER NOT NULL DEFAULT 1"},
+		{"allow_databases", "INTEGER NOT NULL DEFAULT 1"},
+		{"allow_files", "INTEGER NOT NULL DEFAULT 1"},
+		{"allow_ftp", "INTEGER NOT NULL DEFAULT 1"},
+		{"allow_cron", "INTEGER NOT NULL DEFAULT 1"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "packages", c.col, c.def); err != nil {
+			return fmt.Errorf("migrate packages.%s: %w", c.col, err)
+		}
 	}
 	// Seed a default package on first run.
 	var n int
