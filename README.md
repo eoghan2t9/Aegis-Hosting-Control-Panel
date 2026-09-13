@@ -38,10 +38,20 @@ sudo scripts/install-stack.sh --no-mail       # tailor with --no-ftp --no-db
                                               # --with-caddy / --with-apache
 ```
 
-Packages stay distro-managed on purpose: PHP CVE fixes and friends arrive via
-`apt upgrade` — the panel only ever *detects* what's installed. **Docker is not
-part of a bare-metal install** — it exists solely for development (the disposable
-dev container below), and the panel binary itself has no docker dependency.
+**Panel access after install** (the installer prints this too):
+
+```bash
+open http://<server-ip>/aegis        # any hostname on the server works: http://<domain>/aegis
+systemctl start aegis.service \
+  AEGIS_ADMIN_USER=admin AEGIS_ADMIN_PASSWORD='<secret>'   # creates the admin on first boot
+```
+
+The admin user is read from `AEGIS_ADMIN_USER`/`AEGIS_ADMIN_PASSWORD` on
+first boot only (before the admin account exists); `aegisctl setup` offers
+guided tuning + admin creation afterwards. The `/aegis` prefix is proxied
+through every generated vhost (nginx, Apache, Caddy) and the native Go web
+server, so the panel stays reachable on any hostname — including the bare
+server IP before you host a single site.
 
 ## Quick start (development)
 
@@ -51,11 +61,10 @@ open http://localhost:8080/aegis
 # login: admin / admin   (from AEGIS_ADMIN_PASSWORD in docker/docker-compose.yml)
 ```
 
-The panel serves at the `/aegis` path prefix by default (`AEGIS_PANEL_BASE`),
-so on a bare-metal install it is reachable as `http://<server-ip>/aegis` —
-no port number in the URL. The `/aegis` prefix is proxied through every
-generated vhost (nginx, Apache, Caddy) and the native Go web server, so it
-works on any hostname pointing at the server, even before you host a site.
+The dev container serves the panel at the same `/aegis` prefix used in
+production (`AEGIS_PANEL_BASE`), so URLs behave identically in both
+environments. The admin user is created from `AEGIS_ADMIN_*` env vars on
+first boot — the login page never advertises credentials.
 
 The repo is bind-mounted into the container, so **edits never require an image
 rebuild**:
@@ -73,7 +82,10 @@ make test && make vet   # go test ./... && go vet ./...
 ## Feature map
 
 1. **Domain management** — one document root per domain, quota-checked,
-   vhosts regenerated on change. Aliases supported.
+   vhosts regenerated on change. Aliases supported. New domains get a styled
+   **under-construction placeholder** matching the panel design, and can be
+   **previewed through the panel** (`eye` icon in Domains) before DNS has
+   propagated — PHP included, served by the same code path as production.
 2. **DNS** — zones with A/AAAA/CNAME/MX/TXT/NS/SRV/CAA records, a built-in
    authoritative DNS server (miekg/dns), RFC1035 zone files, and **provider
    plugins** that sync to Cloudflare (add more in `internal/svc/dns.go`).

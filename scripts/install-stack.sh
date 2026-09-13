@@ -246,7 +246,7 @@ After=network.target mariadb.service postgresql.service
 Type=simple
 ExecStart=${AEGIS_BIN}
 Environment=AEGIS_LISTEN=:8080
-Environment=AEGIS_PANEL_BASE=/aegis
+Environment=AEGIS_PANEL_BASE=${BASE}
 Environment=AEGIS_MARIADB_PASSWORD=${MARIADB_PASSWORD:-}
 Environment=AEGIS_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
 Restart=on-failure
@@ -263,13 +263,15 @@ EOF
 fi
 
 # ----------------------------- 7. summary ------------------------------------
+PANEL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+PANEL_IP=${PANEL_IP:-<server-ip>}
 cat <<EOF
 
 ============================================================
  Aegis stack installed.
 ============================================================
  PHP-FPM:        $(for v in $PHP_VERSIONS; do printf "php$v "; done)
- Web server:     $WEB_SERVER
+ Web server:     $WEB_SERVER (default vhost proxies the panel)
  MariaDB admin:  root@127.0.0.1  (password: ${MARIADB_PASSWORD:+set}${MARIADB_PASSWORD:-skipped})
  PostgreSQL:     postgres        (password: ${POSTGRES_PASSWORD:+set}${POSTGRES_PASSWORD:-skipped})
  Mail:           $([ "$WITH_MAIL" = 1 ] && echo postfix+dovecot+opendkim || echo skipped)
@@ -277,12 +279,22 @@ cat <<EOF
  fail2ban:       $([ "$WITH_FAIL2BAN" = 1 ] && echo yes || echo no)
  Binary:         $([ -x "$AEGIS_BIN" ] && echo "$AEGIS_BIN" || echo "(not built)")
 
+ Panel access:
+   URL:            http://${PANEL_IP}${BASE}
+   Any hostname:   http://<your-domain>${BASE} — every generated vhost
+                   (nginx/Apache/Caddy) proxies the /aegis prefix, and the
+                   native Go web server falls through to the panel too
+   Change prefix:  AEGIS_PANEL_BASE in ${SERVICE_NAME}.service
+                   (set it empty to serve the panel at /)
+   Admin login:    created on first boot from AEGIS_ADMIN_USER +
+                   AEGIS_ADMIN_PASSWORD — the login page shows no
+                   default credentials
+
  Next steps:
    1. AEGIS_ADMIN_USER=admin AEGIS_ADMIN_PASSWORD='<secret>' \\
         systemctl start ${SERVICE_NAME}.service
       (admin env vars are read on first boot only, before the admin user exists)
-   2. open http://<server-ip>/aegis   (no port needed — the panel serves
-      under /aegis; every generated vhost proxies it)
+   2. open the Panel access URL above
    3. run 'aegisctl setup' if you want guided tuning + admin creation
 ============================================================
 EOF
