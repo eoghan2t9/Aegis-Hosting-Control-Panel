@@ -1,9 +1,12 @@
 package svc
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -30,6 +33,117 @@ func (w *WebServer) GoHandler() http.Handler {
 		}
 		w.serveGoRoute(rw, r, route)
 	})
+}
+
+// StartGo starts the native Go site server's HTTP/HTTPS listeners, or does
+// nothing if they're already running (safe to call on every boot and on
+// every live switch to "go"). panelHandler serves the panel itself under
+// Cfg.PanelBase on the same listener (see cmd/aegis's panelHandler()); pass
+// nil to skip that (used at boot for the dedicated :8080 panel listener,
+// which already serves the panel on its own).
+//
+// Both ports are bound synchronously before returning, so a conflict (nginx/
+// Apache/Caddy — or anything else — already holding :80/:443) is reported
+// immediately as an error instead of only surfacing later via errCh, which
+// is what let a bad "switch to go" request save a config that crash-looped
+// the whole panel on its next restart.
+func (w *WebServer) StartGo(panelHandler http.Handler, errCh chan<- error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.goHTTP != nil {
+		return nil // already running
+	}
+
+	httpAddr := os.Getenv("AEGIS_GO_HTTP")
+	if httpAddr == "" {
+		httpAddr = ":80"
+	}
+	httpsAddr := os.Getenv("AEGIS_GO_HTTPS")
+	if httpsAddr == "" {
+		httpsAddr = ":443"
+	}
+
+	httpLn, err := net.Listen("tcp", httpAddr)
+	if err != nil {
+		return fmt.Errorf("go web server: %w", err)
+	}
+	httpsLn, err := net.Listen("tcp", httpsAddr)
+	if err != nil {
+		_ = httpLn.Close()
+		return fmt.Errorf("go web server: %w", err)
+	}
+
+	var site http.Handler = w.GoHandler()
+	if panelHandler != nil {
+		base := w.Cfg.PanelBase
+		inner := site
+		site = http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			if base != "" && (r.URL.Path == base || strings.HasPrefix(r.URL.Path, base+"/")) {
+				panelHandler.ServeHTTP(rw, r)
+				return
+			}
+			inner.ServeHTTP(rw, r)
+		})
+	}
+
+	httpSrv := &http.Server{Addr: httpAddr, Handler: site}
+	slog.Info("go web server listening (http)", "addr", httpAddr)
+	go func() {
+		if err := httpSrv.Serve(httpLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			trySend(errCh, fmt.Errorf("go http server: %w", err))
+		}
+	}()
+
+	httpsSrv := &http.Server{
+		Addr:    httpsAddr,
+		Handler: site,
+		TLSConfig: &tls.Config{
+			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				return w.GoTLSCert(hello.ServerName)
+			},
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+	slog.Info("go web server listening (https, sni)", "addr", httpsAddr)
+	go func() {
+		if err := httpsSrv.ServeTLS(httpsLn, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			trySend(errCh, fmt.Errorf("go https server: %w", err))
+		}
+	}()
+
+	w.goHTTP, w.goHTTPS = httpSrv, httpsSrv
+	return nil
+}
+
+// trySend delivers err without blocking when errCh is nil or already full —
+// StartGo callers that don't care about post-startup errors (a live
+// webserver-switch request, say) can pass nil.
+func trySend(errCh chan<- error, err error) {
+	if errCh == nil {
+		return
+	}
+	select {
+	case errCh <- err:
+	default:
+	}
+}
+
+// StopGo shuts down the native Go server's listeners, or does nothing if
+// they aren't running.
+func (w *WebServer) StopGo() {
+	w.mu.Lock()
+	httpSrv, httpsSrv := w.goHTTP, w.goHTTPS
+	w.goHTTP, w.goHTTPS = nil, nil
+	w.mu.Unlock()
+	if httpSrv == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = httpSrv.Shutdown(ctx)
+	if httpsSrv != nil {
+		_ = httpsSrv.Shutdown(ctx)
+	}
 }
 
 // ServePreviewRoute serves one domain's docroot through the panel (static
