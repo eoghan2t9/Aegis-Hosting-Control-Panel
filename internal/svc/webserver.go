@@ -549,9 +549,14 @@ func (w *WebServer) writeApacheVhost(sb *strings.Builder, d *store.Domain, port 
 	// Bind to the domain's assigned IP (already validated to exist on a
 	// local interface by svc.IPs.Create) instead of every interface, when
 	// one is set — every existing, unassigned domain keeps "*" (unchanged).
+	// IPv6 literals need brackets here, same as nginxListen, or the port's
+	// colon is ambiguous with the address's own colons.
 	bind := "*"
 	if d.IPAddress != "" {
 		bind = d.IPAddress
+		if strings.Contains(bind, ":") {
+			bind = "[" + bind + "]"
+		}
 	}
 	fmt.Fprintf(sb, "<VirtualHost %s:%d>\n", bind, port)
 	fmt.Fprintf(sb, "    ServerName %s\n", d.Domain)
