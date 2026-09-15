@@ -48,6 +48,7 @@ type Server struct {
 	Packages *svc.Packages
 	Metrics  *svc.MetricsHistory
 	Docker   *svc.Docker
+	IPs      *svc.IPs
 
 	// PanelAssets serves the panel API + embedded frontend (set by
 	// cmd/aegis/main.go after construction, since it depends on the
@@ -63,11 +64,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, thumbs *svc.Thumbs, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages, metrics *svc.MetricsHistory, docker *svc.Docker) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages, metrics *svc.MetricsHistory, docker *svc.Docker, ips *svc.IPs) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics, Docker: docker,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics, Docker: docker, IPs: ips,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -170,6 +171,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/packages", s.withAuth(s.withRole(s.handlePackagesCreate, store.RoleAdmin)))
 	mux.HandleFunc("PATCH /api/packages/{id}", s.withAuth(s.withRole(s.handlePackagesUpdate, store.RoleAdmin)))
 	mux.HandleFunc("DELETE /api/packages/{id}", s.withAuth(s.withRole(s.handlePackagesDelete, store.RoleAdmin)))
+
+	// IP pool: admin-managed shared/dedicated addresses assigned to domain
+	// vhosts. handleDomainIPSet lives with the other domain-scoped handlers
+	// (handlers_domains.go) but is registered here, next to the pool CRUD.
+	mux.HandleFunc("GET /api/ips", s.withAuth(s.withRole(s.handleIPsList, store.RoleAdmin)))
+	mux.HandleFunc("GET /api/ips/detect", s.withAuth(s.withRole(s.handleIPsDetect, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/ips", s.withAuth(s.withRole(s.handleIPsCreate, store.RoleAdmin)))
+	mux.HandleFunc("PATCH /api/ips/{id}", s.withAuth(s.withRole(s.handleIPsUpdate, store.RoleAdmin)))
+	mux.HandleFunc("DELETE /api/ips/{id}", s.withAuth(s.withRole(s.handleIPsDelete, store.RoleAdmin)))
+	mux.HandleFunc("PATCH /api/domains/{id}/ip", s.withAuth(s.withRole(s.handleDomainIPSet, store.RoleAdmin)))
 
 	// Domain logs (access/error tails in the domain detail dialog).
 	mux.HandleFunc("GET /api/domains/{id}/logs", s.withAuth(s.handleDomainLogs))

@@ -281,6 +281,7 @@ Promise.all([
   import("./views/updates.js"),
   import("./views/terminal.js"),
   import("./views/runtime.js"),
+  import("./views/ips.js"),
 ]).then(boot);
 
 void qs;

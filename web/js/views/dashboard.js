@@ -44,6 +44,7 @@ addRoute("/dashboard", {
           <div class="card-head"><span class="card-title">Host</span></div>
           <dl class="kv">
             <dt>hostname</dt><dd class="mono">${esc(ov.hostname)}</dd>
+            <dt>server ip</dt><dd class="mono">${esc(ov.public_ip || "unknown")}${(ov.local_ips || []).length > 1 ? ` <span class="small dim">+${ov.local_ips.length - 1} more</span>` : ""}${isAdmin() ? ` <a href="#/ips" class="small">manage</a>` : ""}</dd>
             <dt>os</dt><dd>${esc(ov.os)}</dd>
             <dt>kernel</dt><dd class="mono">${esc(ov.kernel)} · ${esc(ov.arch)}</dd>
             <dt>uptime</dt><dd class="mono">${fmtDur(ov.uptime_secs)}</dd>
