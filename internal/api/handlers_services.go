@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -142,8 +143,8 @@ func (s *Server) handleWebServerStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Server string `json:"server"`
-		Install bool `json:"install"` // install the package when missing
+		Server  string `json:"server"`
+		Install bool   `json:"install"` // install the package when missing
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -152,6 +153,11 @@ func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 	case "nginx", "apache", "caddy", "go":
 	default:
 		writeErr(w, http.StatusBadRequest, "invalid server (nginx|apache|caddy|go)")
+		return
+	}
+	old := s.Cfg.WebServer.Server
+	if req.Server == old {
+		writeJSON(w, http.StatusOK, map[string]string{"active": old})
 		return
 	}
 	if req.Server != "go" && !s.Web.IsAvailable(req.Server) {
@@ -171,13 +177,59 @@ func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Stop whichever backend is currently serving traffic *before* starting
+	// the new one — otherwise the old process (or the native Go server) is
+	// still holding :80/:443 when the new one tries to bind them, and the
+	// switch only fails later, on the next full service restart, taking the
+	// whole panel down with it (exactly what a stale "go" setting did here).
+	if old == "go" {
+		s.Web.StopGo()
+	} else {
+		s.Web.StopService(old)
+	}
+
+	var startErr error
+	if req.Server == "go" {
+		startErr = s.Web.StartGo(s.PanelAssets, nil)
+	} else {
+		startErr = s.Web.EnsureRunning(req.Server)
+	}
+	if startErr != nil {
+		// Roll back so the box is never left with nothing serving :80/:443.
+		if old == "go" {
+			_ = s.Web.StartGo(s.PanelAssets, nil)
+		} else {
+			_ = s.Web.EnsureRunning(old)
+		}
+		writeErr(w, http.StatusConflict, "could not start "+req.Server+": "+startErr.Error()+" (kept "+old+" active)")
+		return
+	}
+
 	s.Cfg.WebServer.Server = req.Server
 	if err := s.Cfg.Save(); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "webserver.set", req.Server, "")
-	writeJSON(w, http.StatusOK, map[string]string{"active": req.Server})
+
+	// Regenerate and apply every existing domain's vhost under the new
+	// backend — otherwise every site silently keeps serving from the old
+	// backend's (now poorly, or not, reloaded) config until each one is
+	// individually re-applied by hand.
+	domains, _ := s.Store.ListDomains(r.Context(), 0)
+	var failed []string
+	for _, dom := range domains {
+		if err := s.Domains.Apply(r.Context(), dom.ID); err != nil {
+			failed = append(failed, dom.Domain)
+		}
+	}
+
+	s.audit(r, "webserver.set", req.Server, fmt.Sprintf("from=%s reapplied=%d failed=%d", old, len(domains)-len(failed), len(failed)))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"active":            req.Server,
+		"domains_reapplied": len(domains) - len(failed),
+		"domains_failed":    failed,
+	})
 }
 
 func (s *Server) handleWebServerPreview(w http.ResponseWriter, r *http.Request) {

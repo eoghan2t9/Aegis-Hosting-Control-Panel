@@ -12,7 +12,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -111,6 +110,7 @@ func run(configPath string) error {
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
 		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist, dockerSvc)
+	server.PanelAssets = panelHandler(server, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -137,10 +137,18 @@ func run(configPath string) error {
 
 	// Native Go web server for customer sites. Its listener also serves the
 	// panel under PanelBase so http://<ip>/aegis works without DNS or a
-	// dedicated panel port.
+	// dedicated panel port. StartGo/StopGo (called again later from
+	// handleWebServerSet on a live switch) are idempotent and safe to call
+	// here unconditionally.
 	if cfg.WebServer.Server == "go" {
-		startGoSiteServers(ctx, webSvc, cfg, panelHandler(server, nil), errCh)
+		if err := webSvc.StartGo(server.PanelAssets, errCh); err != nil {
+			return fmt.Errorf("start native web server: %w", err)
+		}
 	}
+	go func() {
+		<-ctx.Done()
+		webSvc.StopGo()
+	}()
 
 	// Built-in DNS server.
 	if cfg.DNS.ListenAddr != "" {
@@ -358,66 +366,6 @@ func panelHandler(server *api.Server, outside http.Handler) http.Handler {
 		}
 		fileHandler.ServeHTTP(w, r)
 	})
-}
-
-// startGoSiteServers runs the native Go web server on :80 and :443.
-func startGoSiteServers(ctx context.Context, webSvc *svc.WebServer, cfg *config.Config, panelOnVhost http.Handler, errCh chan<- error) {
-	httpAddr := envOr("AEGIS_GO_HTTP", ":80")
-	httpsAddr := envOr("AEGIS_GO_HTTPS", ":443")
-
-	// The Go site server doubles as the reverse proxy for the panel path
-	// (ip/aegis): requests under PanelBase go to the panel, everything else
-	// to the customer site routes.
-	var site http.Handler = webSvc.GoHandler()
-	if panelOnVhost != nil {
-		site = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if cfg.PanelBase != "" && (r.URL.Path == cfg.PanelBase || strings.HasPrefix(r.URL.Path, cfg.PanelBase+"/")) {
-				panelOnVhost.ServeHTTP(w, r)
-				return
-			}
-			site.ServeHTTP(w, r)
-		})
-	}
-
-	httpSrv := &http.Server{Addr: httpAddr, Handler: site}
-	go func() {
-		slog.Info("go web server listening (http)", "addr", httpAddr)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("go http server: %w", err)
-		}
-	}()
-
-	httpsSrv := &http.Server{
-		Addr:    httpsAddr,
-		Handler: site,
-		TLSConfig: &tls.Config{
-			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				return webSvc.GoTLSCert(hello.ServerName)
-			},
-			MinVersion: tls.VersionTLS12,
-		},
-	}
-	go func() {
-		// Only start TLS when at least one route has a certificate.
-		for {
-			time.Sleep(500 * time.Millisecond)
-			if len(webSvc.GoRoutes()) > 0 {
-				break
-			}
-		}
-		slog.Info("go web server listening (https, sni)", "addr", httpsAddr)
-		if err := httpsSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("go https server: %w", err)
-		}
-	}()
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpSrv.Shutdown(shutdownCtx)
-		_ = httpsSrv.Shutdown(shutdownCtx)
-	}()
 }
 
 func envOr(key, def string) string {

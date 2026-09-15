@@ -49,6 +49,13 @@ type Server struct {
 	Metrics  *svc.MetricsHistory
 	Docker   *svc.Docker
 
+	// PanelAssets serves the panel API + embedded frontend (set by
+	// cmd/aegis/main.go after construction, since it depends on the
+	// embedded web.FS which this package doesn't import). handleWebServerSet
+	// passes it to Web.StartGo so a live switch to the native Go server
+	// serves the panel under PanelBase immediately, the same as at boot.
+	PanelAssets http.Handler
+
 	primaryIPv4 string
 }
 

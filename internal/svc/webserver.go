@@ -2,6 +2,7 @@ package svc
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,13 @@ type WebServer struct {
 
 	mu       sync.Mutex
 	goRoutes map[string]GoRoute
+
+	// goHTTP/goHTTPS are the native Go server's live listeners, non-nil only
+	// while Active() == "go". Managed by StartGo/StopGo (goserver.go) so
+	// switching the active web server at runtime (handleWebServerSet) takes
+	// effect immediately instead of only on the next process restart.
+	goHTTP  *http.Server
+	goHTTPS *http.Server
 }
 
 // GoRoute is how a domain is served by the native Go web server.
@@ -239,6 +247,47 @@ func reloadService(name string) error {
 		}
 	}
 	return fmt.Errorf("webserver: %s does not appear to be running", name)
+}
+
+// serviceNameFor maps a web server choice to its systemd unit name; "go"
+// isn't a systemd service (it's an in-process listener, see StartGo/StopGo).
+func serviceNameFor(server string) string {
+	switch server {
+	case "nginx":
+		return "nginx"
+	case "apache":
+		return "apache2"
+	case "caddy":
+		return "caddy"
+	default:
+		return ""
+	}
+}
+
+// StopService stops (but does not disable) the systemd unit backing a
+// nginx/apache/caddy choice — a no-op for "go" or on a non-systemd host.
+// Called when switching away from server, so the old backend releases
+// :80/:443 before the new one tries to bind them.
+func (w *WebServer) StopService(server string) {
+	name := serviceNameFor(server)
+	if name == "" || !systemdIsInit() {
+		return
+	}
+	_, _ = RunTimeout(15*time.Second, "systemctl", "stop", name)
+}
+
+// EnsureRunning starts and enables the systemd unit backing a
+// nginx/apache/caddy choice — a no-op for "go" (started via StartGo instead)
+// and best-effort on a non-systemd host, matching reloadService's fallback.
+func (w *WebServer) EnsureRunning(server string) error {
+	name := serviceNameFor(server)
+	if name == "" || !systemdIsInit() {
+		return nil
+	}
+	if _, err := RunTimeout(20*time.Second, "systemctl", "enable", "--now", name); err != nil {
+		return fmt.Errorf("start %s: %w", name, err)
+	}
+	return nil
 }
 
 // --- helpers -------------------------------------------------------------------
