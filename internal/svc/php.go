@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -109,10 +110,87 @@ func (p *PHP) SocketPath(domain string) string {
 	return filepath.Join(p.SocketDir, "aegis-"+domain+".sock")
 }
 
+// phpIniDirective describes one user-editable php.ini directive exposed by
+// the panel's PHP settings screen. kind picks whether it's written as
+// php_admin_value or php_admin_flag into the pool config; re validates the
+// value both at the API boundary (ValidatePHPIniSettings) and again here
+// (sanitizedPHPIniLines) — defense in depth, since a pool.d file is plain
+// text and an unvalidated value (e.g. containing a newline) could otherwise
+// inject arbitrary extra directives into it.
+type phpIniDirective struct {
+	kind string // "value" or "flag"
+	re   *regexp.Regexp
+}
+
+var phpIniDirectives = map[string]phpIniDirective{
+	"memory_limit":           {"value", regexp.MustCompile(`(?i)^-1$|^[0-9]+[kmg]?$`)},
+	"upload_max_filesize":    {"value", regexp.MustCompile(`(?i)^[0-9]+[kmg]?$`)},
+	"post_max_size":          {"value", regexp.MustCompile(`(?i)^[0-9]+[kmg]?$`)},
+	"max_execution_time":     {"value", regexp.MustCompile(`^[0-9]+$`)},
+	"max_input_time":         {"value", regexp.MustCompile(`^-?[0-9]+$`)},
+	"max_input_vars":         {"value", regexp.MustCompile(`^[0-9]+$`)},
+	"session.gc_maxlifetime": {"value", regexp.MustCompile(`^[0-9]+$`)},
+	"date.timezone":          {"value", regexp.MustCompile(`^[A-Za-z_]+(/[A-Za-z_]+)*$`)},
+	"display_errors":         {"flag", regexp.MustCompile(`(?i)^(on|off)$`)},
+}
+
+// PHPIniDirectiveKeys lists the settings the panel exposes, in the fixed
+// order they're written to the pool file.
+var PHPIniDirectiveKeys = []string{
+	"memory_limit", "upload_max_filesize", "post_max_size",
+	"max_execution_time", "max_input_time", "max_input_vars",
+	"session.gc_maxlifetime", "date.timezone", "display_errors",
+}
+
+// ValidatePHPIniSettings rejects any key outside PHPIniDirectiveKeys or any
+// value that doesn't match that directive's expected shape. Called at the
+// API boundary so a bad request fails clearly instead of writing a broken
+// (or, if unchecked, injectable) pool config.
+func ValidatePHPIniSettings(settings map[string]string) error {
+	for k, v := range settings {
+		d, ok := phpIniDirectives[k]
+		if !ok {
+			return fmt.Errorf("unknown php setting %q", k)
+		}
+		if !d.re.MatchString(strings.TrimSpace(v)) {
+			return fmt.Errorf("invalid value for %s: %q", k, v)
+		}
+	}
+	return nil
+}
+
+// sanitizedPHPIniLines re-validates settings (see phpIniDirective's comment)
+// and formats them as php_admin_value/php_admin_flag pool.d lines in a fixed
+// order. display_errors defaults to off unless explicitly overridden.
+func sanitizedPHPIniLines(settings map[string]string) string {
+	merged := map[string]string{"display_errors": "off"}
+	for k, v := range settings {
+		d, ok := phpIniDirectives[k]
+		v = strings.TrimSpace(v)
+		if !ok || !d.re.MatchString(v) {
+			continue
+		}
+		merged[k] = v
+	}
+	var b strings.Builder
+	for _, key := range PHPIniDirectiveKeys {
+		v, ok := merged[key]
+		if !ok {
+			continue
+		}
+		if phpIniDirectives[key].kind == "flag" {
+			fmt.Fprintf(&b, "php_admin_flag[%s] = %s\n", key, strings.ToLower(v))
+		} else {
+			fmt.Fprintf(&b, "php_admin_value[%s] = %s\n", key, v)
+		}
+	}
+	return b.String()
+}
+
 // EnsurePool writes (or rewrites) the php-fpm pool for a domain and reloads
 // the matching fpm service. poolName must be filesystem-safe (it is derived
-// from the domain, which is validated).
-func (p *PHP) EnsurePool(domain, systemUser, version string, tuning *PHPFPMTuning) error {
+// from the domain, which is validated). iniSettings may be nil.
+func (p *PHP) EnsurePool(domain, systemUser, version string, tuning *PHPFPMTuning, iniSettings map[string]string) error {
 	if !p.Has(version) {
 		return fmt.Errorf("php %s is not installed", version)
 	}
@@ -140,10 +218,9 @@ pm.max_requests = 500
 request_terminate_timeout = 300
 catch_workers_output = yes
 php_admin_value[open_basedir] = %s:%s/tmp
-php_admin_flag[display_errors] = off
-`, domain, domain, systemUser, group, sock,
+%s`, domain, domain, systemUser, group, sock,
 		tuning.PM, tuning.MaxChildren, tuning.StartServers, tuning.MinSpare, tuning.MaxSpare,
-		p.Cfg.HomeRoot, p.Cfg.HomeRoot)
+		p.Cfg.HomeRoot, p.Cfg.HomeRoot, sanitizedPHPIniLines(iniSettings))
 
 	poolDir := filepath.Join("/etc/php", version, "fpm/pool.d")
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {

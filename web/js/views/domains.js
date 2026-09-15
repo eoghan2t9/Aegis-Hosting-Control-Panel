@@ -133,6 +133,8 @@ function openDetail(id, onChanged) {
               <select id="dd-php" style="flex:1">${opts.map((v) => `<option value="${esc(v)}" ${v === dom.php_version ? "selected" : ""}>${v ? "PHP " + v : "No PHP (static)"}</option>`).join("")}</select>
               <button class="btn btn-primary" id="dd-apply-php">Apply</button>
             </div>
+            <div style="height:14px"></div>
+            ${phpIniBlock(dom)}
           </div>
           <div>
             <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Aliases (additional domains)</b>
@@ -192,6 +194,20 @@ function openDetail(id, onChanged) {
           m.close(); refresh();
         } catch (ex) { toast(ex.message, "err"); }
       };
+      document.getElementById("dd-save-php-ini")?.addEventListener("click", async () => {
+        const settings = {};
+        body.querySelectorAll(".php-ini-input").forEach((inp) => {
+          const v = inp.value.trim();
+          if (v) settings[inp.dataset.key] = v;
+        });
+        const de = document.getElementById("php-ini-display-errors").value;
+        if (de) settings.display_errors = de;
+        try {
+          await api.patch("/domains/" + id, { php_settings: settings });
+          toast("PHP settings saved and pool reloaded");
+          m.close(); refresh();
+        } catch (ex) { toast(ex.message, "err"); }
+      });
       document.getElementById("alias-add").onclick = async () => {
         const a = document.getElementById("alias-new").value.trim();
         if (!a) return;
@@ -218,6 +234,44 @@ function openDetail(id, onChanged) {
       document.getElementById("ssl-self").onclick = () => issueSsl("", "self");
     });
   }).catch((ex) => toast(ex.message, "err"));
+}
+
+// Mirrors svc.PHPIniDirectiveKeys (internal/svc/php.go) — the panel only
+// ever sends these keys, and the server validates them again regardless.
+const PHP_INI_FIELDS = [
+  { key: "memory_limit", label: "Memory limit", placeholder: "e.g. 256M" },
+  { key: "upload_max_filesize", label: "Upload max filesize", placeholder: "e.g. 64M" },
+  { key: "post_max_size", label: "Post max size", placeholder: "e.g. 64M" },
+  { key: "max_execution_time", label: "Max execution time (s)", placeholder: "e.g. 300" },
+  { key: "max_input_time", label: "Max input time (s)", placeholder: "e.g. 300" },
+  { key: "max_input_vars", label: "Max input vars", placeholder: "e.g. 3000" },
+  { key: "session.gc_maxlifetime", label: "Session lifetime (s)", placeholder: "e.g. 1440" },
+  { key: "date.timezone", label: "Timezone", placeholder: "e.g. UTC" },
+];
+
+function phpIniBlock(dom) {
+  if (!dom.php_version) {
+    return `<b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP settings (php.ini)</b>
+      <p class="small dim" style="margin:8px 0 0">Pick a PHP version above to enable per-site php.ini overrides.</p>`;
+  }
+  const settings = dom.php_settings || {};
+  const de = settings.display_errors || "";
+  return `<b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP settings (php.ini)</b>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+      ${PHP_INI_FIELDS.map((f) => `<label class="field" style="margin:0">
+        <span class="field-label small dim">${esc(f.label)}</span>
+        <input type="text" class="mono php-ini-input" data-key="${esc(f.key)}" placeholder="${esc(f.placeholder)}" value="${esc(settings[f.key] || "")}">
+      </label>`).join("")}
+      <label class="field" style="margin:0">
+        <span class="field-label small dim">Display errors</span>
+        <select id="php-ini-display-errors">
+          <option value="" ${de === "" ? "selected" : ""}>Default (off)</option>
+          <option value="on" ${de === "on" ? "selected" : ""}>On</option>
+          <option value="off" ${de === "off" ? "selected" : ""}>Off</option>
+        </select>
+      </label>
+    </div>
+    <button class="btn btn-sm" id="dd-save-php-ini" style="margin-top:10px">Save PHP settings</button>`;
 }
 
 const CATEGORY_LABELS = { cms: "CMS", forum: "Forums", wiki: "Wikis", tools: "Tools", ecommerce: "E-commerce", framework: "Frameworks" };
