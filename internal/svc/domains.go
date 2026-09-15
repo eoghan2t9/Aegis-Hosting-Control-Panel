@@ -182,7 +182,7 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 
 	// Provision php-fpm pool.
 	if dom.PHPVersion != "" {
-		if err := d.PHP.EnsurePool(domain, user.Username, dom.PHPVersion, nil); err != nil {
+		if err := d.PHP.EnsurePool(domain, user.Username, dom.PHPVersion, nil, dom.PHPSettings); err != nil {
 			_ = d.Store.DeleteDomain(ctx, dom.ID)
 			return nil, err
 		}
@@ -209,7 +209,7 @@ func (d *Domains) Apply(ctx context.Context, domainID int64) error {
 		return err
 	}
 	if dom.PHPVersion != "" {
-		if err := d.PHP.EnsurePool(dom.Domain, user.Username, dom.PHPVersion, nil); err != nil {
+		if err := d.PHP.EnsurePool(dom.Domain, user.Username, dom.PHPVersion, nil, dom.PHPSettings); err != nil {
 			return err
 		}
 	}

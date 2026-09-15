@@ -117,10 +117,11 @@ func (s *Server) handleDomainsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateDomainReq struct {
-	PHPVersion   *string `json:"php_version"`
-	WebServer    *string `json:"webserver"`
-	DocumentRoot *string `json:"document_root"`
-	SSLAutoRenew *bool   `json:"ssl_auto_renew"`
+	PHPVersion   *string            `json:"php_version"`
+	WebServer    *string            `json:"webserver"`
+	DocumentRoot *string            `json:"document_root"`
+	SSLAutoRenew *bool              `json:"ssl_auto_renew"`
+	PHPSettings  *map[string]string `json:"php_settings"`
 }
 
 func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +158,13 @@ func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SSLAutoRenew != nil {
 		dom.SSLAutoRenew = *req.SSLAutoRenew
+	}
+	if req.PHPSettings != nil {
+		if err := svc.ValidatePHPIniSettings(*req.PHPSettings); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dom.PHPSettings = *req.PHPSettings
 	}
 	if err := s.Store.UpdateDomain(r.Context(), dom); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
