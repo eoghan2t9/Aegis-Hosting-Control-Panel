@@ -141,6 +141,16 @@ func (s *Server) handleWebServerStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// restartWebServer (re)starts server after a failed switch attempt, so the
+// caller can tell whether the box was actually left with something bound to
+// :80/:443 instead of assuming a rollback succeeded.
+func (s *Server) restartWebServer(server string) error {
+	if server == "go" {
+		return s.Web.StartGo(s.PanelAssets, nil)
+	}
+	return s.Web.EnsureRunning(server)
+}
+
 func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Server  string `json:"server"`
@@ -197,10 +207,13 @@ func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 	}
 	if startErr != nil {
 		// Roll back so the box is never left with nothing serving :80/:443.
-		if old == "go" {
-			_ = s.Web.StartGo(s.PanelAssets, nil)
-		} else {
-			_ = s.Web.EnsureRunning(old)
+		// The rollback's own error used to be silently discarded (`_ =`),
+		// so a double failure looked identical to a clean rollback even
+		// though nothing was actually listening on :80/:443 any more.
+		if rbErr := s.restartWebServer(old); rbErr != nil {
+			writeErr(w, http.StatusConflict, "could not start "+req.Server+": "+startErr.Error()+
+				"; also failed to restore "+old+": "+rbErr.Error()+" (nothing may be serving :80/:443)")
+			return
 		}
 		writeErr(w, http.StatusConflict, "could not start "+req.Server+": "+startErr.Error()+" (kept "+old+" active)")
 		return
@@ -208,7 +221,22 @@ func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 
 	s.Cfg.WebServer.Server = req.Server
 	if err := s.Cfg.Save(); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		// The new backend is already live at this point; roll the live
+		// switch back too so the persisted config never disagrees with
+		// what's actually running (a later restart would otherwise read
+		// the stale "old" setting while the new one is still bound).
+		s.Cfg.WebServer.Server = old
+		if req.Server == "go" {
+			s.Web.StopGo()
+		} else {
+			s.Web.StopService(req.Server)
+		}
+		if rbErr := s.restartWebServer(old); rbErr != nil {
+			writeErr(w, http.StatusInternalServerError, "save config: "+err.Error()+
+				"; also failed to restore "+old+": "+rbErr.Error()+" (nothing may be serving :80/:443)")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "save config: "+err.Error()+" (rolled back to "+old+")")
 		return
 	}
 
