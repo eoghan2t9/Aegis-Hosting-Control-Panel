@@ -28,7 +28,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := pathID(r, parts[2])
+	id, err := pathID(r, "id")
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid domain id")
 		return
