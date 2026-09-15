@@ -144,6 +144,19 @@ func run(configPath string) error {
 		if err := webSvc.StartGo(server.PanelAssets, errCh); err != nil {
 			return fmt.Errorf("start native web server: %w", err)
 		}
+		// goRoutes lives only in memory (webserver.go), so every domain
+		// created while "go" was active still needs to be re-registered
+		// after a restart — otherwise it 404s by Host header even though
+		// its docroot/preview path (which reads the DB directly) is fine.
+		allDomains, err := st.ListDomains(context.Background(), 0)
+		if err != nil {
+			slog.Warn("could not list domains for go server route rebuild", "err", err)
+		}
+		for _, dom := range allDomains {
+			if err := domains.Apply(context.Background(), dom.ID); err != nil {
+				slog.Warn("failed to register domain with native web server", "domain", dom.Domain, "err", err)
+			}
+		}
 	}
 	go func() {
 		<-ctx.Done()
