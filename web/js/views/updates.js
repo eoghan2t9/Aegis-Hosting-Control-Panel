@@ -1,5 +1,6 @@
 import { addRoute } from "../app.js";
 import { api } from "../api.js";
+import { p } from "../base.js";
 import { icon, esc, toast, confirmDialog, pageHead, loading, fmtAgo, modal } from "../ui.js";
 
 addRoute("/updates", {
@@ -112,12 +113,58 @@ addRoute("/updates", {
 
     async function applyUpdates(names, message) {
       if (!await confirmDialog(message, { title: "Apply updates", okText: "Apply" })) return;
-      try {
-        toast(names ? `Applying update for ${names[0]}…` : "Applying all updates… this can take a few minutes");
-        await api.post("/system/updates/apply", { names: names || [] });
-        toast("Updates applied");
+      runApplyDialog(names);
+    }
+
+    // Streams the package manager's live output (apt-get/dnf/…) into a
+    // dialog over the /system/updates/apply/stream WebSocket, instead of a
+    // single toast that leaves the panel looking idle for however long the
+    // apply takes (can be several minutes).
+    function runApplyDialog(names) {
+      const log = document.createElement("div");
+      log.className = "mono small cd-log";
+      log.style.cssText = "max-height:360px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;background:var(--panel-2,rgba(0,0,0,.2));border-radius:var(--radius-sm);padding:10px 12px";
+      const append = (text) => {
+        log.insertAdjacentHTML("beforeend", `<div>${esc(text)}</div>`);
+        log.scrollTop = log.scrollHeight;
+      };
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "btn";
+      closeBtn.textContent = "Applying…";
+      closeBtn.disabled = true;
+      const dm = modal({
+        title: names ? `Applying update: ${names[0]}` : "Applying all updates",
+        wide: true,
+        body: log,
+        actions: [closeBtn],
+      });
+      let finished = false;
+      closeBtn.onclick = () => { if (finished) dm.close(); };
+
+      const finish = (ok, message) => {
+        if (finished) return;
+        finished = true;
+        append(ok ? "✓ done" : `✗ ${message}`);
+        toast(message || "Updates applied", ok ? undefined : "err");
+        closeBtn.disabled = false;
+        closeBtn.textContent = "Close";
+        if (ok) closeBtn.classList.add("btn-primary");
         loadUpdates();
-      } catch (ex) { toast(ex.message, "err"); }
+      };
+
+      append(`→ applying ${names ? names.join(", ") : "all updates"}…`);
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const q = new URLSearchParams({ token: api.token });
+      if (names) q.set("names", names.join(","));
+      const ws = new WebSocket(`${proto}://${location.host}${p("/api")}/system/updates/apply/stream?${q}`);
+      ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.type === "log") append(msg.line);
+        else if (msg.type === "done") finish(!msg.error, msg.error || "Updates applied");
+      };
+      ws.onclose = () => finish(false, "Connection to the panel was lost mid-apply — check the Updates list once it's back.");
     }
 
     document.getElementById("btn-check").onclick = async (e) => {
