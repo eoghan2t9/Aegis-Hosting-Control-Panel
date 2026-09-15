@@ -320,6 +320,9 @@ CREATE TABLE IF NOT EXISTS containers (
 	if err := s.addColumnIfMissing(ctx, "domains", "proxy_target", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("migrate domains.proxy_target: %w", err)
 	}
+	if err := s.addColumnIfMissing(ctx, "domains", "php_settings", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		return fmt.Errorf("migrate domains.php_settings: %w", err)
+	}
 	// Seed a default package on first run.
 	var n int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM packages").Scan(&n); err == nil && n == 0 {

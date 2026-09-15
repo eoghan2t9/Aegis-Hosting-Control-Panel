@@ -81,8 +81,14 @@ type Domain struct {
 	// proxy every request there instead of serving DocumentRoot/PHP — how a
 	// Docker container (or any future non-PHP app) attaches to a domain. Set
 	// and cleared by svc.Docker, never edited directly through the domain API.
-	ProxyTarget string    `json:"proxy_target,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ProxyTarget string `json:"proxy_target,omitempty"`
+	// PHPSettings holds per-domain php.ini overrides (memory_limit,
+	// upload_max_filesize, etc.) written into this domain's isolated FPM
+	// pool by svc.PHP.EnsurePool. Keys are restricted to
+	// svc.PHPIniDirectiveKeys and validated by svc.ValidatePHPIniSettings —
+	// see internal/svc/php.go.
+	PHPSettings map[string]string `json:"php_settings"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 
 // DNSZone links a domain to a DNS provider. provider=local means the built-in
