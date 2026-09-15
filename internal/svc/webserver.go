@@ -25,6 +25,11 @@ type WebServer struct {
 	mu       sync.Mutex
 	goRoutes map[string]GoRoute
 
+	// goProxies caches one *httputil.ReverseProxy per upstream target so
+	// proxyGoRoute (goserver.go) doesn't allocate a fresh one on every
+	// single request to a proxied (container/app) domain.
+	goProxies sync.Map
+
 	// goHTTP/goHTTPS are the native Go server's live listeners, non-nil only
 	// while Active() == "go". Managed by StartGo/StopGo (goserver.go) so
 	// switching the active web server at runtime (handleWebServerSet) takes

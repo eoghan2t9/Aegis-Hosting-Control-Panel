@@ -263,12 +263,36 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 // (a fixed "127.0.0.1:port" set by svc.Docker) — the native-server equivalent
 // of the nginx/Apache/Caddy proxy_pass branches in webserver.go.
 func (w *WebServer) proxyGoRoute(rw http.ResponseWriter, r *http.Request, target string) {
-	u := &url.URL{Scheme: "http", Host: target}
-	proxy := httputil.NewSingleHostReverseProxy(u)
+	w.reverseProxyFor(target).ServeHTTP(rw, r)
+}
+
+// reverseProxyFor returns the cached *httputil.ReverseProxy for target,
+// building it once on first use instead of on every request. Its Director
+// sets X-Forwarded-Proto from the inbound connection (net/http's
+// ReverseProxy already appends X-Forwarded-For itself) — the nginx/Apache/
+// Caddy vhosts for the same proxy_target feature set this explicitly, so a
+// proxied app behind them can tell it's behind HTTPS; without it, the same
+// domain served by the native "go" backend can never tell, which breaks
+// secure-cookie/HTTPS-redirect logic that only the go backend was missing.
+func (w *WebServer) reverseProxyFor(target string) *httputil.ReverseProxy {
+	if p, ok := w.goProxies.Load(target); ok {
+		return p.(*httputil.ReverseProxy)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: target})
+	baseDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		baseDirector(req)
+		scheme := "http"
+		if req.TLS != nil {
+			scheme = "https"
+		}
+		req.Header.Set("X-Forwarded-Proto", scheme)
+	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, r *http.Request, err error) {
 		http.Error(rw, "upstream error: "+err.Error(), http.StatusBadGateway)
 	}
-	proxy.ServeHTTP(rw, r)
+	actual, _ := w.goProxies.LoadOrStore(target, proxy)
+	return actual.(*httputil.ReverseProxy)
 }
 
 // htGate blocks dotfile paths before anything else is served: .ht* returns

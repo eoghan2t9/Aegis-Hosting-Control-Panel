@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"aegis/internal/config"
@@ -34,6 +35,12 @@ type Docker struct {
 	Store   *store.Store
 	Files   *Files
 	Domains *Domains
+
+	// createMu serializes validate()+Store.CreateContainer so two concurrent
+	// creates can't both pass the one-container-per-domain and port
+	// checks before either has inserted its row (TOCTOU: both would read
+	// the containers list before the other's INSERT lands).
+	createMu sync.Mutex
 }
 
 func NewDocker(cfg *config.Config, st *store.Store, files *Files, domains *Domains) *Docker {
@@ -321,11 +328,15 @@ func (dk *Docker) Create(ctx context.Context, user *store.User, req CreateContai
 		}
 	}
 
+	dk.createMu.Lock()
 	c, err := dk.validate(ctx, user, req)
 	if err != nil {
+		dk.createMu.Unlock()
 		return nil, err
 	}
-	if err := dk.Store.CreateContainer(ctx, c); err != nil {
+	err = dk.Store.CreateContainer(ctx, c)
+	dk.createMu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	for _, v := range c.Volumes {
@@ -465,10 +476,16 @@ func (dk *Docker) Recreate(ctx context.Context, c *store.Container) error {
 // whether to clean those up separately via the file manager.
 func (dk *Docker) Delete(ctx context.Context, c *store.Container) error {
 	_, _ = RunTimeout(30*time.Second, "docker", "rm", "-f", containerName(c.ID))
-	if err := dk.clearDomainProxy(ctx, c.DomainID); err != nil {
+	// Delete the record even if un-proxying the domain fails: the container
+	// is already gone from docker at this point, so keeping the row around
+	// would only leave a permanently broken "not_created" entry that every
+	// future Start/Stop/Restart fails against. Best-effort the proxy clear
+	// and surface its error without blocking the delete on it.
+	proxyErr := dk.clearDomainProxy(ctx, c.DomainID)
+	if err := dk.Store.DeleteContainer(ctx, c.ID); err != nil {
 		return err
 	}
-	return dk.Store.DeleteContainer(ctx, c.ID)
+	return proxyErr
 }
 
 // applyDomainProxy points the attached domain's vhost at c's published web
