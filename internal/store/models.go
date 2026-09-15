@@ -58,24 +58,31 @@ type Package struct {
 	AllowFiles          bool      `json:"allow_files"`
 	AllowFTP            bool      `json:"allow_ftp"`
 	AllowCron           bool      `json:"allow_cron"`
+	AllowDocker         bool      `json:"allow_docker"`
+	MaxContainers       int       `json:"max_containers"` // 0 = unlimited
 	IsDefault           bool      `json:"is_default"`
 	CreatedAt           time.Time `json:"created_at"`
 }
 
 // Domain is a website attached to a user.
 type Domain struct {
-	ID           int64     `json:"id"`
-	UserID       int64     `json:"user_id"`
-	Domain       string    `json:"domain"`
-	DocumentRoot string    `json:"document_root"`
-	PHPVersion   string    `json:"php_version"`
-	WebServer    string    `json:"webserver"`
-	SSLEnabled   bool      `json:"ssl_enabled"`
-	SSLCertPath  string    `json:"ssl_cert_path"`
-	SSLKeyPath   string    `json:"ssl_key_path"`
-	SSLProvider  string    `json:"ssl_provider"`
-	SSLAutoRenew bool      `json:"ssl_auto_renew"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           int64  `json:"id"`
+	UserID       int64  `json:"user_id"`
+	Domain       string `json:"domain"`
+	DocumentRoot string `json:"document_root"`
+	PHPVersion   string `json:"php_version"`
+	WebServer    string `json:"webserver"`
+	SSLEnabled   bool   `json:"ssl_enabled"`
+	SSLCertPath  string `json:"ssl_cert_path"`
+	SSLKeyPath   string `json:"ssl_key_path"`
+	SSLProvider  string `json:"ssl_provider"`
+	SSLAutoRenew bool   `json:"ssl_auto_renew"`
+	// ProxyTarget, when set (host:port), makes the generated vhost reverse
+	// proxy every request there instead of serving DocumentRoot/PHP — how a
+	// Docker container (or any future non-PHP app) attaches to a domain. Set
+	// and cleared by svc.Docker, never edited directly through the domain API.
+	ProxyTarget string    `json:"proxy_target,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // DNSZone links a domain to a DNS provider. provider=local means the built-in
@@ -277,6 +284,55 @@ type PackageUpdate struct {
 	NewVersion     string    `json:"new_version"`
 	Security       bool      `json:"security"`
 	CheckedAt      time.Time `json:"checked_at"`
+}
+
+// PortMap is one published port on a container: ContainerPort is the port
+// the process inside the container listens on, HostPort is where it's
+// reachable on the server (allocated from svc.Docker's managed range unless
+// the caller pins one). Public defaults to false — the port binds to
+// 127.0.0.1 only, reachable exclusively through a domain's vhost proxy (see
+// Domain.ProxyTarget). A standalone, non-HTTP service (a game server, a
+// database meant to be reached directly) must set Public to bind 0.0.0.0
+// instead; nothing is internet-reachable unless this is set explicitly.
+type PortMap struct {
+	ContainerPort int    `json:"container_port"`
+	HostPort      int    `json:"host_port"`
+	Proto         string `json:"proto"` // tcp | udp
+	Public        bool   `json:"public"`
+}
+
+// VolumeMount binds a path inside the owner's home directory (HostPath, home
+// relative — validated by svc.Files.Resolve, same as the file manager) into
+// the container at ContainerPath.
+type VolumeMount struct {
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+}
+
+// Container is a Docker container provisioned for a panel user, run via the
+// `docker` CLI (see svc/docker.go) under the fixed name "aegis-c<ID>". When
+// DomainID is set and WebPort matches one of Ports' ContainerPort entries,
+// the domain's vhost reverse-proxies to that port's HostPort instead of
+// serving PHP — see Domain.ProxyTarget.
+type Container struct {
+	ID            int64             `json:"id"`
+	UserID        int64             `json:"user_id"`
+	DomainID      int64             `json:"domain_id,omitempty"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Ports         []PortMap         `json:"ports"`
+	WebPort       int               `json:"web_port,omitempty"`
+	Env           map[string]string `json:"env"`
+	Volumes       []VolumeMount     `json:"volumes"`
+	RestartPolicy string            `json:"restart_policy"`
+	MemoryLimitMB int               `json:"memory_limit_mb,omitempty"`
+	CPULimit      string            `json:"cpu_limit,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+
+	// Status is populated live from `docker inspect` by List/Get — it is
+	// never persisted, so it can never drift from what Docker actually
+	// reports (crashes, OOM kills, manual `docker` CLI use on the host).
+	Status string `json:"status,omitempty"`
 }
 
 // Session is an active login session (revocable).

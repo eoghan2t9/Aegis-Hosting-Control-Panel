@@ -7,14 +7,14 @@ import (
 )
 
 const domainCols = `id, user_id, domain, document_root, php_version, webserver, ssl_enabled,
-	ssl_cert_path, ssl_key_path, ssl_provider, ssl_auto_renew, created_at`
+	ssl_cert_path, ssl_key_path, ssl_provider, ssl_auto_renew, proxy_target, created_at`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var d Domain
 	var enabled, autoRenew, created interface{}
 	if err := row.Scan(&d.ID, &d.UserID, &d.Domain, &d.DocumentRoot, &d.PHPVersion,
 		&d.WebServer, &enabled, &d.SSLCertPath, &d.SSLKeyPath, &d.SSLProvider,
-		&autoRenew, &created); err != nil {
+		&autoRenew, &d.ProxyTarget, &created); err != nil {
 		return nil, wrapErr(err)
 	}
 	d.SSLEnabled = getBool(enabled)
@@ -27,9 +27,9 @@ func (s *Store) CreateDomain(ctx context.Context, d *Domain) error {
 	ts := now()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO domains (user_id, domain, document_root,
 		php_version, webserver, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_provider,
-		ssl_auto_renew, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		ssl_auto_renew, proxy_target, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.UserID, d.Domain, d.DocumentRoot, d.PHPVersion, d.WebServer, d.SSLEnabled,
-		d.SSLCertPath, d.SSLKeyPath, d.SSLProvider, d.SSLAutoRenew, ts)
+		d.SSLCertPath, d.SSLKeyPath, d.SSLProvider, d.SSLAutoRenew, d.ProxyTarget, ts)
 	if err != nil {
 		return wrapErr(err)
 	}
@@ -85,6 +85,14 @@ func (s *Store) UpdateDomain(ctx context.Context, d *Domain) error {
 	return wrapErr(err)
 }
 
+// SetDomainProxyTarget updates only proxy_target — called by svc.Docker when
+// a container attached to this domain starts/stops, without disturbing any
+// other domain field a concurrent request might be changing.
+func (s *Store) SetDomainProxyTarget(ctx context.Context, domainID int64, target string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE domains SET proxy_target=? WHERE id=?", target, domainID)
+	return wrapErr(err)
+}
+
 func (s *Store) DeleteDomain(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -96,6 +104,11 @@ func (s *Store) DeleteDomain(ctx context.Context, id int64) error {
 		"DELETE FROM dns_records WHERE zone_id IN (SELECT id FROM dns_zones WHERE domain_id = ?)",
 		"DELETE FROM dns_zones WHERE domain_id = ?",
 		"DELETE FROM ssl_orders WHERE domain_id = ?",
+		// Containers survive their attached domain's deletion (they may still
+		// be running services with data volumes) but lose the attachment —
+		// otherwise domain_id would dangle and web_port would silently start
+		// pointing at whatever new domain later reuses this id.
+		"UPDATE containers SET domain_id = 0, web_port = 0 WHERE domain_id = ?",
 		"DELETE FROM domains WHERE id = ?",
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

@@ -47,6 +47,7 @@ type Server struct {
 	WebApps  *svc.WebApps
 	Packages *svc.Packages
 	Metrics  *svc.MetricsHistory
+	Docker   *svc.Docker
 
 	primaryIPv4 string
 }
@@ -55,11 +56,11 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 	domains *svc.Domains, web *svc.WebServer, php *svc.PHP, dns *svc.DNS, ssl *svc.SSL,
 	ftp *svc.FTP, db *svc.Databases, files *svc.Files, thumbs *svc.Thumbs, backup *svc.Backup,
-	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages, metrics *svc.MetricsHistory) *Server {
+	sys *svc.System, tuner *svc.Tuner, term *svc.Terminal, cipher *svc.Cipher, cron *svc.Cron, mailSvc *svc.Mail, tokens *svc.APITokens, security *svc.Security, quota *svc.Quota, webApps *svc.WebApps, packages *svc.Packages, metrics *svc.MetricsHistory, docker *svc.Docker) *Server {
 	return &Server{
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
-		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics,
+		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics, Docker: docker,
 		primaryIPv4: detectPrimaryIP(),
 	}
 }
@@ -274,6 +275,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cron/jobs/{id}/toggle", s.withAuth(s.withFeature(FeatureCron, s.handleCronToggle)))
 	mux.HandleFunc("DELETE /api/cron/jobs/{id}", s.withAuth(s.withFeature(FeatureCron, s.handleCronDelete)))
 	mux.HandleFunc("GET /api/cron/jobs/{id}/log", s.withAuth(s.withFeature(FeatureCron, s.handleCronLog)))
+
+	// Docker containers.
+	mux.HandleFunc("GET /api/docker/status", s.withAuth(s.withRole(s.handleDockerStatus, store.RoleAdmin)))
+	mux.HandleFunc("POST /api/docker/install", s.withAuth(s.withRole(s.handleDockerInstall, store.RoleAdmin)))
+	mux.HandleFunc("GET /api/containers", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersList)))
+	mux.HandleFunc("POST /api/containers", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersCreate)))
+	mux.HandleFunc("GET /api/containers/{id}", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersGet)))
+	mux.HandleFunc("POST /api/containers/{id}/start", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersStart)))
+	mux.HandleFunc("POST /api/containers/{id}/stop", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersStop)))
+	mux.HandleFunc("POST /api/containers/{id}/restart", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersRestart)))
+	mux.HandleFunc("POST /api/containers/{id}/recreate", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersRecreate)))
+	mux.HandleFunc("DELETE /api/containers/{id}", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersDelete)))
+	mux.HandleFunc("GET /api/containers/{id}/logs", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersLogs)))
+	mux.HandleFunc("GET /api/containers/{id}/stats", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersStats)))
 
 	// API tokens.
 	mux.HandleFunc("GET /api/tokens", s.withAuth(s.handleTokensList))

@@ -113,7 +113,7 @@ addRoute("/accounts", {
             <dt>databases</dt><dd>${p.max_databases || "∞"}</dd>
             <dt>ftp accounts</dt><dd>${p.max_ftp_accounts || "∞"}</dd>
             <dt>disk</dt><dd>${p.disk_quota_bytes ? fmtBytesShort(p.disk_quota_bytes) : "unlimited"}</dd>
-            <dt>features</dt><dd>${[p.allow_ssl && "ssl", p.allow_dns && "dns", p.allow_terminal && "terminal", p.allow_backups && "backups", p.allow_mail && "mail", p.allow_webmail && "webmail", p.allow_databases && "databases", p.allow_files && "files", p.allow_ftp && "ftp", p.allow_cron && "cron"].filter(Boolean).join(" · ") || "—"}</dd>
+            <dt>features</dt><dd>${[p.allow_ssl && "ssl", p.allow_dns && "dns", p.allow_terminal && "terminal", p.allow_backups && "backups", p.allow_mail && "mail", p.allow_webmail && "webmail", p.allow_databases && "databases", p.allow_files && "files", p.allow_ftp && "ftp", p.allow_cron && "cron", p.allow_docker && "docker"].filter(Boolean).join(" · ") || "—"}</dd>
           </dl>
         </div>`).join("")}</div>` : "");
 
@@ -161,6 +161,9 @@ function pkgModal(pkg, done) {
     { name: "allow_files", label: "File manager", type: "select", options: yesNo, value: String(b("allow_files", true)) },
     { name: "allow_ftp", label: "FTP", type: "select", options: yesNo, value: String(b("allow_ftp", true)) },
     { name: "allow_cron", label: "Cron jobs", type: "select", options: yesNo, value: String(b("allow_cron", true)) },
+    { name: "allow_docker", label: "Docker containers", type: "select", options: yesNo, value: String(b("allow_docker", false)),
+      help: "Off by default — a container can use meaningfully more host resources than other features." },
+    { name: "max_containers", label: "Max containers (0 = unlimited)", type: "number", value: b("max_containers", 0) },
     { name: "is_default", label: "Default package", type: "select", options: yesNo, value: String(b("is_default", false)) },
   ]);
   valsPromise.then(async (vals) => {
@@ -174,6 +177,7 @@ function pkgModal(pkg, done) {
       allow_mail: vals.allow_mail === "true", allow_webmail: vals.allow_webmail === "true",
       allow_databases: vals.allow_databases === "true", allow_files: vals.allow_files === "true",
       allow_ftp: vals.allow_ftp === "true", allow_cron: vals.allow_cron === "true",
+      allow_docker: vals.allow_docker === "true", max_containers: +vals.max_containers,
       is_default: vals.is_default === "true",
     };
     try {

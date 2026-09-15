@@ -7,6 +7,7 @@
 #   sudo scripts/install-stack.sh --php-versions 8.2,8.3
 #   sudo scripts/install-stack.sh --no-mail --no-ftp
 #   sudo scripts/install-stack.sh --with-caddy --skip-build
+#   sudo scripts/install-stack.sh --with-docker           # + Docker Engine, opt-in
 #
 # What it does:
 #   1. Installs PHP-FPM (default 7.4→8.4, sury.org on Debian/Ubuntu)
@@ -31,6 +32,11 @@ set -euo pipefail
 PHP_VERSIONS="7.4 8.1 8.2 8.3 8.4"
 WEB_SERVER="nginx"          # nginx | apache | caddy
 WITH_FTP=1 WITH_MAIL=1 WITH_DB=1 WITH_TOOLS=1 WITH_BUILD=1 WITH_FAIL2BAN=1
+# Docker is opt-in (unlike everything else above): it's a much bigger,
+# security-relevant addition to the host than a package the panel enables
+# per account, so --with-docker is required rather than --no-docker to skip
+# it. Same posture as packages.allow_docker defaulting off in the panel.
+WITH_DOCKER=0
 MARIADB_PASSWORD="" POSTGRES_PASSWORD=""
 AEGIS_DIR="/etc/aegis"
 AEGIS_BIN="/usr/local/bin/aegis"
@@ -56,6 +62,7 @@ while [ $# -gt 0 ]; do
     --no-db)        WITH_DB=0; shift ;;
     --no-tools)     WITH_TOOLS=0; shift ;;
     --no-fail2ban)  WITH_FAIL2BAN=0; shift ;;
+    --with-docker)  WITH_DOCKER=1; shift ;;
     --skip-build)   WITH_BUILD=0; shift ;;
     --mariadb-password) MARIADB_PASSWORD="$2"; shift 2 ;;
     --postgres-password) POSTGRES_PASSWORD="$2"; shift 2 ;;
@@ -80,19 +87,17 @@ export DEBIAN_FRONTEND=noninteractive
 apt_get() { apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"; }
 
 # ----------------------------- 1. PHP ----------------------------------------
+# Always use sury.org directly (for both Debian and Ubuntu): it publishes
+# PHP builds for every current Debian/Ubuntu codename (jammy/noble/resolute/...)
+# and is what ondrej's own ppa:ondrej/php now points people to — that PPA is
+# being merged into sury.org and lags behind on brand-new Ubuntu releases.
 log "installing PHP-FPM: $PHP_VERSIONS"
-if [ "$DIST_ID" = "debian" ] || dpkg -l sury-keyring >/dev/null 2>&1 || true; then
+apt_get update
+apt_get install -y ca-certificates curl gnupg lsb-release
+if ! grep -rq "packages.sury.org" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+  curl -fsSL "$SURY_REPO/apt.gpg" -o /etc/apt/trusted.gpg.d/php.gpg
+  echo "deb $SURY_REPO/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
   apt_get update
-  apt_get install -y ca-certificates curl gnupg lsb-release
-  if ! grep -rq "packages.sury.org" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
-    if [ "$DIST_ID" = "debian" ]; then
-      curl -fsSL "$SURY_REPO/apt.gpg" -o /etc/apt/trusted.gpg.d/php.gpg
-      echo "deb $SURY_REPO/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
-    else
-      add-apt-repository -y ppa:ondrej/php
-    fi
-    apt_get update
-  fi
 fi
 PHP_PKGS=""
 for v in $PHP_VERSIONS; do
@@ -286,6 +291,14 @@ if [ "$WITH_FAIL2BAN" = 1 ]; then
   systemctl enable --now fail2ban
 fi
 
+if [ "$WITH_DOCKER" = 1 ]; then
+  log "installing docker (--with-docker)"
+  apt_get install docker.io
+  systemctl enable --now docker
+else
+  log "skipping docker (opt in with --with-docker, or install later from the panel's Containers page as admin)"
+fi
+
 # ----------------------------- 5. build the panel ----------------------------
 if [ "$WITH_BUILD" = 1 ]; then
   log "obtaining Go toolchain"
@@ -316,7 +329,10 @@ After=network.target mariadb.service postgresql.service
 [Service]
 Type=simple
 ExecStart=${AEGIS_BIN}
-Environment=AEGIS_LISTEN=:8080
+# Loopback only: nginx/Apache/Caddy is the internet-facing listener and
+# proxies ${BASE} to this port (see the vhost written above) — binding to
+# all interfaces here would expose the unencrypted admin panel directly.
+Environment=AEGIS_LISTEN=127.0.0.1:${AEGIS_PANEL_PORT:-8080}
 Environment=AEGIS_PANEL_BASE=${BASE}
 # Credentials live in root-only env files — never inline here: any local user
 # can read unit properties (incl. Environment=) via `systemctl show`.
@@ -402,6 +418,7 @@ cat <<EOF
  Mail:           $([ "$WITH_MAIL" = 1 ] && echo postfix+dovecot+opendkim || echo skipped)
  FTP:            $([ "$WITH_FTP" = 1 ] && echo vsftpd || echo skipped)
  fail2ban:       $([ "$WITH_FAIL2BAN" = 1 ] && echo yes || echo no)
+ Docker:         $([ "$WITH_DOCKER" = 1 ] && echo "installed" || echo "not installed (admin can install it from Containers in the panel)")
  Binary:         $([ -x "$AEGIS_BIN" ] && echo "$AEGIS_BIN" || echo "(not built)")
  Panel:          $BOOTSTRAP_NOTE
 

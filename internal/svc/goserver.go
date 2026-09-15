@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -40,6 +42,10 @@ func (w *WebServer) ServePreviewRoute(rw http.ResponseWriter, r *http.Request, r
 }
 
 func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route GoRoute) {
+	if route.ProxyTarget != "" {
+		w.proxyGoRoute(rw, r, route.ProxyTarget)
+		return
+	}
 	root := route.Root
 	upath := path.Clean("/" + r.URL.Path)
 
@@ -137,6 +143,18 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	}
 	rw.WriteHeader(status)
 	_, _ = rw.Write(body)
+}
+
+// proxyGoRoute reverse-proxies a container/app domain's request to target
+// (a fixed "127.0.0.1:port" set by svc.Docker) — the native-server equivalent
+// of the nginx/Apache/Caddy proxy_pass branches in webserver.go.
+func (w *WebServer) proxyGoRoute(rw http.ResponseWriter, r *http.Request, target string) {
+	u := &url.URL{Scheme: "http", Host: target}
+	proxy := httputil.NewSingleHostReverseProxy(u)
+	proxy.ErrorHandler = func(rw http.ResponseWriter, r *http.Request, err error) {
+		http.Error(rw, "upstream error: "+err.Error(), http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(rw, r)
 }
 
 // htGate blocks dotfile paths before anything else is served: .ht* returns
