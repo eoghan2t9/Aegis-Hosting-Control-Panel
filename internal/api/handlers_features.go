@@ -19,6 +19,7 @@ const (
 	FeatureFiles     = "files"
 	FeatureFTP       = "ftp"
 	FeatureCron      = "cron"
+	FeatureDocker    = "docker"
 )
 
 // packageFor returns the user's assigned package, falling back to the
@@ -62,7 +63,7 @@ func (s *Server) featuresFor(ctx context.Context, u *store.User) map[string]bool
 		for _, f := range []string{
 			FeatureSSL, FeatureDNS, FeatureTerminal, FeatureBackups,
 			FeatureMail, FeatureWebmail, FeatureDatabases, FeatureFiles,
-			FeatureFTP, FeatureCron,
+			FeatureFTP, FeatureCron, FeatureDocker,
 		} {
 			out[f] = true
 		}
@@ -73,7 +74,7 @@ func (s *Server) featuresFor(ctx context.Context, u *store.User) map[string]bool
 		for _, f := range []string{
 			FeatureSSL, FeatureDNS, FeatureTerminal, FeatureBackups,
 			FeatureMail, FeatureWebmail, FeatureDatabases, FeatureFiles,
-			FeatureFTP, FeatureCron,
+			FeatureFTP, FeatureCron, FeatureDocker,
 		} {
 			out[f] = true
 		}
@@ -89,6 +90,7 @@ func (s *Server) featuresFor(ctx context.Context, u *store.User) map[string]bool
 	out[FeatureFiles] = pkg.AllowFiles
 	out[FeatureFTP] = pkg.AllowFTP
 	out[FeatureCron] = pkg.AllowCron
+	out[FeatureDocker] = pkg.AllowDocker
 	return out
 }
 
