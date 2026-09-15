@@ -145,6 +145,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/system/updates", s.withAuth(s.withRole(s.handleUpdatesList, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/system/updates/check", s.withAuth(s.withRole(s.handleUpdatesCheck, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/system/updates/apply", s.withAuth(s.withRole(s.handleUpdatesApply, store.RoleAdmin)))
+	// WebSocket variant: streams live apt/dnf/... output to the Updates
+	// dialog instead of leaving it blank until the (up to 10min) apply
+	// finishes. bearerToken's ?token= fallback (below) covers auth here
+	// since the browser WebSocket API can't set an Authorization header.
+	mux.HandleFunc("GET /api/system/updates/apply/stream", s.withAuth(s.withRole(s.handleUpdatesApplyStream, store.RoleAdmin)))
 	mux.HandleFunc("GET /api/system/packages/search", s.withAuth(s.withRole(s.handlePackagesSearch, store.RoleAdmin)))
 	mux.HandleFunc("POST /api/system/packages/install", s.withAuth(s.withRole(s.handlePackagesInstall, store.RoleAdmin)))
 

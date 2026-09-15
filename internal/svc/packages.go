@@ -39,6 +39,11 @@ type PkgManager interface {
 	Name() string
 	CheckUpdates(ctx context.Context) ([]PackageUpdate, error)
 	ApplyUpdates(ctx context.Context, names []string) error // empty = all
+	// ApplyUpdatesStream is ApplyUpdates but also forwards every line of the
+	// package manager's live output to onLine (may be nil) as it's
+	// produced, so a caller can stream progress instead of waiting on a
+	// single blocking result.
+	ApplyUpdatesStream(ctx context.Context, names []string, onLine func(line string)) error
 	Search(ctx context.Context, query string) ([]PackageInfo, error)
 	Install(ctx context.Context, name string) error
 }
@@ -246,12 +251,19 @@ func (p *Packages) ListCached(ctx context.Context) ([]*store.PackageUpdate, erro
 // ApplyUpdates upgrades the named packages (all outdated packages if names
 // is empty), then re-runs CheckUpdates so the cached list reflects reality.
 func (p *Packages) ApplyUpdates(ctx context.Context, names []string) error {
+	return p.ApplyUpdatesStream(ctx, names, nil)
+}
+
+// ApplyUpdatesStream is ApplyUpdates but forwards the package manager's live
+// output to onLine (may be nil) as it runs, for a caller streaming progress
+// to the panel (see handleUpdatesApplyStream).
+func (p *Packages) ApplyUpdatesStream(ctx context.Context, names []string, onLine func(line string)) error {
 	if err := p.available(); err != nil {
 		return err
 	}
 	c, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := p.Mgr.ApplyUpdates(c, names); err != nil {
+	if err := p.Mgr.ApplyUpdatesStream(c, names, onLine); err != nil {
 		return err
 	}
 	_, err := p.CheckUpdates(ctx)
@@ -349,26 +361,33 @@ func (AptManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) {
 }
 
 func (AptManager) ApplyUpdates(ctx context.Context, names []string) error {
+	return AptManager{}.ApplyUpdatesStream(ctx, names, nil)
+}
+
+func (AptManager) ApplyUpdatesStream(ctx context.Context, names []string, onLine func(string)) error {
 	env := aptEnv()
 	// Always-Include-Phased-Updates: apt-get upgrade otherwise silently
 	// defers packages still in Ubuntu's staged rollout (exits 0, "0
 	// upgraded... not upgraded") — matching what `apt list --upgradable`
 	// (CheckUpdates) already shows regardless of phasing, so a deferred
 	// package looked "applied" from the panel but kept reappearing as
-	// outstanding on the next check.
-	const noDefer = "-o APT::Get::Always-Include-Phased-Updates=true"
+	// outstanding on the next check. -o and its value must be two separate
+	// argv elements — exec.Command does no shell word-splitting, so a single
+	// "-o key=value" token is passed to apt-get literally and silently
+	// ignored as noise instead of parsed as the option.
+	noDefer := []string{"-o", "APT::Get::Always-Include-Phased-Updates=true"}
 	if len(names) == 0 {
-		_, err := ExecWithEnv(ctx, env, "apt-get", "upgrade", "-y", noDefer)
-		return err
+		args := append([]string{"upgrade", "-y"}, noDefer...)
+		return ExecStream(ctx, env, onLine, "apt-get", args...)
 	}
 	for _, n := range names {
 		if !validPkgArg(n) {
 			return fmt.Errorf("invalid package name %q", n)
 		}
 	}
-	args := append([]string{"install", "-y", "--only-upgrade", noDefer}, names...)
-	_, err := ExecWithEnv(ctx, env, "apt-get", args...)
-	return err
+	args := append([]string{"install", "-y", "--only-upgrade"}, noDefer...)
+	args = append(args, names...)
+	return ExecStream(ctx, env, onLine, "apt-get", args...)
 }
 
 func (AptManager) Search(ctx context.Context, query string) ([]PackageInfo, error) {
@@ -479,6 +498,10 @@ func dnfPackageName(nvra string) string {
 }
 
 func (d DnfManager) ApplyUpdates(ctx context.Context, names []string) error {
+	return d.ApplyUpdatesStream(ctx, names, nil)
+}
+
+func (d DnfManager) ApplyUpdatesStream(ctx context.Context, names []string, onLine func(string)) error {
 	args := []string{"upgrade", "-y"}
 	for _, n := range names {
 		if !validPkgArg(n) {
@@ -486,8 +509,7 @@ func (d DnfManager) ApplyUpdates(ctx context.Context, names []string) error {
 		}
 	}
 	args = append(args, names...)
-	_, err := Exec(ctx, d.bin, args...)
-	return err
+	return ExecStream(ctx, nil, onLine, d.bin, args...)
 }
 
 func (d DnfManager) Search(ctx context.Context, query string) ([]PackageInfo, error) {
@@ -555,9 +577,12 @@ func (PacmanManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) 
 }
 
 func (PacmanManager) ApplyUpdates(ctx context.Context, names []string) error {
+	return PacmanManager{}.ApplyUpdatesStream(ctx, names, nil)
+}
+
+func (PacmanManager) ApplyUpdatesStream(ctx context.Context, names []string, onLine func(string)) error {
 	if len(names) == 0 {
-		_, err := Exec(ctx, "pacman", "-Syu", "--noconfirm")
-		return err
+		return ExecStream(ctx, nil, onLine, "pacman", "-Syu", "--noconfirm")
 	}
 	for _, n := range names {
 		if !validPkgArg(n) {
@@ -565,8 +590,7 @@ func (PacmanManager) ApplyUpdates(ctx context.Context, names []string) error {
 		}
 	}
 	args := append([]string{"-S", "--noconfirm"}, names...)
-	_, err := Exec(ctx, "pacman", args...)
-	return err
+	return ExecStream(ctx, nil, onLine, "pacman", args...)
 }
 
 func (PacmanManager) Search(ctx context.Context, query string) ([]PackageInfo, error) {
@@ -656,6 +680,10 @@ func (ZypperManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) 
 }
 
 func (ZypperManager) ApplyUpdates(ctx context.Context, names []string) error {
+	return ZypperManager{}.ApplyUpdatesStream(ctx, names, nil)
+}
+
+func (ZypperManager) ApplyUpdatesStream(ctx context.Context, names []string, onLine func(string)) error {
 	args := []string{"--non-interactive", "update"}
 	for _, n := range names {
 		if !validPkgArg(n) {
@@ -663,8 +691,7 @@ func (ZypperManager) ApplyUpdates(ctx context.Context, names []string) error {
 		}
 	}
 	args = append(args, names...)
-	_, err := Exec(ctx, "zypper", args...)
-	return err
+	return ExecStream(ctx, nil, onLine, "zypper", args...)
 }
 
 func (ZypperManager) Search(ctx context.Context, query string) ([]PackageInfo, error) {
@@ -729,9 +756,12 @@ func (ApkManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) {
 }
 
 func (ApkManager) ApplyUpdates(ctx context.Context, names []string) error {
+	return ApkManager{}.ApplyUpdatesStream(ctx, names, nil)
+}
+
+func (ApkManager) ApplyUpdatesStream(ctx context.Context, names []string, onLine func(string)) error {
 	if len(names) == 0 {
-		_, err := Exec(ctx, "apk", "upgrade")
-		return err
+		return ExecStream(ctx, nil, onLine, "apk", "upgrade")
 	}
 	for _, n := range names {
 		if !validPkgArg(n) {
@@ -739,8 +769,7 @@ func (ApkManager) ApplyUpdates(ctx context.Context, names []string) error {
 		}
 	}
 	args := append([]string{"add", "-u"}, names...)
-	_, err := Exec(ctx, "apk", args...)
-	return err
+	return ExecStream(ctx, nil, onLine, "apk", args...)
 }
 
 func (ApkManager) Search(ctx context.Context, query string) ([]PackageInfo, error) {

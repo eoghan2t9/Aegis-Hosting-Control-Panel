@@ -8,9 +8,11 @@
 package svc
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"math/big"
 	"os/exec"
 	"regexp"
@@ -32,6 +34,40 @@ func ExecWithEnv(ctx context.Context, env []string, name string, args ...string)
 		return strings.TrimSpace(string(out)), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// ExecStream runs a command, invoking onLine for every line of combined
+// stdout+stderr as it's produced instead of only returning it once the
+// command finishes (like Exec/ExecWithEnv) — used to stream long-running
+// output (e.g. apt-get) live to the panel over a WebSocket.
+func ExecStream(ctx context.Context, env []string, onLine func(line string), name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 64*1024), 1<<20)
+		for sc.Scan() {
+			if onLine != nil {
+				onLine(sc.Text())
+			}
+		}
+	}()
+	waitErr := cmd.Wait()
+	_ = pw.Close()
+	<-scanDone
+	if waitErr != nil {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), waitErr)
+	}
+	return nil
 }
 
 // ExecQuiet runs a command ignoring failures (used for best-effort detection).

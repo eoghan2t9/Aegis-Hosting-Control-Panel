@@ -1,6 +1,11 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+
+	"github.com/coder/websocket"
+)
 
 func (s *Server) handleDistroInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Packages.DistroInfo(r.Context()))
@@ -46,6 +51,40 @@ func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "updates.apply", "", "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleUpdatesApplyStream is handleUpdatesApply over a WebSocket, streaming
+// each line of the package manager's live output to the dialog as it runs
+// instead of leaving the panel showing nothing until the whole (potentially
+// multi-minute) operation finishes. names comes as a comma-separated query
+// param (empty = apply all) since a WebSocket upgrade request has no body.
+func (s *Server) handleUpdatesApplyStream(w http.ResponseWriter, r *http.Request) {
+	var names []string
+	if q := r.URL.Query().Get("names"); q != "" {
+		names = strings.Split(q, ",")
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	ctx := r.Context()
+	onLine := func(line string) {
+		_ = writeWSJSON(ctx, conn, map[string]string{"type": "log", "line": line})
+	}
+	applyErr := s.Packages.ApplyUpdatesStream(ctx, names, onLine)
+	detail := strings.Join(names, ",")
+	if detail == "" {
+		detail = "all"
+	}
+	done := map[string]string{"type": "done"}
+	if applyErr != nil {
+		done["error"] = applyErr.Error()
+		s.audit(r, "updates.apply", detail, "error: "+applyErr.Error())
+	} else {
+		s.audit(r, "updates.apply", detail, "ok")
+	}
+	_ = writeWSJSON(ctx, conn, done)
 }
 
 func (s *Server) handlePackagesSearch(w http.ResponseWriter, r *http.Request) {
