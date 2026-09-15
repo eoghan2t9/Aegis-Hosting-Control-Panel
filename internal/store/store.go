@@ -258,6 +258,22 @@ CREATE TABLE IF NOT EXISTS system_package_updates (
 	is_security INTEGER NOT NULL DEFAULT 0,
 	checked_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS containers (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id INTEGER NOT NULL,
+	domain_id INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL,
+	image TEXT NOT NULL,
+	ports TEXT NOT NULL DEFAULT '[]',
+	web_port INTEGER NOT NULL DEFAULT 0,
+	env TEXT NOT NULL DEFAULT '{}',
+	volumes TEXT NOT NULL DEFAULT '[]',
+	restart_policy TEXT NOT NULL DEFAULT 'unless-stopped',
+	memory_limit_mb INTEGER NOT NULL DEFAULT 0,
+	cpu_limit TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	UNIQUE(user_id, name)
+);
 `
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -289,10 +305,20 @@ CREATE TABLE IF NOT EXISTS system_package_updates (
 		{"allow_files", "INTEGER NOT NULL DEFAULT 1"},
 		{"allow_ftp", "INTEGER NOT NULL DEFAULT 1"},
 		{"allow_cron", "INTEGER NOT NULL DEFAULT 1"},
+		// Docker containers run under the root-owned dockerd and (unlike the
+		// other flags above) can mount volumes and consume host resources
+		// well beyond a chrooted account's usual reach, so — unlike every
+		// flag before it — this ships OFF by default; an admin opts a
+		// package in explicitly.
+		{"allow_docker", "INTEGER NOT NULL DEFAULT 0"},
+		{"max_containers", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing(ctx, "packages", c.col, c.def); err != nil {
 			return fmt.Errorf("migrate packages.%s: %w", c.col, err)
 		}
+	}
+	if err := s.addColumnIfMissing(ctx, "domains", "proxy_target", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("migrate domains.proxy_target: %w", err)
 	}
 	// Seed a default package on first run.
 	var n int

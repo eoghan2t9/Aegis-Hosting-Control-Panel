@@ -35,6 +35,9 @@ type GoRoute struct {
 	Cert       string   `json:"cert"`
 	Key        string   `json:"key"`
 	Hostnames  []string `json:"hostnames"`
+	// ProxyTarget, when set, makes serveGoRoute reverse-proxy every request
+	// there instead of serving Root/PHP — mirrors Domain.ProxyTarget.
+	ProxyTarget string `json:"proxy_target,omitempty"`
 }
 
 func NewWebServer(cfg *config.Config, php *PHP) *WebServer {
@@ -389,9 +392,25 @@ func (w *WebServer) generateNginx(d *store.Domain, aliases []string, systemUser 
 	}
 	fmt.Fprintf(&sb, "    server_name %s;\n    root %s;\n    index index.php index.html index.htm;\n", names, root)
 	fmt.Fprintf(&sb, "    access_log /var/log/nginx/%s.access.log;\n    error_log /var/log/nginx/%s.error.log;\n\n", d.Domain, d.Domain)
-	fmt.Fprintf(&sb, "    location / {\n        try_files $uri $uri/ /index.php?$query_string;\n    }\n\n")
-	if sock != "" {
-		fmt.Fprintf(&sb, "    location ~ \\.php$ {\n        include fastcgi_params;\n        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n        fastcgi_pass unix:%s;\n        fastcgi_index index.php;\n    }\n\n", sock)
+	if d.ProxyTarget != "" {
+		// Container/app domain: every request goes to the upstream, PHP and
+		// the static docroot are irrelevant while this is set.
+		fmt.Fprintf(&sb, "    location / {\n")
+		fmt.Fprintf(&sb, "        proxy_pass http://%s;\n", d.ProxyTarget)
+		fmt.Fprintf(&sb, "        proxy_http_version 1.1;\n")
+		fmt.Fprintf(&sb, "        proxy_set_header Host $host;\n")
+		fmt.Fprintf(&sb, "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		fmt.Fprintf(&sb, "        proxy_set_header X-Forwarded-Proto $scheme;\n")
+		fmt.Fprintf(&sb, "        proxy_set_header Upgrade $http_upgrade;\n")
+		fmt.Fprintf(&sb, "        proxy_set_header Connection $http_connection;\n")
+		fmt.Fprintf(&sb, "        proxy_read_timeout 3600s;\n")
+		fmt.Fprintf(&sb, "        proxy_send_timeout 3600s;\n")
+		fmt.Fprintf(&sb, "    }\n\n")
+	} else {
+		fmt.Fprintf(&sb, "    location / {\n        try_files $uri $uri/ /index.php?$query_string;\n    }\n\n")
+		if sock != "" {
+			fmt.Fprintf(&sb, "    location ~ \\.php$ {\n        include fastcgi_params;\n        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n        fastcgi_pass unix:%s;\n        fastcgi_index index.php;\n    }\n\n", sock)
+		}
 	}
 	sb.WriteString(w.panelProxyNginx())
 	fmt.Fprintf(&sb, "    location ~ /\\.(?!well-known).* { deny all; }\n\n")
@@ -466,7 +485,12 @@ func (w *WebServer) writeApacheVhost(sb *strings.Builder, d *store.Domain, port 
 	}
 	fmt.Fprintf(sb, "    DocumentRoot %s\n", root)
 	fmt.Fprintf(sb, "    <Directory %s>\n        Options -Indexes +FollowSymLinks\n        AllowOverride All\n        Require all granted\n    </Directory>\n", root)
-	if sock != "" {
+	if d.ProxyTarget != "" {
+		// Container/app domain: ProxyPass on "/" takes priority over the
+		// filesystem, so PHP/static handling below is simply skipped.
+		fmt.Fprintf(sb, "    ProxyPass / http://%s/ retry=0 upgrade=websocket\n", d.ProxyTarget)
+		fmt.Fprintf(sb, "    ProxyPassReverse / http://%s/\n", d.ProxyTarget)
+	} else if sock != "" {
 		fmt.Fprintf(sb, "    <FilesMatch \\.php$>\n        SetHandler \"proxy:unix:%s|fcgi://localhost\"\n    </FilesMatch>\n", sock)
 	}
 	sb.WriteString(w.panelProxyApache())
@@ -515,6 +539,18 @@ func (w *WebServer) generateCaddy(d *store.Domain, aliases []string, systemUser 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Aegis-managed site for %s\n", d.Domain)
 	fmt.Fprintf(&sb, "%s {\n", names)
+	if d.ProxyTarget != "" {
+		// Container/app domain: skip the docroot/PHP handling entirely.
+		fmt.Fprintf(&sb, "    reverse_proxy %s\n", d.ProxyTarget)
+		fmt.Fprintf(&sb, "    encode zstd gzip\n")
+		sb.WriteString(w.panelProxyCaddy())
+		if !d.SSLEnabled {
+			fmt.Fprintf(&sb, "    tls internal\n")
+		}
+		fmt.Fprintf(&sb, "    log { output file /var/log/caddy/%s.log }\n", d.Domain)
+		fmt.Fprintf(&sb, "}\n")
+		return sb.String()
+	}
 	fmt.Fprintf(&sb, "    root * %s\n", d.DocumentRoot)
 	// Apache default <Files ".ht*"> semantics: never serve dotfiles that
 	// carry access/rewrite configuration.
@@ -690,13 +726,14 @@ func (w *WebServer) generateGo(d *store.Domain, aliases []string, systemUser str
 
 func (w *WebServer) applyGo(d *store.Domain, aliases []string, systemUser string) error {
 	route := GoRoute{
-		Domain:     d.Domain,
-		Root:       d.DocumentRoot,
-		PHPVersion: d.PHPVersion,
-		SSL:        d.SSLEnabled,
-		Cert:       d.SSLCertPath,
-		Key:        d.SSLKeyPath,
-		Hostnames:  hostnames(d, aliases),
+		Domain:      d.Domain,
+		Root:        d.DocumentRoot,
+		PHPVersion:  d.PHPVersion,
+		SSL:         d.SSLEnabled,
+		Cert:        d.SSLCertPath,
+		Key:         d.SSLKeyPath,
+		Hostnames:   hostnames(d, aliases),
+		ProxyTarget: d.ProxyTarget,
 	}
 	if d.PHPVersion != "" {
 		route.Socket = w.PHP.SocketPath(d.Domain)

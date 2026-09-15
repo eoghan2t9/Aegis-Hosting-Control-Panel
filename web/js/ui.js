@@ -45,6 +45,7 @@ const paths = {
   wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
   dollar: '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   ssl: '<path d="M12 2 20 6v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/>',
+  box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
 };
 
 export function icon(name, cls) {
@@ -171,6 +172,10 @@ export function promptDialog(title, fields, opts = {}) {
           sel.appendChild(h(`<option value="${esc(o.value)}" ${String(o.value) === String(f.value ?? "") ? "selected" : ""}>${esc(o.label)}</option>`));
         }
         fld.appendChild(sel);
+      } else if (f.type === "textarea") {
+        const ta = h(`<textarea name="${esc(f.name)}" ${f.required ? "required" : ""}
+          rows="${f.rows || 4}" placeholder="${esc(f.placeholder || "")}" ${f.mono ? 'class="mono"' : ""} spellcheck="false">${esc(f.value ?? "")}</textarea>`);
+        fld.appendChild(ta);
       } else {
         const inp = h(`<input name="${esc(f.name)}" type="${f.type || "text"}" ${f.required ? "required" : ""}
           value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder || "")}" ${f.mono ? 'class="mono"' : ""} spellcheck="false">`);

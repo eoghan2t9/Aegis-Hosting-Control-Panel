@@ -91,6 +91,7 @@ func run(configPath string) error {
 	ftpSvc := svc.NewFTP(cfg, st)
 	dbSvc := svc.NewDatabases(cfg, st)
 	files := svc.NewFiles(cfg)
+	dockerSvc := svc.NewDocker(cfg, st, files, domains)
 	thumbsSvc := svc.NewThumbs(cfg, files)
 	backupSvc := svc.NewBackup(cfg, st, dbSvc, ftpSvc, webSvc, php, am, cipher)
 	term := svc.NewTerminal(cfg)
@@ -109,7 +110,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist)
+		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist, dockerSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

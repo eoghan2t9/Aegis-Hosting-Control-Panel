@@ -173,7 +173,7 @@ func (s *Store) CountUsers(ctx context.Context, ownerID int64) (int, error) {
 const pkgCols = `id, name, description, max_domains, max_databases, max_ftp_accounts,
 	disk_quota_bytes, bandwidth_quota_bytes, allow_ssl, allow_dns, allow_terminal, allow_backups,
 	allow_mail, allow_webmail, allow_databases, allow_files, allow_ftp, allow_cron,
-	is_default, created_at`
+	allow_docker, max_containers, is_default, created_at`
 
 func scanPackage(row interface{ Scan(...any) error }) (*Package, error) {
 	var p Package
@@ -181,7 +181,8 @@ func scanPackage(row interface{ Scan(...any) error }) (*Package, error) {
 	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.MaxDomains, &p.MaxDatabases,
 		&p.MaxFTPAccounts, &p.DiskQuotaBytes, &p.BandwidthQuotaBytes, &p.AllowSSL, &p.AllowDNS,
 		&p.AllowTerminal, &p.AllowBackups, &p.AllowMail, &p.AllowWebmail, &p.AllowDatabases,
-		&p.AllowFiles, &p.AllowFTP, &p.AllowCron, &p.IsDefault, &created); err != nil {
+		&p.AllowFiles, &p.AllowFTP, &p.AllowCron, &p.AllowDocker, &p.MaxContainers,
+		&p.IsDefault, &created); err != nil {
 		return nil, wrapErr(err)
 	}
 	p.CreatedAt = parseTime(created)
@@ -193,11 +194,12 @@ func (s *Store) CreatePackage(ctx context.Context, p *Package) error {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO packages (name, description, max_domains,
 		max_databases, max_ftp_accounts, disk_quota_bytes, bandwidth_quota_bytes, allow_ssl,
 		allow_dns, allow_terminal, allow_backups, allow_mail, allow_webmail, allow_databases,
-		allow_files, allow_ftp, allow_cron, is_default, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		allow_files, allow_ftp, allow_cron, allow_docker, max_containers, is_default, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.Name, p.Description, p.MaxDomains, p.MaxDatabases, p.MaxFTPAccounts, p.DiskQuotaBytes,
 		p.BandwidthQuotaBytes, p.AllowSSL, p.AllowDNS, p.AllowTerminal, p.AllowBackups,
 		p.AllowMail, p.AllowWebmail, p.AllowDatabases, p.AllowFiles, p.AllowFTP, p.AllowCron,
-		p.IsDefault, ts)
+		p.AllowDocker, p.MaxContainers, p.IsDefault, ts)
 	if err != nil {
 		return wrapErr(err)
 	}
@@ -244,11 +246,11 @@ func (s *Store) UpdatePackage(ctx context.Context, p *Package) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE packages SET name=?, description=?, max_domains=?,
 		max_databases=?, max_ftp_accounts=?, disk_quota_bytes=?, bandwidth_quota_bytes=?, allow_ssl=?,
 		allow_dns=?, allow_terminal=?, allow_backups=?, allow_mail=?, allow_webmail=?, allow_databases=?,
-		allow_files=?, allow_ftp=?, allow_cron=?, is_default=? WHERE id=?`,
+		allow_files=?, allow_ftp=?, allow_cron=?, allow_docker=?, max_containers=?, is_default=? WHERE id=?`,
 		p.Name, p.Description, p.MaxDomains, p.MaxDatabases, p.MaxFTPAccounts, p.DiskQuotaBytes,
 		p.BandwidthQuotaBytes, p.AllowSSL, p.AllowDNS, p.AllowTerminal, p.AllowBackups,
 		p.AllowMail, p.AllowWebmail, p.AllowDatabases, p.AllowFiles, p.AllowFTP, p.AllowCron,
-		p.IsDefault, p.ID)
+		p.AllowDocker, p.MaxContainers, p.IsDefault, p.ID)
 	if err != nil {
 		return wrapErr(err)
 	}
