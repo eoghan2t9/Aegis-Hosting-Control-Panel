@@ -88,8 +88,32 @@ type Domain struct {
 	// svc.PHPIniDirectiveKeys and validated by svc.ValidatePHPIniSettings —
 	// see internal/svc/php.go.
 	PHPSettings map[string]string `json:"php_settings"`
-	CreatedAt   time.Time         `json:"created_at"`
+	// IPID references IP.ID (0 = unassigned: the vhost keeps listening on
+	// the wildcard address instead of a specific one). Set via svc.IPs so
+	// the "dedicated means exactly one domain" invariant is enforced;
+	// never edited directly through the domain API.
+	IPID int64 `json:"ip_id,omitempty"`
+	// IPAddress is IP.Address joined in at read time for convenience
+	// (empty when IPID is 0) — see store/domains.go's domainCols query.
+	IPAddress string    `json:"ip_address,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
+
+// IP is one address in the panel's managed IP pool. kind="shared" (the
+// default) means many domains may point vhosts at it; kind="dedicated"
+// means at most one domain may (enforced by svc.IPs.Assign, not the DB).
+type IP struct {
+	ID        int64     `json:"id"`
+	Address   string    `json:"address"`
+	Label     string    `json:"label"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+const (
+	IPKindShared    = "shared"
+	IPKindDedicated = "dedicated"
+)
 
 // DNSZone links a domain to a DNS provider. provider=local means the built-in
 // authoritative server / bind zone files.

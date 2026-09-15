@@ -428,6 +428,23 @@ func (w *WebServer) panelProxyCaddy() string {
 
 // --- nginx ---------------------------------------------------------------------
 
+// nginxListen returns the "listen" directive(s) for spec (e.g. "80" or "443
+// ssl http2"): bound to addr plus its IPv6-literal form when addr is set —
+// addr is a domain's assigned IP (store.Domain.IPAddress), already validated
+// by svc.IPs.Create to be configured on a local interface before it could
+// reach here — otherwise the previous wildcard-only behavior (every
+// existing, unassigned domain keeps generating byte-identical config).
+func nginxListen(addr, spec string) string {
+	if addr == "" {
+		return fmt.Sprintf("    listen %s;\n    listen [::]:%s;\n", spec, spec)
+	}
+	bind := addr
+	if strings.Contains(addr, ":") {
+		bind = "[" + addr + "]"
+	}
+	return fmt.Sprintf("    listen %s:%s;\n", bind, spec)
+}
+
 func (w *WebServer) generateNginx(d *store.Domain, aliases []string, systemUser string) string {
 	sock := w.socketFor(d)
 	names := strings.Join(hostnames(d, aliases), " ")
@@ -438,11 +455,11 @@ func (w *WebServer) generateNginx(d *store.Domain, aliases []string, systemUser 
 	listenHTTP := "80"
 	listenHTTPS := "443 ssl http2"
 	if !d.SSLEnabled {
-		fmt.Fprintf(&sb, "server {\n    listen %s;\n    listen [::]:%s;\n", listenHTTP, listenHTTP)
+		fmt.Fprintf(&sb, "server {\n%s", nginxListen(d.IPAddress, listenHTTP))
 	} else {
 		// Redirect HTTP -> HTTPS.
-		fmt.Fprintf(&sb, "server {\n    listen %s;\n    listen [::]:%s;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n", listenHTTP, listenHTTP, names)
-		fmt.Fprintf(&sb, "server {\n    listen %s;\n    listen [::]:%s;\n    ssl_certificate %s;\n    ssl_certificate_key %s;\n    ssl_protocols TLSv1.2 TLSv1.3;\n", listenHTTPS, listenHTTPS, d.SSLCertPath, d.SSLKeyPath)
+		fmt.Fprintf(&sb, "server {\n%s    server_name %s;\n    return 301 https://$host$request_uri;\n}\n", nginxListen(d.IPAddress, listenHTTP), names)
+		fmt.Fprintf(&sb, "server {\n%s    ssl_certificate %s;\n    ssl_certificate_key %s;\n    ssl_protocols TLSv1.2 TLSv1.3;\n", nginxListen(d.IPAddress, listenHTTPS), d.SSLCertPath, d.SSLKeyPath)
 	}
 	fmt.Fprintf(&sb, "    server_name %s;\n    root %s;\n    index index.php index.html index.htm;\n", names, root)
 	fmt.Fprintf(&sb, "    access_log /var/log/nginx/%s.access.log;\n    error_log /var/log/nginx/%s.error.log;\n\n", d.Domain, d.Domain)
@@ -529,7 +546,14 @@ func (w *WebServer) generateApache(d *store.Domain, aliases []string, systemUser
 }
 
 func (w *WebServer) writeApacheVhost(sb *strings.Builder, d *store.Domain, port int, ssl bool, names, root, sock string) {
-	fmt.Fprintf(sb, "<VirtualHost *:%d>\n", port)
+	// Bind to the domain's assigned IP (already validated to exist on a
+	// local interface by svc.IPs.Create) instead of every interface, when
+	// one is set — every existing, unassigned domain keeps "*" (unchanged).
+	bind := "*"
+	if d.IPAddress != "" {
+		bind = d.IPAddress
+	}
+	fmt.Fprintf(sb, "<VirtualHost %s:%d>\n", bind, port)
 	fmt.Fprintf(sb, "    ServerName %s\n", d.Domain)
 	if ssl {
 		fmt.Fprintf(sb, "    ServerAlias %s\n", names)
@@ -593,6 +617,12 @@ func (w *WebServer) generateCaddy(d *store.Domain, aliases []string, systemUser 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Aegis-managed site for %s\n", d.Domain)
 	fmt.Fprintf(&sb, "%s {\n", names)
+	if d.IPAddress != "" {
+		// Bind to the domain's assigned IP (already validated to exist on a
+		// local interface by svc.IPs.Create) instead of every interface —
+		// every existing, unassigned domain omits this (unchanged).
+		fmt.Fprintf(&sb, "    bind %s\n", d.IPAddress)
+	}
 	if d.ProxyTarget != "" {
 		// Container/app domain: skip the docroot/PHP handling entirely.
 		fmt.Fprintf(&sb, "    reverse_proxy %s\n", d.ProxyTarget)
