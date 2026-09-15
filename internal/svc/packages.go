@@ -310,10 +310,16 @@ type AptManager struct{}
 
 func (AptManager) Name() string { return "apt" }
 
+// aptEnv extends the process's real environment (PATH, HOME, etc. — needed
+// by dpkg maintainer scripts and triggers) rather than replacing it outright,
+// matching every other ExecWithEnv caller in this codebase (e.g. Databases'
+// pg_dump/pg_restore calls).
+func aptEnv() []string { return append(os.Environ(), "DEBIAN_FRONTEND=noninteractive") }
+
 func (AptManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	// Best-effort index refresh: a briefly-unreachable mirror shouldn't fail
 	// the whole check, `apt list` still reflects the last successful sync.
-	_, _ = ExecWithEnv(ctx, []string{"DEBIAN_FRONTEND=noninteractive"}, "apt-get", "update", "-qq")
+	_, _ = ExecWithEnv(ctx, aptEnv(), "apt-get", "update", "-qq")
 	out, err := Exec(ctx, "apt", "list", "--upgradable")
 	if err != nil {
 		return nil, err
@@ -343,9 +349,16 @@ func (AptManager) CheckUpdates(ctx context.Context) ([]PackageUpdate, error) {
 }
 
 func (AptManager) ApplyUpdates(ctx context.Context, names []string) error {
-	env := []string{"DEBIAN_FRONTEND=noninteractive"}
+	env := aptEnv()
+	// Always-Include-Phased-Updates: apt-get upgrade otherwise silently
+	// defers packages still in Ubuntu's staged rollout (exits 0, "0
+	// upgraded... not upgraded") — matching what `apt list --upgradable`
+	// (CheckUpdates) already shows regardless of phasing, so a deferred
+	// package looked "applied" from the panel but kept reappearing as
+	// outstanding on the next check.
+	const noDefer = "-o APT::Get::Always-Include-Phased-Updates=true"
 	if len(names) == 0 {
-		_, err := ExecWithEnv(ctx, env, "apt-get", "upgrade", "-y")
+		_, err := ExecWithEnv(ctx, env, "apt-get", "upgrade", "-y", noDefer)
 		return err
 	}
 	for _, n := range names {
@@ -353,7 +366,7 @@ func (AptManager) ApplyUpdates(ctx context.Context, names []string) error {
 			return fmt.Errorf("invalid package name %q", n)
 		}
 	}
-	args := append([]string{"install", "-y", "--only-upgrade"}, names...)
+	args := append([]string{"install", "-y", "--only-upgrade", noDefer}, names...)
 	_, err := ExecWithEnv(ctx, env, "apt-get", args...)
 	return err
 }
@@ -379,7 +392,7 @@ func (AptManager) Search(ctx context.Context, query string) ([]PackageInfo, erro
 }
 
 func (AptManager) Install(ctx context.Context, name string) error {
-	_, err := ExecWithEnv(ctx, []string{"DEBIAN_FRONTEND=noninteractive"}, "apt-get", "install", "-y", name)
+	_, err := ExecWithEnv(ctx, aptEnv(), "apt-get", "install", "-y", name)
 	return err
 }
 
