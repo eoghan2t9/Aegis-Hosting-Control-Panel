@@ -56,6 +56,13 @@ type Overview struct {
 	SwapUsed    uint64          `json:"swap_used"`
 	Disks       []DiskInfo      `json:"disks"`
 	Services    []ServiceStatus `json:"services"`
+	// PublicIP is the host's outbound-facing address (see DetectPublicIP in
+	// ips.go) — "" when it couldn't be determined (no default route).
+	PublicIP string `json:"public_ip"`
+	// LocalIPs are every other address configured on a local interface,
+	// which is what a domain can actually be bound to via the IP
+	// management page — see DetectLocalIPs in ips.go.
+	LocalIPs []string `json:"local_ips"`
 }
 
 type DiskInfo struct {
@@ -75,7 +82,9 @@ func (s *System) Overview() Overview {
 			{Name: "vsftpd", Status: statusOf("vsftpd")},
 		},
 		PanelUptime: int64(time.Since(s.StartTime).Seconds()),
+		PublicIP:    DetectPublicIP(),
 	}
+	ov.LocalIPs, _ = DetectLocalIPs()
 	if hi, err := host.Info(); err == nil {
 		ov.Hostname = hi.Hostname
 		ov.OS = hi.Platform + " " + hi.PlatformVersion

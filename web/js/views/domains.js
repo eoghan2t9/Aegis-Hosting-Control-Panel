@@ -124,6 +124,7 @@ function openDetail(id, onChanged) {
             <dl class="kv">
               <dt>document root</dt><dd class="mono">${esc(dom.document_root)}</dd>
               <dt>webserver</dt><dd><span class="tag">${esc(dom.webserver)}</span></dd>
+              <dt>ip</dt><dd class="mono">${dom.ip_address ? esc(dom.ip_address) : '<span class="dim">any (unassigned)</span>'} ${isAdmin() ? '<a href="#/ips" class="small">manage</a>' : ""}</dd>
               <dt>ssl</dt><dd>${dom.ssl_enabled ? statusTag("issued") : '<span class="tag">off</span>'} ${dom.ssl_enabled ? '<span class="small dim mono">' + esc(dom.ssl_provider || "") + "</span>" : ""}</dd>
               <dt>created</dt><dd class="small">${fmtAgo(dom.created_at)}</dd>
             </dl>

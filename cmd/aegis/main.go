@@ -102,6 +102,7 @@ func run(configPath string) error {
 	webAppsSvc := svc.NewWebApps(cfg, dbSvc)
 	packagesSvc := svc.NewPackages(st)
 	metricsHist := svc.NewMetricsHistory(sys)
+	ipsSvc := svc.NewIPs(st, domains)
 
 	// First-run bootstrap.
 	if err := bootstrap(cfg, st, tuner, webSvc); err != nil {
@@ -109,7 +110,7 @@ func run(configPath string) error {
 	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
-		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist, dockerSvc)
+		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist, dockerSvc, ipsSvc)
 	server.PanelAssets = panelHandler(server, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

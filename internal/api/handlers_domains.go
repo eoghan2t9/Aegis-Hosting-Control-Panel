@@ -224,6 +224,38 @@ func (s *Server) handleDomainsApply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "applied"})
 }
 
+type setDomainIPReq struct {
+	IPID int64 `json:"ip_id"`
+}
+
+// handleDomainIPSet points id's vhost at ip_id (0 clears the assignment
+// back to the wildcard address) and reapplies the domain's web server
+// config. Admin-only (see server.go's route registration) since the IP pool
+// itself is an admin-managed, scarce resource — unlike php_version or
+// document_root, which any domain owner may change.
+func (s *Server) handleDomainIPSet(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	dom, _, err := s.Domains.DomainWithUser(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	var req setDomainIPReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := s.IPs.Assign(r.Context(), id, req.IPID); err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.audit(r, "domain.ip_set", dom.Domain, "")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (s *Server) handleAliasesAdd(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "id")
 	if err != nil {

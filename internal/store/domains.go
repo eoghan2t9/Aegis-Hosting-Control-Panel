@@ -7,8 +7,12 @@ import (
 	"time"
 )
 
-const domainCols = `id, user_id, domain, document_root, php_version, webserver, ssl_enabled,
-	ssl_cert_path, ssl_key_path, ssl_provider, ssl_auto_renew, proxy_target, php_settings, created_at`
+// domainCols is always selected against "FROM domains d LEFT JOIN ips ip ON
+// ip.id = d.ip_id" so ip_address comes back resolved without every caller
+// needing its own join.
+const domainCols = `d.id, d.user_id, d.domain, d.document_root, d.php_version, d.webserver, d.ssl_enabled,
+	d.ssl_cert_path, d.ssl_key_path, d.ssl_provider, d.ssl_auto_renew, d.proxy_target, d.php_settings,
+	d.ip_id, COALESCE(ip.address, ''), d.created_at`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var d Domain
@@ -16,7 +20,7 @@ func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var phpSettings string
 	if err := row.Scan(&d.ID, &d.UserID, &d.Domain, &d.DocumentRoot, &d.PHPVersion,
 		&d.WebServer, &enabled, &d.SSLCertPath, &d.SSLKeyPath, &d.SSLProvider,
-		&autoRenew, &d.ProxyTarget, &phpSettings, &created); err != nil {
+		&autoRenew, &d.ProxyTarget, &phpSettings, &d.IPID, &d.IPAddress, &created); err != nil {
 		return nil, wrapErr(err)
 	}
 	d.SSLEnabled = getBool(enabled)
@@ -50,25 +54,27 @@ func (s *Store) CreateDomain(ctx context.Context, d *Domain) error {
 	return nil
 }
 
+const domainFrom = `domains d LEFT JOIN ips ip ON ip.id = d.ip_id`
+
 func (s *Store) GetDomain(ctx context.Context, id int64) (*Domain, error) {
-	row := s.db.QueryRowContext(ctx, "SELECT "+domainCols+" FROM domains WHERE id = ?", id)
+	row := s.db.QueryRowContext(ctx, "SELECT "+domainCols+" FROM "+domainFrom+" WHERE d.id = ?", id)
 	return scanDomain(row)
 }
 
 func (s *Store) GetDomainByName(ctx context.Context, name string) (*Domain, error) {
-	row := s.db.QueryRowContext(ctx, "SELECT "+domainCols+" FROM domains WHERE domain = ?", name)
+	row := s.db.QueryRowContext(ctx, "SELECT "+domainCols+" FROM "+domainFrom+" WHERE d.domain = ?", name)
 	return scanDomain(row)
 }
 
 // ListDomains returns domains; when userID > 0, only that user's domains.
 func (s *Store) ListDomains(ctx context.Context, userID int64) ([]*Domain, error) {
-	q := "SELECT " + domainCols + " FROM domains"
+	q := "SELECT " + domainCols + " FROM " + domainFrom
 	args := []interface{}{}
 	if userID > 0 {
-		q += " WHERE user_id = ?"
+		q += " WHERE d.user_id = ?"
 		args = append(args, userID)
 	}
-	q += " ORDER BY domain"
+	q += " ORDER BY d.domain"
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -102,6 +108,13 @@ func (s *Store) UpdateDomain(ctx context.Context, d *Domain) error {
 // other domain field a concurrent request might be changing.
 func (s *Store) SetDomainProxyTarget(ctx context.Context, domainID int64, target string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE domains SET proxy_target=? WHERE id=?", target, domainID)
+	return wrapErr(err)
+}
+
+// SetDomainIP updates only ip_id (0 clears the assignment) — called by
+// svc.IPs.Assign, without disturbing any other domain field.
+func (s *Store) SetDomainIP(ctx context.Context, domainID, ipID int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE domains SET ip_id=? WHERE id=?", ipID, domainID)
 	return wrapErr(err)
 }
 
