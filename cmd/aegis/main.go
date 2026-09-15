@@ -148,9 +148,12 @@ func run(configPath string) error {
 		// created while "go" was active still needs to be re-registered
 		// after a restart — otherwise it 404s by Host header even though
 		// its docroot/preview path (which reads the DB directly) is fine.
+		// A failure here is fatal rather than a warning: silently
+		// continuing with zero routes would reintroduce that exact bug for
+		// the rest of this run instead of just failing loudly at boot.
 		allDomains, err := st.ListDomains(context.Background(), 0)
 		if err != nil {
-			slog.Warn("could not list domains for go server route rebuild", "err", err)
+			return fmt.Errorf("list domains for go server route rebuild: %w", err)
 		}
 		for _, dom := range allDomains {
 			if err := domains.Apply(context.Background(), dom.ID); err != nil {
