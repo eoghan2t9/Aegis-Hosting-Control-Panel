@@ -46,6 +46,14 @@ func (s *Store) GetSSLOrder(ctx context.Context, id int64) (*SSLOrder, error) {
 	return scanSSLOrder(row)
 }
 
+// GetSSLOrderByDomain returns domainID's single ssl_orders row (there is at
+// most one — see the unique index in migrate()), ErrNotFound if it's never
+// had a certificate issued.
+func (s *Store) GetSSLOrderByDomain(ctx context.Context, domainID int64) (*SSLOrder, error) {
+	row := s.db.QueryRowContext(ctx, "SELECT "+sslCols+" FROM ssl_orders o LEFT JOIN domains d ON d.id = o.domain_id WHERE o.domain_id = ?", domainID)
+	return scanSSLOrder(row)
+}
+
 func (s *Store) ListSSLOrders(ctx context.Context, domainID int64) ([]*SSLOrder, error) {
 	q := "SELECT " + sslCols + " FROM ssl_orders o LEFT JOIN domains d ON d.id = o.domain_id"
 	args := []interface{}{}

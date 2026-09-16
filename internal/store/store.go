@@ -344,6 +344,55 @@ CREATE TABLE IF NOT EXISTS ips (
 			 is_default, created_at) VALUES ('starter', 'Default package: 1 domain, 1 database', 1, 1, 1,
 			 0, 0, 1, 1, 1, 1, 1, ?)`, time.Now().UTC().Format(time.RFC3339))
 	}
+	// ssl_orders used to be an append-only log (a new row per issue attempt,
+	// forever) instead of current state — one domain could accumulate a pile
+	// of issued/failed/pending rows, including a "pending" one orphaned
+	// forever if the process restarted mid-issuance (nothing else would ever
+	// come along to supersede it). Collapse any pre-existing duplicates down
+	// to one per domain — preferring the most recent "issued" row, since
+	// that's what the live certificate on disk actually is, else the most
+	// recent overall — before enforcing it going forward with a unique
+	// index. A fresh or already-migrated database has nothing to dedupe.
+	if err := s.dedupeSSLOrders(ctx); err != nil {
+		return fmt.Errorf("dedupe ssl_orders: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "CREATE UNIQUE INDEX IF NOT EXISTS idx_ssl_orders_domain ON ssl_orders(domain_id)"); err != nil {
+		return fmt.Errorf("create ssl_orders unique index: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) dedupeSSLOrders(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT domain_id FROM ssl_orders")
+	if err != nil {
+		return err
+	}
+	var domainIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		domainIDs = append(domainIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	for _, domID := range domainIDs {
+		var keepID int64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM ssl_orders WHERE domain_id = ? ORDER BY (status = 'issued') DESC, id DESC LIMIT 1`,
+			domID).Scan(&keepID)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, "DELETE FROM ssl_orders WHERE domain_id = ? AND id != ?", domID, keepID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
