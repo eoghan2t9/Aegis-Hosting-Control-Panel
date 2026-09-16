@@ -58,6 +58,8 @@ addRoute("/runtime", {
                 <dt>host</dt><dd class="mono">${tuning.cores} cores · ${tuning.ram_mb} MB RAM</dd>
                 <dt>php-fpm</dt><dd class="mono">${tuning.php_fpm.max_children} max children</dd>
                 <dt>nginx</dt><dd class="mono">${tuning.nginx.worker_connections} conn/worker</dd>
+                <dt>apache</dt><dd class="mono">${tuning.apache.max_request_workers} max request workers <span class="small dim">(prepped — applies once apache is enabled)</span></dd>
+                <dt>caddy</dt><dd class="mono">${tuning.caddy.idle_timeout_s}s idle timeout <span class="small dim">(prepped — applies once caddy is enabled)</span></dd>
                 <dt>sysctl</dt><dd class="small mono">${(tuning.sysctl || []).map((s) => s.key + "=" + s.value).join(" ")}</dd>
               </dl>` : `<p class="muted small">No tuning report yet — run it from System → Performance tuning (admin).</p>`}
           </div>

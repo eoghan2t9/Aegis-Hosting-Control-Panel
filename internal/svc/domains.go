@@ -699,6 +699,33 @@ func (d *Domains) Apply(ctx context.Context, domainID int64) error {
 	return d.Web.Apply(dom, aliases, user.Username)
 }
 
+// ReapplyAll re-provisions every domain's php pool and web config — used
+// after a performance-tuning run (handleTuningApply) so the new php-fpm
+// worker counts actually reach every existing site's pool instead of only
+// domains created or explicitly re-applied afterward; EnsurePool's nil
+// tuning fallback picks up the just-written report automatically. Mirrors
+// the reconciliation loop cmd/aegis/main.go already runs for every domain
+// at boot, so this path is already exercised on every service restart.
+// Best-effort per domain: one broken domain shouldn't block tuning from
+// reaching the rest, so failures are collected and returned together
+// rather than aborting on the first one.
+func (d *Domains) ReapplyAll(ctx context.Context) error {
+	doms, err := d.Store.ListDomains(ctx, 0)
+	if err != nil {
+		return err
+	}
+	var errs []string
+	for _, dom := range doms {
+		if err := d.Apply(ctx, dom.ID); err != nil {
+			errs = append(errs, dom.Domain+": "+err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to reapply %d domain(s): %s", len(errs), strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 // Delete removes a domain's web config and php pool. Files on disk are kept
 // (like cPanel); the caller decides whether to archive them first. Any
 // auto-created webftp vhost and dedicated FTP account for this domain (see
