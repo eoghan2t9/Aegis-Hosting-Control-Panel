@@ -13,6 +13,7 @@ addRoute("/dns", {
   render: async (view) => {
     selectedZone = null;
     view.innerHTML = pageHead("DNS", "Authoritative DNS per domain. Zones can be served by the built-in name server (local) or synced to Cloudflare and other providers through plugins.", `
+      <button class="btn" id="btn-populate" title="Create a default zone (A, www, MX, SPF) for every domain that doesn't have one yet">${icon("zap")} Populate DNS</button>
       <button class="btn" id="btn-zone">${icon("plus")} New zone</button>`);
     view.insertAdjacentHTML("beforeend", `<div id="dns-root">${loading()}</div>`);
     const [zones, provData, domains] = await Promise.all([
@@ -83,6 +84,19 @@ addRoute("/dns", {
     function cfProv() { return cf; }
 
     document.getElementById("btn-zone").onclick = () => createZone(domains, zones, reload);
+    document.getElementById("btn-populate").onclick = async () => {
+      if (!await confirmDialog("Create a default DNS zone (A, www, MX, SPF) for every domain that doesn't have one yet? Existing zones are left untouched.", { title: "Populate DNS" })) return;
+      try {
+        const res = await api.post("/dns/populate");
+        const parts = [];
+        if (res.created?.length) parts.push(`${res.created.length} zone(s) created`);
+        if (res.skipped?.length) parts.push(`${res.skipped.length} already had one or aren't allowed DNS`);
+        const failedCount = Object.keys(res.failed || {}).length;
+        if (failedCount) parts.push(`${failedCount} failed`);
+        toast(parts.join(", ") || "Nothing to do — every domain already has a zone", failedCount ? "warn" : "ok");
+        reload();
+      } catch (ex) { toast(ex.message, "err"); }
+    };
   },
 
   // re-render on every visit

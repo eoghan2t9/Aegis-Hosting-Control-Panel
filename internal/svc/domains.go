@@ -413,6 +413,63 @@ func (d *Domains) createDefaultZone(ctx context.Context, dom *store.Domain) erro
 	return err
 }
 
+// EnsureDefaultZone backfills a "local" DNS zone with the same default
+// records as domain creation (createDefaultZone) for an existing domain
+// that doesn't have one yet — used by the DNS page's "Populate DNS" button
+// to catch up domains created before DNS auto-provisioning existed, or ones
+// whose zone was deleted. Returns (false, nil) — not an error — when a zone
+// already exists, so callers can report "skipped" vs "created".
+func (d *Domains) EnsureDefaultZone(ctx context.Context, domainID int64) (bool, error) {
+	if d.DNS == nil {
+		return false, errors.New("dns is not configured")
+	}
+	dom, err := d.Store.GetDomain(ctx, domainID)
+	if err != nil {
+		return false, err
+	}
+	if _, err := d.Store.GetZoneByDomain(ctx, domainID); err == nil {
+		return false, nil
+	}
+	if err := d.createDefaultZone(ctx, dom); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// PopulateDefaultDNS runs EnsureDefaultZone for every domain owned by
+// ownerID (0 = every domain — admin-only bulk backfill), skipping
+// auto-created "webftp.<domain>" rows, domains that already have a zone,
+// and domains whose owner's package disallows DNS (same gate Create uses).
+func (d *Domains) PopulateDefaultDNS(ctx context.Context, ownerID int64) (created, skipped []string, failed map[string]string) {
+	failed = map[string]string{}
+	doms, err := d.Store.ListDomains(ctx, ownerID)
+	if err != nil {
+		failed["*"] = err.Error()
+		return
+	}
+	for _, dom := range doms {
+		if strings.HasPrefix(dom.Domain, "webftp.") {
+			continue
+		}
+		if owner, err := d.Store.GetUserByID(ctx, dom.UserID); err == nil {
+			if pkg, err := d.Store.GetPackage(ctx, owner.PackageID); err == nil && pkg != nil && !pkg.AllowDNS {
+				skipped = append(skipped, dom.Domain)
+				continue
+			}
+		}
+		ok, err := d.EnsureDefaultZone(ctx, dom.ID)
+		switch {
+		case err != nil:
+			failed[dom.Domain] = err.Error()
+		case ok:
+			created = append(created, dom.Domain)
+		default:
+			skipped = append(skipped, dom.Domain)
+		}
+	}
+	return
+}
+
 // Apply re-provisions the php pool and web config for an existing domain
 // after its settings changed (e.g. PHP version or SSL toggled).
 func (d *Domains) Apply(ctx context.Context, domainID int64) error {

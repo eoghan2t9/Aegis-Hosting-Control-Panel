@@ -7,6 +7,24 @@ import (
 	"aegis/internal/svc"
 )
 
+// handleDNSPopulate backfills a default DNS zone (see
+// svc.Domains.PopulateDefaultDNS) for every domain missing one — admins
+// cover every domain, everyone else only their own. Used by the DNS page's
+// "Populate DNS" button to catch up domains created before DNS
+// auto-provisioning existed.
+func (s *Server) handleDNSPopulate(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	ownerID := u.ID
+	if u.Role == store.RoleAdmin {
+		ownerID = 0
+	}
+	created, skipped, failed := s.Domains.PopulateDefaultDNS(r.Context(), ownerID)
+	s.audit(r, "dns.populate", "", "")
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created": created, "skipped": skipped, "failed": failed,
+	})
+}
+
 // canAccessZone: users can access zones of their own domains; admins all.
 func (s *Server) canAccessZone(r *http.Request, zone *store.DNSZone) bool {
 	dom, err := s.Store.GetDomain(r.Context(), zone.DomainID)
