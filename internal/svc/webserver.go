@@ -1,6 +1,7 @@
 package svc
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,6 +37,12 @@ type WebServer struct {
 	// effect immediately instead of only on the next process restart.
 	goHTTP  *http.Server
 	goHTTPS *http.Server
+
+	// fallbackCerts caches lazily-generated self-signed certificates for
+	// known GoRoutes that have no real SSL configured yet (see GoTLSCert) —
+	// bounded by the number of managed domains, never grown from arbitrary
+	// SNI probes.
+	fallbackCerts map[string]*tls.Certificate
 }
 
 // GoRoute is how a domain is served by the native Go web server.
