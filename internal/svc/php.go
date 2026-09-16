@@ -187,6 +187,21 @@ func sanitizedPHPIniLines(settings map[string]string) string {
 	return b.String()
 }
 
+// defaultTuning is what EnsurePool falls back to when a caller doesn't pass
+// explicit per-pool tuning — the host's saved System → Performance tuning
+// report (svc.Tuner) when one has been generated, since that's sized for
+// the box's actual cores/RAM, else a conservative baseline that works
+// anywhere. Previously this was always the hardcoded baseline regardless of
+// whether a tuning report existed, so running the tuning tool never
+// actually changed any domain's php-fpm pool.
+func (p *PHP) defaultTuning() *PHPFPMTuning {
+	if report, err := NewTuner(p.Cfg).LoadReport(); err == nil {
+		t := report.PHPFPM
+		return &t
+	}
+	return &PHPFPMTuning{PM: "dynamic", MaxChildren: 8, StartServers: 2, MinSpare: 1, MaxSpare: 4}
+}
+
 // EnsurePool writes (or rewrites) the php-fpm pool for a domain and reloads
 // the matching fpm service. poolName must be filesystem-safe (it is derived
 // from the domain, which is validated). iniSettings may be nil.
@@ -195,7 +210,7 @@ func (p *PHP) EnsurePool(domain, systemUser, version string, tuning *PHPFPMTunin
 		return fmt.Errorf("php %s is not installed", version)
 	}
 	if tuning == nil {
-		tuning = &PHPFPMTuning{PM: "dynamic", MaxChildren: 8, StartServers: 2, MinSpare: 1, MaxSpare: 4}
+		tuning = p.defaultTuning()
 	}
 	sock := p.SocketPath(domain)
 	// Aegis system accounts are created with primary group www-data (so nginx
