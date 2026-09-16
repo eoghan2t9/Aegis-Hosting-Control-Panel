@@ -127,12 +127,36 @@ func (s *Server) handleDomainsGet(w http.ResponseWriter, r *http.Request) {
 	aliases, _ := s.Store.ListAliases(r.Context(), id)
 	zone, _ := s.Store.GetZoneByDomain(r.Context(), id)
 	orders, _ := s.Store.ListSSLOrders(r.Context(), id)
+
+	// The dedicated FTP account for this domain, if any (see
+	// svc.Domains.createDefaultFTP) — found by home dir, same lookup used
+	// by Domains.Delete's cleanup. PasswordHash is json:"-", never sent.
+	var ftpAcct *store.FTPAccount
+	if accts, err := s.Store.ListFTPAccounts(r.Context(), dom.UserID); err == nil {
+		for _, a := range accts {
+			if a.HomeDir == dom.DocumentRoot {
+				ftpAcct = a
+				break
+			}
+		}
+	}
+	webftpURL := ""
+	if wf, err := s.Store.GetDomainByName(r.Context(), svc.WebftpHostname(dom.Domain)); err == nil {
+		scheme := "http"
+		if wf.SSLEnabled {
+			scheme = "https"
+		}
+		webftpURL = scheme + "://" + wf.Domain + "/"
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"domain":  dom,
-		"aliases": aliases,
-		"zone":    zone,
-		"ssl":     orders,
-		"user":    publicUser(user),
+		"domain":     dom,
+		"aliases":    aliases,
+		"zone":       zone,
+		"ssl":        orders,
+		"user":       publicUser(user),
+		"ftp":        ftpAcct,
+		"webftp_url": webftpURL,
 	})
 }
 
