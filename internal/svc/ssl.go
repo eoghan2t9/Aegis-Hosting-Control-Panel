@@ -77,11 +77,16 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, inclu
 		return nil, errors.New("challenge must be 'http' or 'dns'")
 	}
 
+	// Resolved unconditionally (not just when includeWebftp) — even when this
+	// issuance won't cover it, we still need to know whether an *earlier*
+	// one did, so a re-issuance that overwrites the shared cert file (see
+	// below) can clear its now-stale coverage instead of leaving it
+	// claiming a certificate it no longer actually has.
+	webftpDom, wfErr := s.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain))
+	hasWebftpVhost := wfErr == nil
 	var webftp *store.Domain
-	if includeWebftp {
-		if wf, err := s.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err == nil {
-			webftp = wf
-		}
+	if includeWebftp && hasWebftpVhost {
+		webftp = webftpDom
 	}
 
 	order := &store.SSLOrder{
@@ -152,6 +157,23 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, inclu
 			slog.Warn("ssl: failed to record webftp cert coverage", "domain", webftp.Domain, "err", err)
 		} else if err := s.Web.Apply(webftp, nil, user.Username); err != nil {
 			slog.Warn("ssl: cert issued but webftp web config apply failed", "domain", webftp.Domain, "err", err)
+		}
+	} else if hasWebftpVhost && webftpDom.SSLCertPath == certPath {
+		// This issuance just overwrote the same shared cert file (paths are
+		// always keyed by dom.Domain, regardless of what SANs are in it)
+		// without including webftp's SAN — its previous coverage, if any,
+		// just went stale: the file on disk no longer actually covers it,
+		// even though the domain row still claims it does. Clear that so
+		// GoTLSCert correctly falls back to a self-signed cert instead of
+		// silently presenting one that looks real but doesn't match.
+		webftpDom.SSLEnabled = false
+		webftpDom.SSLCertPath = ""
+		webftpDom.SSLKeyPath = ""
+		webftpDom.SSLProvider = ""
+		if err := s.Store.UpdateDomain(ctx, webftpDom); err != nil {
+			slog.Warn("ssl: failed to clear stale webftp cert coverage", "domain", webftpDom.Domain, "err", err)
+		} else if err := s.Web.Apply(webftpDom, nil, user.Username); err != nil {
+			slog.Warn("ssl: web config apply failed while clearing stale webftp coverage", "domain", webftpDom.Domain, "err", err)
 		}
 	}
 	return order, nil
