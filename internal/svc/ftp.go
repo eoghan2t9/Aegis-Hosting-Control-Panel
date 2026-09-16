@@ -77,6 +77,26 @@ seccomp_sandbox=NO
 //   - password set via chpasswd (SHA-512 by default)
 //   - row in ftp_accounts
 func (f *FTP) Create(ctx context.Context, owner *store.User, username, password string, extra bool) (*store.FTPAccount, error) {
+	home := filepath.Join(f.Cfg.HomeRoot, owner.Username)
+	if extra {
+		home = filepath.Join(home, username)
+	}
+	return f.provision(ctx, owner, username, password, home, "750")
+}
+
+// CreateScoped provisions an FTP account chrooted directly into an existing
+// directory (e.g. a domain's own document root) instead of one derived from
+// the account's own username under the owner's home, as Create does. The
+// directory is left group-writable (770, not Create's 750) because it's
+// typically shared with another system user already writing there — e.g. a
+// domain's php-fpm pool, which runs as the owning panel user under the same
+// www-data group (see PHP.EnsurePool) — rather than being this account's
+// private home.
+func (f *FTP) CreateScoped(ctx context.Context, owner *store.User, username, password, home string) (*store.FTPAccount, error) {
+	return f.provision(ctx, owner, username, password, home, "770")
+}
+
+func (f *FTP) provision(ctx context.Context, owner *store.User, username, password, home, dirMode string) (*store.FTPAccount, error) {
 	if !ValidUsername(username) {
 		return nil, errors.New("invalid username (lowercase letters, digits, underscore, 3-30 chars)")
 	}
@@ -85,11 +105,6 @@ func (f *FTP) Create(ctx context.Context, owner *store.User, username, password 
 	}
 	if _, err := f.Store.GetFTPAccountByUsername(ctx, username); err == nil {
 		return nil, fmt.Errorf("ftp account %s already exists", username)
-	}
-
-	home := filepath.Join(f.Cfg.HomeRoot, owner.Username)
-	if extra {
-		home = filepath.Join(home, username)
 	}
 
 	// Ensure the system user exists (idempotent).
@@ -109,7 +124,7 @@ func (f *FTP) Create(ctx context.Context, owner *store.User, username, password 
 	// Ensure home exists with the right ownership.
 	_ = os.MkdirAll(home, 0o755)
 	_, _ = RunTimeout(10*time.Second, "chown", "-R", username+":www-data", home)
-	_, _ = RunTimeout(10*time.Second, "chmod", "750", home)
+	_, _ = RunTimeout(10*time.Second, "chmod", dirMode, home)
 
 	hash, err := authHash(password)
 	if err != nil {

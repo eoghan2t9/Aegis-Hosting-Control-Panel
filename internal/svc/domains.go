@@ -21,10 +21,19 @@ type Domains struct {
 	Web   *WebServer
 	PHP   *PHP
 	DNS   *DNS
+	FTP   *FTP
 }
 
-func NewDomains(cfg *config.Config, st *store.Store, web *WebServer, php *PHP, dns *DNS) *Domains {
-	return &Domains{Cfg: cfg, Store: st, Web: web, PHP: php, DNS: dns}
+func NewDomains(cfg *config.Config, st *store.Store, web *WebServer, php *PHP, dns *DNS, ftp *FTP) *Domains {
+	return &Domains{Cfg: cfg, Store: st, Web: web, PHP: php, DNS: dns, FTP: ftp}
+}
+
+// ProvisionedFTP is the one-time result of an auto-created FTP account —
+// like APITokens.Create's raw token, the plaintext password only ever
+// exists in this return value; the store only ever gets a bcrypt hash of it.
+type ProvisionedFTP struct {
+	Account  *store.FTPAccount
+	Password string
 }
 
 // CreateOptions configures a new domain.
@@ -113,16 +122,20 @@ func (d *Domains) docrootFor(user *store.User, domain string, opts CreateOptions
 	return d.DocumentRoot(user, domain), nil
 }
 
-// Create validates and provisions a domain for a user.
-func (d *Domains) Create(ctx context.Context, user *store.User, domain string, opts CreateOptions) (*store.Domain, error) {
+// Create validates and provisions a domain for a user. The second return
+// value is non-nil only when a dedicated FTP account was auto-created for
+// the domain (see createDefaultFTP) — its plaintext password exists only
+// there, so the caller must surface it to the admin immediately or it's
+// gone (like an API token's raw value).
+func (d *Domains) Create(ctx context.Context, user *store.User, domain string, opts CreateOptions) (*store.Domain, *ProvisionedFTP, error) {
 	domain = NormalizeDomain(domain)
 	if !ValidDomain(domain) {
-		return nil, errors.New("invalid domain name")
+		return nil, nil, errors.New("invalid domain name")
 	}
 	if _, err := d.Store.GetDomainByName(ctx, domain); err == nil {
-		return nil, fmt.Errorf("domain %s already exists", domain)
+		return nil, nil, fmt.Errorf("domain %s already exists", domain)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Package quota.
@@ -133,10 +146,10 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 	if pkg != nil && pkg.MaxDomains > 0 {
 		usage, err := d.Store.PackageUsage(ctx, user.ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if usage.Domains >= pkg.MaxDomains {
-			return nil, fmt.Errorf("package %s allows at most %d domain(s)", pkg.Name, pkg.MaxDomains)
+			return nil, nil, fmt.Errorf("package %s allows at most %d domain(s)", pkg.Name, pkg.MaxDomains)
 		}
 	}
 
@@ -148,26 +161,26 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 	switch ws {
 	case "nginx", "apache", "caddy", "go":
 	default:
-		return nil, fmt.Errorf("unsupported webserver %q", ws)
+		return nil, nil, fmt.Errorf("unsupported webserver %q", ws)
 	}
 
 	// PHP version validation.
 	if opts.PHPVersion != "" && !d.PHP.Has(opts.PHPVersion) {
-		return nil, fmt.Errorf("php %s is not installed", opts.PHPVersion)
+		return nil, nil, fmt.Errorf("php %s is not installed", opts.PHPVersion)
 	}
 
 	// Create document root and seed a styled under-construction placeholder
 	// (skipped when the docroot already has content — see placeholder.go).
 	root, err := d.docrootFor(user, domain, opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, fmt.Errorf("create docroot: %w", err)
+		return nil, nil, fmt.Errorf("create docroot: %w", err)
 	}
 	if err := writePlaceholderPage(root, domain); err != nil {
 		_ = os.Remove(root) // only succeeds when the dir we just made is empty
-		return nil, fmt.Errorf("seed placeholder page: %w", err)
+		return nil, nil, fmt.Errorf("seed placeholder page: %w", err)
 	}
 
 	dom := &store.Domain{
@@ -179,21 +192,21 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 		SSLAutoRenew: true,
 	}
 	if err := d.Store.CreateDomain(ctx, dom); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Provision php-fpm pool.
 	if dom.PHPVersion != "" {
 		if err := d.PHP.EnsurePool(domain, user.Username, dom.PHPVersion, nil, dom.PHPSettings); err != nil {
 			_ = d.Store.DeleteDomain(ctx, dom.ID)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	// Write web server config.
 	if err := d.Web.Apply(dom, nil, user.Username); err != nil {
 		_ = d.Store.DeleteDomain(ctx, dom.ID)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Auto-provision a DNS zone with default records, mirroring the manual
@@ -207,7 +220,96 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 		}
 	}
 
-	return dom, nil
+	// Auto-provision a dedicated FTP account chrooted to this domain, same
+	// best-effort treatment as DNS above.
+	var ftpResult *ProvisionedFTP
+	if d.FTP != nil && (pkg == nil || pkg.AllowFTP) {
+		acct, password, err := d.createDefaultFTP(ctx, user, dom)
+		if err != nil {
+			slog.Warn("ftp: auto account-create failed", "domain", dom.Domain, "err", err)
+		} else {
+			ftpResult = &ProvisionedFTP{Account: acct, Password: password}
+		}
+	}
+
+	return dom, ftpResult, nil
+}
+
+// createDefaultFTP provisions a dedicated FTP account chrooted directly to
+// this domain's document root (not the owner's whole home), so access to
+// one site can be handed off — to a client, a webmaster, a deploy script —
+// without exposing every other domain the owner has. Returns the account
+// and its one-time plaintext password.
+func (d *Domains) createDefaultFTP(ctx context.Context, owner *store.User, dom *store.Domain) (*store.FTPAccount, string, error) {
+	username, err := d.uniqueFTPUsername(ctx, dom.Domain)
+	if err != nil {
+		return nil, "", fmt.Errorf("pick ftp username: %w", err)
+	}
+	password, err := RandomPassword()
+	if err != nil {
+		return nil, "", fmt.Errorf("generate password: %w", err)
+	}
+	acct, err := d.FTP.CreateScoped(ctx, owner, username, password, dom.DocumentRoot)
+	if err != nil {
+		return nil, "", err
+	}
+	return acct, password, nil
+}
+
+// sanitizeFTPUsername turns a domain name into a valid FTP/system username
+// (see ValidUsername: lowercase letters/digits/underscore, must start with a
+// letter, 3-30 chars) by replacing every other character with '_' and
+// leaving room for uniqueFTPUsername to append a numeric suffix.
+func sanitizeFTPUsername(domain string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(domain) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	s := strings.Trim(b.String(), "_")
+	if s == "" {
+		s = "site"
+	}
+	if s[0] < 'a' || s[0] > 'z' {
+		s = "f" + s
+	}
+	const maxBase = 24 // leaves room for a numeric collision suffix, capped at 30 total (ValidUsername)
+	if len(s) > maxBase {
+		s = strings.TrimRight(s[:maxBase], "_")
+	}
+	for len(s) < 3 {
+		s += "0"
+	}
+	return s
+}
+
+// uniqueFTPUsername finds a free FTP/system username derived from domain,
+// appending a numeric suffix on collision — FTP usernames are unique across
+// the whole panel (they're also real system usernames), not just per owner.
+func (d *Domains) uniqueFTPUsername(ctx context.Context, domain string) (string, error) {
+	base := sanitizeFTPUsername(domain)
+	if _, err := d.Store.GetFTPAccountByUsername(ctx, base); errors.Is(err, store.ErrNotFound) {
+		return base, nil
+	} else if err != nil {
+		return "", err
+	}
+	for i := 2; i <= 50; i++ {
+		suffix := fmt.Sprintf("%d", i)
+		candidate := base
+		if maxLen := 30 - len(suffix); len(candidate) > maxLen {
+			candidate = candidate[:maxLen]
+		}
+		candidate += suffix
+		if _, err := d.Store.GetFTPAccountByUsername(ctx, candidate); errors.Is(err, store.ErrNotFound) {
+			return candidate, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", errors.New("could not find a free ftp username")
 }
 
 // createDefaultZone seeds a new domain with a "local" DNS zone and the usual

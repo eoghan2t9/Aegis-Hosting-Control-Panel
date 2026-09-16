@@ -97,8 +97,28 @@ function openCreate(phpVersions, webServers) {
         ...(vals.rel_root && vals.rel_root.trim() ? { rel_root: vals.rel_root.trim() } : {}),
         ...(uid ? { user_id: uid } : {}),
       });
-      toast(`Domain ${created.domain} is live`);
-      refresh();
+      toast(`Domain ${created.domain.domain} is live`);
+      if (created.ftp) {
+        const done = document.createElement("button");
+        done.className = "btn btn-primary";
+        done.textContent = "Done";
+        const m = modal({
+          title: "FTP account created — copy the password now",
+          wide: true,
+          body: `<div>
+            <p class="small muted">A dedicated FTP account was created for this domain, chrooted to its document root (${esc(created.ftp.home)}). This password is shown once — Aegis only keeps a hash of it.</p>
+            <dl class="kv" style="grid-template-columns:auto 1fr;margin-bottom:10px">
+              <dt>Username</dt><dd class="mono">${esc(created.ftp.username)}</dd>
+            </dl>
+            <div class="creds-box mono" style="word-break:break-all;user-select:all">${esc(created.ftp.password)}</div>
+          </div>`,
+          actions: [done],
+          onClose: refresh,
+        });
+        done.onclick = () => m.close();
+      } else {
+        refresh();
+      }
     } catch (ex) { toast(ex.message, "err"); }
   });
 }

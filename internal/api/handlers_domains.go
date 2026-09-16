@@ -76,7 +76,7 @@ func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "only admins can create domains for other users")
 		return
 	}
-	dom, err := s.Domains.Create(r.Context(), owner, req.Domain, svc.CreateOptions{
+	dom, ftp, err := s.Domains.Create(r.Context(), owner, req.Domain, svc.CreateOptions{
 		PHPVersion: req.PHPVersion,
 		WebServer:  req.WebServer,
 		RelPath:    req.RelRoot,
@@ -86,7 +86,16 @@ func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "domain.create", dom.Domain, "user="+owner.Username)
-	writeJSON(w, http.StatusCreated, dom)
+	resp := map[string]interface{}{"domain": dom}
+	if ftp != nil {
+		// One-time: the plaintext password only ever exists in this response.
+		resp["ftp"] = map[string]interface{}{
+			"username": ftp.Account.Username,
+			"password": ftp.Password,
+			"home":     ftp.Account.HomeDir,
+		}
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleDomainsGet(w http.ResponseWriter, r *http.Request) {
