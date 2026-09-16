@@ -2,11 +2,16 @@ package svc
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -377,13 +382,32 @@ func truncate(s string, n int) string {
 }
 
 // GoTLSCert loads the certificate for a hostname from the registered routes
-// (used by the SNI listener). Results are cached.
+// (used by the SNI listener). A known route with no real certificate yet
+// (SSLEnabled false, or a configured one that fails to load) gets a
+// lazily-generated self-signed fallback instead of an error — without this,
+// tls.Config.GetCertificate returning an error makes Go send a raw
+// "internal_error" TLS alert (surfaces in Chrome as
+// ERR_SSL_VERSION_OR_CIPHER_MISMATCH) instead of completing the handshake,
+// which is exactly what generateCaddy's "tls internal" already avoids for
+// the same no-SSL-yet case (see webserver.go). A self-signed cert at least
+// lets the connection complete with a normal, clickable "not private"
+// warning — important now that browsers and proxies (Cloudflare, HSTS)
+// increasingly attempt HTTPS by default even for a plain-HTTP-only site.
+// An entirely unknown hostname (not one of our routes at all — scanner
+// traffic, mostly) still errors, so this can't be used to force unbounded
+// certificate generation.
 func (w *WebServer) GoTLSCert(host string) (*tls.Certificate, error) {
-	route, ok := w.GoRoutes()[strings.ToLower(host)]
-	if !ok || !route.SSL {
+	host = strings.ToLower(host)
+	route, ok := w.GoRoutes()[host]
+	if !ok {
 		return nil, fmt.Errorf("no tls route for %s", host)
 	}
-	return loadCert(route.Cert, route.Key)
+	if route.SSL {
+		if cert, err := loadCert(route.Cert, route.Key); err == nil {
+			return cert, nil
+		}
+	}
+	return w.selfSignedFallback(host)
 }
 
 func loadCert(certFile, keyFile string) (*tls.Certificate, error) {
@@ -392,4 +416,53 @@ func loadCert(certFile, keyFile string) (*tls.Certificate, error) {
 		return nil, err
 	}
 	return &cert, nil
+}
+
+// selfSignedFallback returns a self-signed certificate for host, generating
+// and caching it on first use (see WebServer.fallbackCerts).
+func (w *WebServer) selfSignedFallback(host string) (*tls.Certificate, error) {
+	w.mu.Lock()
+	if cert, ok := w.fallbackCerts[host]; ok {
+		w.mu.Unlock()
+		return cert, nil
+	}
+	w.mu.Unlock()
+
+	cert, err := generateSelfSignedCert(host)
+	if err != nil {
+		return nil, fmt.Errorf("generate fallback cert for %s: %w", host, err)
+	}
+
+	w.mu.Lock()
+	if w.fallbackCerts == nil {
+		w.fallbackCerts = map[string]*tls.Certificate{}
+	}
+	w.fallbackCerts[host] = cert
+	w.mu.Unlock()
+	return cert, nil
+}
+
+func generateSelfSignedCert(host string) (*tls.Certificate, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: host, Organization: []string{"Aegis (self-signed fallback)"}},
+		DNSNames:     []string{host},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().AddDate(10, 0, 0),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
