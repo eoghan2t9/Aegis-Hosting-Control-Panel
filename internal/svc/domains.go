@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,10 +20,11 @@ type Domains struct {
 	Store *store.Store
 	Web   *WebServer
 	PHP   *PHP
+	DNS   *DNS
 }
 
-func NewDomains(cfg *config.Config, st *store.Store, web *WebServer, php *PHP) *Domains {
-	return &Domains{Cfg: cfg, Store: st, Web: web, PHP: php}
+func NewDomains(cfg *config.Config, st *store.Store, web *WebServer, php *PHP, dns *DNS) *Domains {
+	return &Domains{Cfg: cfg, Store: st, Web: web, PHP: php, DNS: dns}
 }
 
 // CreateOptions configures a new domain.
@@ -194,7 +196,47 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 		return nil, err
 	}
 
+	// Auto-provision a DNS zone with default records, mirroring the manual
+	// "Add zone" flow (handleZonesCreate). Best-effort: a domain is fully
+	// usable without DNS (an admin can point records at it externally, or
+	// add a zone later from the DNS tab), so a failure here doesn't roll
+	// back the domain the way a PHP/web-config failure does above.
+	if d.DNS != nil && (pkg == nil || pkg.AllowDNS) {
+		if err := d.createDefaultZone(ctx, dom); err != nil {
+			slog.Warn("dns: auto zone-create failed", "domain", dom.Domain, "err", err)
+		}
+	}
+
 	return dom, nil
+}
+
+// createDefaultZone seeds a new domain with a "local" DNS zone and the usual
+// starter records an admin would otherwise add by hand from the DNS tab: an
+// apex A record at the server's primary IP, a "www" CNAME back to the apex,
+// an MX record so mail addressed to the domain lands on this server, and an
+// SPF TXT authorizing that same MX. The SPF content matches what
+// Mail.EnableDomain publishes (see mail.go) so later enabling mail just adds
+// DKIM/DMARC alongside it instead of conflicting.
+func (d *Domains) createDefaultZone(ctx context.Context, dom *store.Domain) error {
+	zone := &store.DNSZone{DomainID: dom.ID, Provider: "local"}
+	if err := d.Store.CreateZone(ctx, zone); err != nil {
+		return fmt.Errorf("create zone: %w", err)
+	}
+	if ip := DetectPrimaryIP(); ip != "" {
+		records := []*store.DNSRecord{
+			{ZoneID: zone.ID, Name: "@", Type: store.RecordA, TTL: 3600, Content: ip},
+			{ZoneID: zone.ID, Name: "www", Type: store.RecordCNAME, TTL: 3600, Content: dom.Domain},
+			{ZoneID: zone.ID, Name: "@", Type: store.RecordMX, TTL: 3600, Priority: 10, Content: dom.Domain},
+			{ZoneID: zone.ID, Name: "@", Type: store.RecordTXT, TTL: 3600, Content: "v=spf1 mx ~all"},
+		}
+		for _, rec := range records {
+			if err := ValidateRecord(rec); err == nil {
+				_ = d.Store.CreateRecord(ctx, rec)
+			}
+		}
+	}
+	_, err := d.DNS.Sync(ctx, zone.ID)
+	return err
 }
 
 // Apply re-provisions the php pool and web config for an existing domain

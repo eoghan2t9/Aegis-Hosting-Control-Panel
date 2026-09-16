@@ -69,38 +69,8 @@ func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
 		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics, Docker: docker, IPs: ips,
-		primaryIPv4: detectPrimaryIP(),
+		primaryIPv4: svc.DetectPrimaryIP(),
 	}
-}
-
-// detectPrimaryIP finds the server's primary non-loopback IPv4 address.
-func detectPrimaryIP() string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			var ip net.IP
-			switch v := a.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
-				return ip.String()
-			}
-		}
-	}
-	return ""
 }
 
 // ctxKey is a private context key type.

@@ -14,7 +14,7 @@ func newTestDomains(t *testing.T) (*Domains, *store.User) {
 	t.Helper()
 	home := t.TempDir()
 	cfg := &config.Config{HomeRoot: home}
-	d := NewDomains(cfg, nil, nil, nil)
+	d := NewDomains(cfg, nil, nil, nil, nil)
 	u := &store.User{Username: "alice", HomeDir: home}
 	return d, u
 }
