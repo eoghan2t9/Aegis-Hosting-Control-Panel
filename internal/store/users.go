@@ -282,7 +282,9 @@ type PackageUsage struct {
 
 func (s *Store) PackageUsage(ctx context.Context, userID int64) (PackageUsage, error) {
 	var u PackageUsage
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM domains WHERE user_id = ?", userID).Scan(&u.Domains); err != nil {
+	// Auto-created "webftp.<domain>" proxy rows (see svc.Domains.createWebftpDomain)
+	// are an implementation detail, not a site the plan should charge for.
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM domains WHERE user_id = ? AND domain NOT LIKE 'webftp.%'", userID).Scan(&u.Domains); err != nil {
 		return u, err
 	}
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM databases WHERE user_id = ?", userID).Scan(&u.Databases); err != nil {

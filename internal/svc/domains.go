@@ -34,6 +34,10 @@ func NewDomains(cfg *config.Config, st *store.Store, web *WebServer, php *PHP, d
 type ProvisionedFTP struct {
 	Account  *store.FTPAccount
 	Password string
+	// WebFTPURL is set only when a "webftp.<domain>" browser client was also
+	// auto-created for this account (see createWebftpDomain) — empty when
+	// that step was skipped or failed.
+	WebFTPURL string
 }
 
 // CreateOptions configures a new domain.
@@ -229,10 +233,78 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 			slog.Warn("ftp: auto account-create failed", "domain", dom.Domain, "err", err)
 		} else {
 			ftpResult = &ProvisionedFTP{Account: acct, Password: password}
+			// Auto-provision a "webftp.<domain>" vhost giving browser access
+			// to that same account — best-effort and only attempted once the
+			// FTP account it depends on actually exists.
+			if err := d.createWebftpDomain(ctx, user, dom); err != nil {
+				slog.Warn("webftp: auto subdomain-create failed", "domain", dom.Domain, "err", err)
+			} else {
+				ftpResult.WebFTPURL = "http://" + WebftpHostname(dom.Domain) + "/"
+			}
 		}
 	}
 
 	return dom, ftpResult, nil
+}
+
+// WebftpHostname returns the hostname of a domain's auto-created web-based
+// FTP client (see createWebftpDomain) — a package-level helper so the API
+// layer's domain-list filter (hiding this system-generated row from the
+// owner-facing list) and PackageUsage's quota count (excluding it) can both
+// recognize it by the same convention without a schema flag.
+func WebftpHostname(domain string) string { return "webftp." + domain }
+
+// createWebftpDomain provisions a hidden vhost at "webftp.<domain>" that
+// reverse-proxies every request to the shared WebFTPAddr server (started
+// once at boot — see cmd/aegis/main.go and svc.WebFTP), giving browser-based
+// access to the FTP account createDefaultFTP just created. It's a real
+// store.Domain row — the only routing mechanism in this codebase proven to
+// work across nginx/apache/caddy/the native Go server (svc.Docker uses the
+// identical ProxyTarget trick to attach a container to a domain) — but it's
+// recognized as system-generated purely by its "webftp." name prefix, not a
+// schema flag, so it's hidden from handleDomainsList and PackageUsage's
+// domain-quota count.
+func (d *Domains) createWebftpDomain(ctx context.Context, owner *store.User, dom *store.Domain) error {
+	name := WebftpHostname(dom.Domain)
+	if _, err := d.Store.GetDomainByName(ctx, name); err == nil {
+		return nil // already provisioned (e.g. re-running this step)
+	}
+	// Its DocumentRoot is never served (ProxyTarget always wins) — just a
+	// harmless placeholder directory kept for bookkeeping consistency with
+	// every other domain row.
+	root := filepath.Join(filepath.Dir(dom.DocumentRoot), ".webftp")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return fmt.Errorf("create webftp placeholder dir: %w", err)
+	}
+	proxy := &store.Domain{
+		UserID:       owner.ID,
+		Domain:       name,
+		DocumentRoot: root,
+		WebServer:    dom.WebServer,
+		ProxyTarget:  WebFTPAddr,
+		SSLAutoRenew: true,
+	}
+	if err := d.Store.CreateDomain(ctx, proxy); err != nil {
+		return fmt.Errorf("create webftp domain row: %w", err)
+	}
+	if err := d.Web.Apply(proxy, nil, owner.Username); err != nil {
+		_ = d.Store.DeleteDomain(ctx, proxy.ID)
+		return fmt.Errorf("apply webftp vhost: %w", err)
+	}
+	// Add the "webftp" A record alongside the domain's existing DNS zone
+	// (not a separate zone) — best-effort, same as createDefaultZone.
+	if zone, err := d.Store.GetZoneByDomain(ctx, dom.ID); err == nil {
+		if ip := DetectPrimaryIP(); ip != "" {
+			rec := &store.DNSRecord{ZoneID: zone.ID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip}
+			if verr := ValidateRecord(rec); verr == nil {
+				_ = d.Store.CreateRecord(ctx, rec)
+			}
+			if d.DNS != nil {
+				_, _ = d.DNS.Sync(ctx, zone.ID)
+			}
+		}
+	}
+	return nil
 }
 
 // createDefaultFTP provisions a dedicated FTP account chrooted directly to
@@ -362,7 +434,11 @@ func (d *Domains) Apply(ctx context.Context, domainID int64) error {
 }
 
 // Delete removes a domain's web config and php pool. Files on disk are kept
-// (like cPanel); the caller decides whether to archive them first.
+// (like cPanel); the caller decides whether to archive them first. Any
+// auto-created webftp vhost and dedicated FTP account for this domain (see
+// createWebftpDomain, createDefaultFTP) are torn down too, best-effort —
+// otherwise they'd dangle: a live login still chrooted into a document root
+// that no longer belongs to any domain.
 func (d *Domains) Delete(ctx context.Context, domainID int64) error {
 	dom, err := d.Store.GetDomain(ctx, domainID)
 	if err != nil {
@@ -370,6 +446,19 @@ func (d *Domains) Delete(ctx context.Context, domainID int64) error {
 	}
 	_ = d.Web.Remove(dom)
 	_ = d.PHP.RemovePool(dom.Domain, dom.PHPVersion)
+	if wf, err := d.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err == nil {
+		_ = d.Web.Remove(wf)
+		_ = d.Store.DeleteDomain(ctx, wf.ID)
+	}
+	if d.FTP != nil {
+		if accts, err := d.Store.ListFTPAccounts(ctx, dom.UserID); err == nil {
+			for _, a := range accts {
+				if a.HomeDir == dom.DocumentRoot {
+					_ = d.FTP.Delete(ctx, a)
+				}
+			}
+		}
+	}
 	return d.Store.DeleteDomain(ctx, domainID)
 }
 
