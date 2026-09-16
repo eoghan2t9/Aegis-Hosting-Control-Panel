@@ -134,7 +134,16 @@ func (s *Server) handleTuningReport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"tuned": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	// The embedded *TuningReport's fields are promoted to the top level of
+	// the JSON object (no name collision with "tuned"), so this keeps the
+	// existing flat shape (tuning.generated_at, tuning.php_fpm, ...) while
+	// finally setting the tuned flag the Runtime page's "do we have a
+	// report yet" check (web/js/views/runtime.js) actually reads. Without
+	// it, a real report on disk still rendered as "No tuning report yet".
+	writeJSON(w, http.StatusOK, struct {
+		*svc.TuningReport
+		Tuned bool `json:"tuned"`
+	}{report, true})
 }
 
 func (s *Server) handleTuningInspect(w http.ResponseWriter, r *http.Request) {
