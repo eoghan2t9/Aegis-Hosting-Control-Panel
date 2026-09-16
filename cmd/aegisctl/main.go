@@ -546,13 +546,20 @@ func cmdSSL(ctx context.Context, args []string) error {
 		return err
 	}
 	challenge := "http"
-	includeWebftp := false
+	var includeWebftp *bool // nil: preserve whatever coverage already exists
 	for i := 2; i < len(args); i++ {
-		if args[i] == "--challenge" && i+1 < len(args) {
-			challenge = args[i+1]
-			i++
-		} else if args[i] == "--webftp" {
-			includeWebftp = true
+		switch args[i] {
+		case "--challenge":
+			if i+1 < len(args) {
+				challenge = args[i+1]
+				i++
+			}
+		case "--webftp":
+			t := true
+			includeWebftp = &t
+		case "--no-webftp":
+			f := false
+			includeWebftp = &f
 		}
 	}
 	order, err := ss.ssl.Issue(ctx, dom.ID, challenge, includeWebftp)

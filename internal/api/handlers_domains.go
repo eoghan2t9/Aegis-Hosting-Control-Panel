@@ -141,22 +141,29 @@ func (s *Server) handleDomainsGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	webftpURL := ""
+	webftpSSLCovered := false
 	if wf, err := s.Store.GetDomainByName(r.Context(), svc.WebftpHostname(dom.Domain)); err == nil {
 		scheme := "http"
 		if wf.SSLEnabled {
 			scheme = "https"
 		}
 		webftpURL = scheme + "://" + wf.Domain + "/"
+		// Covered right now specifically means "by the domain's current
+		// live certificate" — not just "was SSLEnabled at some point" (see
+		// ssl.go's stale-coverage clearing: a later issuance that didn't
+		// include webftp resets this, so it can't go stale here either).
+		webftpSSLCovered = wf.SSLEnabled && dom.SSLEnabled && wf.SSLCertPath == dom.SSLCertPath && wf.SSLCertPath != ""
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"domain":     dom,
-		"aliases":    aliases,
-		"zone":       zone,
-		"ssl":        orders,
-		"user":       publicUser(user),
-		"ftp":        ftpAcct,
-		"webftp_url": webftpURL,
+		"domain":             dom,
+		"aliases":            aliases,
+		"zone":               zone,
+		"ssl":                orders,
+		"user":               publicUser(user),
+		"ftp":                ftpAcct,
+		"webftp_url":         webftpURL,
+		"webftp_ssl_covered": webftpSSLCovered,
 	})
 }
 
