@@ -21,8 +21,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// GoAccessLogDir is where the native Go web server writes per-domain access
+// and error logs — the "go" counterpart to nginx's /var/log/nginx and
+// caddy's /var/log/caddy, read back by the panel's log viewer
+// (internal/api/handlers_logs.go). Unlike those, nothing external manages
+// this directory, so goLogAppend creates it lazily on first write.
+const GoAccessLogDir = "/var/log/aegis"
 
 // GoHandler returns the http.Handler that serves domains routed to the native
 // Go web server. It resolves the host from the request, serves static files
@@ -36,8 +44,75 @@ func (w *WebServer) GoHandler() http.Handler {
 			http.NotFound(rw, r)
 			return
 		}
-		w.serveGoRoute(rw, r, route)
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: rw, status: http.StatusOK}
+		w.serveGoRoute(rec, r, route)
+		logAccess(route.Domain, r, rec.status, rec.size, time.Since(start))
+		if phpErr := rec.Header().Get("X-Aegis-Php-Error"); rec.status >= 500 || phpErr != "" {
+			msg := phpErr
+			if msg == "" {
+				msg = fmt.Sprintf("%s %s -> %d", r.Method, r.URL.RequestURI(), rec.status)
+			}
+			logError(route.Domain, msg)
+		}
 	})
+}
+
+// statusRecorder wraps an http.ResponseWriter to capture the status code and
+// byte count actually written, for access logging — serveGoRoute's many exit
+// paths (http.Error, http.Redirect, http.ServeFile, http.NotFound, the raw
+// WriteHeader+Write for PHP/proxy responses) all go through the standard
+// ResponseWriter interface, so this needs no special-casing per path.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	size   int64
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(b)
+	r.size += int64(n)
+	return n, err
+}
+
+var goLogDirOnce sync.Once
+
+// logAccess appends one combined-log-format-style line to the domain's
+// access log. domain empty (shouldn't happen — GoRoutes are always keyed by
+// a real hostname) is a no-op rather than logging to a bare ".access.log".
+func logAccess(domain string, r *http.Request, status int, size int64, dur time.Duration) {
+	if domain == "" {
+		return
+	}
+	line := fmt.Sprintf("%s - - [%s] %q %d %d %q %q %.3f\n",
+		remoteIP(r), time.Now().Format("02/Jan/2006:15:04:05 -0700"),
+		fmt.Sprintf("%s %s %s", r.Method, r.URL.RequestURI(), r.Proto),
+		status, size, r.Referer(), r.UserAgent(), dur.Seconds())
+	goLogAppend(domain+".access.log", line)
+}
+
+// logError appends one line to the domain's error log — used for 5xx
+// responses and any PHP stderr output surfaced via X-Aegis-Php-Error.
+func logError(domain, msg string) {
+	if domain == "" {
+		return
+	}
+	goLogAppend(domain+".error.log", fmt.Sprintf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), msg))
+}
+
+func goLogAppend(name, line string) {
+	goLogDirOnce.Do(func() { _ = os.MkdirAll(GoAccessLogDir, 0755) })
+	f, err := os.OpenFile(filepath.Join(GoAccessLogDir, name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(line)
 }
 
 // StartGo starts the native Go site server's HTTP/HTTPS listeners, or does
@@ -248,7 +323,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		scriptName = "/" + filepath.ToSlash(rel2)
 	}
 
-	status, body, stderr, err := w.fcgiExec(route.Socket, r, scriptFile, scriptName)
+	status, headers, body, stderr, err := w.fcgiExec(route.Socket, r, scriptFile, scriptName)
 	if err != nil {
 		if stderr != "" {
 			// Surface php errors to the server log via headers in dev mode.
@@ -256,6 +331,11 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		}
 		http.Error(rw, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
+	}
+	for k, vals := range headers {
+		for _, v := range vals {
+			rw.Header().Add(k, v)
+		}
 	}
 	if stderr != "" {
 		rw.Header().Set("X-Aegis-Php-Error", truncate(stderr, 500))
@@ -323,7 +403,7 @@ func (w *WebServer) htGate(rw http.ResponseWriter, r *http.Request, upath string
 }
 
 // fcgiExec builds FastCGI params from the HTTP request and calls php-fpm.
-func (w *WebServer) fcgiExec(socket string, r *http.Request, scriptFile, scriptName string) (int, []byte, string, error) {
+func (w *WebServer) fcgiExec(socket string, r *http.Request, scriptFile, scriptName string) (int, http.Header, []byte, string, error) {
 	var params [][2]string
 	add := func(k, v string) { params = append(params, [2]string{k, v}) }
 	host := strings.Split(r.Host, ":")[0]
@@ -361,9 +441,10 @@ func (w *WebServer) fcgiExec(socket string, r *http.Request, scriptFile, scriptN
 	body, _ := io.ReadAll(r.Body)
 	res, err := fcgiRequest(socket, 60*time.Second, params, body)
 	if err != nil {
-		return 0, nil, "", err
+		return 0, nil, nil, "", err
 	}
-	return res.Status, res.Stdout, string(res.Stderr), nil
+	status, headers, respBody := parseCGIResponse(res.Stdout, res.Status)
+	return status, headers, respBody, string(res.Stderr), nil
 }
 
 func remoteIP(r *http.Request) string {
