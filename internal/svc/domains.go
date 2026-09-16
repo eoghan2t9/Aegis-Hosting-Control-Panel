@@ -295,13 +295,49 @@ func (d *Domains) createWebftpDomain(ctx context.Context, owner *store.User, dom
 	// (not a separate zone) — best-effort, same as createDefaultZone.
 	if zone, err := d.Store.GetZoneByDomain(ctx, dom.ID); err == nil {
 		if ip := DetectPrimaryIP(); ip != "" {
-			rec := &store.DNSRecord{ZoneID: zone.ID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip}
-			if verr := ValidateRecord(rec); verr == nil {
-				_ = d.Store.CreateRecord(ctx, rec)
-			}
+			_, _ = d.addRecordIfMissing(ctx, zone.ID, &store.DNSRecord{ZoneID: zone.ID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip})
 			if d.DNS != nil {
 				_, _ = d.DNS.Sync(ctx, zone.ID)
 			}
+		}
+	}
+	return nil
+}
+
+// addRecordIfMissing creates rec unless a record with the same name+type
+// already exists in the zone — used by createWebftpDomain and
+// PopulateDefaultDNS so re-running either is a safe no-op. Returns whether
+// it actually created something.
+func (d *Domains) addRecordIfMissing(ctx context.Context, zoneID int64, rec *store.DNSRecord) (bool, error) {
+	existing, err := d.Store.ListRecords(ctx, zoneID)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range existing {
+		if strings.EqualFold(r.Name, rec.Name) && r.Type == rec.Type {
+			return false, nil
+		}
+	}
+	if err := ValidateRecord(rec); err != nil {
+		return false, err
+	}
+	if err := d.Store.CreateRecord(ctx, rec); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// domainFTPAccount finds the dedicated FTP account for dom, matched by home
+// dir (same lookup handleDomainsGet and Domains.Delete's cleanup use), or
+// nil if none exists.
+func (d *Domains) domainFTPAccount(ctx context.Context, dom *store.Domain) *store.FTPAccount {
+	accts, err := d.Store.ListFTPAccounts(ctx, dom.UserID)
+	if err != nil {
+		return nil
+	}
+	for _, a := range accts {
+		if a.HomeDir == dom.DocumentRoot {
+			return a
 		}
 	}
 	return nil
@@ -385,62 +421,131 @@ func (d *Domains) uniqueFTPUsername(ctx context.Context, domain string) (string,
 }
 
 // createDefaultZone seeds a new domain with a "local" DNS zone and the usual
-// starter records an admin would otherwise add by hand from the DNS tab: an
-// apex A record at the server's primary IP, a "www" CNAME back to the apex,
-// an MX record so mail addressed to the domain lands on this server, and an
-// SPF TXT authorizing that same MX. The SPF content matches what
-// Mail.EnableDomain publishes (see mail.go) so later enabling mail just adds
-// DKIM/DMARC alongside it instead of conflicting.
+// starter records an admin would otherwise add by hand from the DNS tab.
 func (d *Domains) createDefaultZone(ctx context.Context, dom *store.Domain) error {
 	zone := &store.DNSZone{DomainID: dom.ID, Provider: "local"}
 	if err := d.Store.CreateZone(ctx, zone); err != nil {
 		return fmt.Errorf("create zone: %w", err)
 	}
-	if ip := DetectPrimaryIP(); ip != "" {
-		records := []*store.DNSRecord{
-			{ZoneID: zone.ID, Name: "@", Type: store.RecordA, TTL: 3600, Content: ip},
-			{ZoneID: zone.ID, Name: "www", Type: store.RecordCNAME, TTL: 3600, Content: dom.Domain},
-			{ZoneID: zone.ID, Name: "@", Type: store.RecordMX, TTL: 3600, Priority: 10, Content: dom.Domain},
-			{ZoneID: zone.ID, Name: "@", Type: store.RecordTXT, TTL: 3600, Content: "v=spf1 mx ~all"},
-		}
-		for _, rec := range records {
-			if err := ValidateRecord(rec); err == nil {
-				_ = d.Store.CreateRecord(ctx, rec)
-			}
-		}
+	if _, err := d.populateDefaultRecords(ctx, dom, zone.ID); err != nil {
+		return err
 	}
 	_, err := d.DNS.Sync(ctx, zone.ID)
 	return err
 }
 
-// EnsureDefaultZone backfills a "local" DNS zone with the same default
-// records as domain creation (createDefaultZone) for an existing domain
-// that doesn't have one yet — used by the DNS page's "Populate DNS" button
-// to catch up domains created before DNS auto-provisioning existed, or ones
-// whose zone was deleted. Returns (false, nil) — not an error — when a zone
-// already exists, so callers can report "skipped" vs "created".
-func (d *Domains) EnsureDefaultZone(ctx context.Context, domainID int64) (bool, error) {
+// populateDefaultRecords adds whichever of the standard starter records —
+// apex A at the server's primary IP, a "www" CNAME back to the apex, an
+// "ftp" CNAME back to the apex (real FTP access works server-wide, not
+// per-vhost, so this is meaningful regardless of whether a dedicated
+// per-domain FTP account exists), an apex MX so mail addressed to the
+// domain lands on this server, and an SPF TXT authorizing that same MX
+// (content matches what Mail.EnableDomain publishes — see mail.go — so
+// enabling mail later just adds DKIM/DMARC alongside it) — are missing from
+// zoneID, leaving everything already there
+// untouched: a zone from the older single-A-record "Add zone" flow gets the
+// other three added, one already fully populated gets nothing duplicated,
+// and a customer's own custom TXT records are never mistaken for SPF (only
+// one starting "v=spf1" counts). Returns how many records were added.
+func (d *Domains) populateDefaultRecords(ctx context.Context, dom *store.Domain, zoneID int64) (int, error) {
+	ip := DetectPrimaryIP()
+	if ip == "" {
+		return 0, nil
+	}
+	existing, err := d.Store.ListRecords(ctx, zoneID)
+	if err != nil {
+		return 0, err
+	}
+	hasType := func(name, typ string) bool {
+		for _, r := range existing {
+			if strings.EqualFold(r.Name, name) && r.Type == typ {
+				return true
+			}
+		}
+		return false
+	}
+	hasSPF := false
+	for _, r := range existing {
+		if strings.EqualFold(r.Name, "@") && r.Type == store.RecordTXT && strings.HasPrefix(strings.ToLower(r.Content), "v=spf1") {
+			hasSPF = true
+			break
+		}
+	}
+	var want []*store.DNSRecord
+	if !hasType("@", store.RecordA) {
+		want = append(want, &store.DNSRecord{ZoneID: zoneID, Name: "@", Type: store.RecordA, TTL: 3600, Content: ip})
+	}
+	if !hasType("www", store.RecordCNAME) {
+		want = append(want, &store.DNSRecord{ZoneID: zoneID, Name: "www", Type: store.RecordCNAME, TTL: 3600, Content: dom.Domain})
+	}
+	if !hasType("ftp", store.RecordCNAME) && !hasType("ftp", store.RecordA) {
+		want = append(want, &store.DNSRecord{ZoneID: zoneID, Name: "ftp", Type: store.RecordCNAME, TTL: 3600, Content: dom.Domain})
+	}
+	if !hasType("@", store.RecordMX) {
+		want = append(want, &store.DNSRecord{ZoneID: zoneID, Name: "@", Type: store.RecordMX, TTL: 3600, Priority: 10, Content: dom.Domain})
+	}
+	if !hasSPF {
+		want = append(want, &store.DNSRecord{ZoneID: zoneID, Name: "@", Type: store.RecordTXT, TTL: 3600, Content: "v=spf1 mx ~all"})
+	}
+	added := 0
+	for _, rec := range want {
+		if err := ValidateRecord(rec); err != nil {
+			continue
+		}
+		if err := d.Store.CreateRecord(ctx, rec); err == nil {
+			added++
+		}
+	}
+	return added, nil
+}
+
+// EnsureDefaultZone backfills the standard starter records (see
+// populateDefaultRecords) for domainID — creating a "local" zone first if
+// it has none at all, or just adding whichever records are missing from an
+// existing one. Used by the DNS page's "Populate DNS" button, both for
+// domains created before DNS auto-provisioning existed and for zones added
+// through the older single-A-record manual flow. Returns how many records
+// were added (0 means nothing was missing, not an error).
+func (d *Domains) EnsureDefaultZone(ctx context.Context, domainID int64) (int, error) {
 	if d.DNS == nil {
-		return false, errors.New("dns is not configured")
+		return 0, errors.New("dns is not configured")
 	}
 	dom, err := d.Store.GetDomain(ctx, domainID)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	if _, err := d.Store.GetZoneByDomain(ctx, domainID); err == nil {
-		return false, nil
+	zone, err := d.Store.GetZoneByDomain(ctx, domainID)
+	if err != nil {
+		zone = &store.DNSZone{DomainID: domainID, Provider: "local"}
+		if err := d.Store.CreateZone(ctx, zone); err != nil {
+			return 0, fmt.Errorf("create zone: %w", err)
+		}
 	}
-	if err := d.createDefaultZone(ctx, dom); err != nil {
-		return false, err
+	added, err := d.populateDefaultRecords(ctx, dom, zone.ID)
+	if err != nil {
+		return added, err
 	}
-	return true, nil
+	if added > 0 {
+		_, _ = d.DNS.Sync(ctx, zone.ID)
+	}
+	return added, nil
 }
 
 // PopulateDefaultDNS runs EnsureDefaultZone for every domain owned by
 // ownerID (0 = every domain — admin-only bulk backfill), skipping
-// auto-created "webftp.<domain>" rows, domains that already have a zone,
-// and domains whose owner's package disallows DNS (same gate Create uses).
-func (d *Domains) PopulateDefaultDNS(ctx context.Context, ownerID int64) (created, skipped []string, failed map[string]string) {
+// auto-created "webftp.<domain>" rows and domains whose owner's package
+// disallows DNS (same gate Create uses). "updated" covers both a brand-new
+// zone and records added to an existing one.
+// BackfilledFTP is one newly-created FTP account from a PopulateDefaultDNS
+// run — like ProvisionedFTP, the plaintext password only ever exists here,
+// so the caller must surface it immediately or it's gone for good.
+type BackfilledFTP struct {
+	Domain   string
+	Username string
+	Password string
+}
+
+func (d *Domains) PopulateDefaultDNS(ctx context.Context, ownerID int64) (updated, skipped []string, ftpCreated []BackfilledFTP, failed map[string]string) {
 	failed = map[string]string{}
 	doms, err := d.Store.ListDomains(ctx, ownerID)
 	if err != nil {
@@ -451,19 +556,71 @@ func (d *Domains) PopulateDefaultDNS(ctx context.Context, ownerID int64) (create
 		if strings.HasPrefix(dom.Domain, "webftp.") {
 			continue
 		}
-		if owner, err := d.Store.GetUserByID(ctx, dom.UserID); err == nil {
-			if pkg, err := d.Store.GetPackage(ctx, owner.PackageID); err == nil && pkg != nil && !pkg.AllowDNS {
-				skipped = append(skipped, dom.Domain)
-				continue
+		owner, err := d.Store.GetUserByID(ctx, dom.UserID)
+		if err != nil {
+			failed[dom.Domain] = err.Error()
+			continue
+		}
+		pkg, _ := d.Store.GetPackage(ctx, owner.PackageID)
+		if pkg != nil && !pkg.AllowDNS {
+			skipped = append(skipped, dom.Domain)
+			continue
+		}
+
+		changed := false
+		if added, err := d.EnsureDefaultZone(ctx, dom.ID); err != nil {
+			failed[dom.Domain] = err.Error()
+			continue
+		} else if added > 0 {
+			changed = true
+		}
+
+		// Catch this domain up to what a freshly created one gets: a
+		// dedicated FTP account and its webftp vhost, if missing — same
+		// gate and helpers Create uses.
+		if d.FTP != nil && (pkg == nil || pkg.AllowFTP) {
+			acct := d.domainFTPAccount(ctx, dom)
+			if acct == nil {
+				newAcct, password, err := d.createDefaultFTP(ctx, owner, dom)
+				if err != nil {
+					slog.Warn("ftp: backfill failed", "domain", dom.Domain, "err", err)
+				} else {
+					acct = newAcct
+					ftpCreated = append(ftpCreated, BackfilledFTP{Domain: dom.Domain, Username: newAcct.Username, Password: password})
+					changed = true
+				}
+			}
+			if acct != nil {
+				if _, err := d.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err != nil {
+					if err := d.createWebftpDomain(ctx, owner, dom); err != nil {
+						slog.Warn("webftp: backfill failed", "domain", dom.Domain, "err", err)
+					} else {
+						changed = true
+					}
+				}
 			}
 		}
-		ok, err := d.EnsureDefaultZone(ctx, dom.ID)
-		switch {
-		case err != nil:
-			failed[dom.Domain] = err.Error()
-		case ok:
-			created = append(created, dom.Domain)
-		default:
+
+		// "ftp" is added unconditionally by EnsureDefaultZone/
+		// populateDefaultRecords above (real FTP access works server-wide);
+		// "webftp" only once its vhost actually exists, whether it already
+		// did or was just backfilled above.
+		if zone, err := d.Store.GetZoneByDomain(ctx, dom.ID); err == nil {
+			if _, err := d.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err == nil {
+				if ip := DetectPrimaryIP(); ip != "" {
+					if ok, _ := d.addRecordIfMissing(ctx, zone.ID, &store.DNSRecord{ZoneID: zone.ID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip}); ok {
+						changed = true
+						if d.DNS != nil {
+							_, _ = d.DNS.Sync(ctx, zone.ID)
+						}
+					}
+				}
+			}
+		}
+
+		if changed {
+			updated = append(updated, dom.Domain)
+		} else {
 			skipped = append(skipped, dom.Domain)
 		}
 	}

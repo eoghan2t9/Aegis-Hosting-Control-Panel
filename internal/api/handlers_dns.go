@@ -7,21 +7,30 @@ import (
 	"aegis/internal/svc"
 )
 
-// handleDNSPopulate backfills a default DNS zone (see
-// svc.Domains.PopulateDefaultDNS) for every domain missing one — admins
-// cover every domain, everyone else only their own. Used by the DNS page's
-// "Populate DNS" button to catch up domains created before DNS
-// auto-provisioning existed.
+// handleDNSPopulate catches existing domains up to what a freshly created
+// one gets automatically (see svc.Domains.PopulateDefaultDNS): the standard
+// DNS records (creating a zone from scratch, or backfilling whatever a zone
+// from the older single-A-record "Add zone" flow is missing), a dedicated
+// FTP account and its webftp vhost if the domain doesn't have one, and the
+// "ftp"/"webftp" DNS records once those exist. Admins cover every domain,
+// everyone else only their own. Used by the DNS page's "Populate DNS"
+// button.
 func (s *Server) handleDNSPopulate(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	ownerID := u.ID
 	if u.Role == store.RoleAdmin {
 		ownerID = 0
 	}
-	created, skipped, failed := s.Domains.PopulateDefaultDNS(r.Context(), ownerID)
+	updated, skipped, ftpCreated, failed := s.Domains.PopulateDefaultDNS(r.Context(), ownerID)
 	s.audit(r, "dns.populate", "", "")
+	// One-time: any newly-created FTP account's plaintext password only
+	// ever exists in this response.
+	ftp := make([]map[string]string, 0, len(ftpCreated))
+	for _, f := range ftpCreated {
+		ftp = append(ftp, map[string]string{"domain": f.Domain, "username": f.Username, "password": f.Password})
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"created": created, "skipped": skipped, "failed": failed,
+		"updated": updated, "skipped": skipped, "ftp_created": ftp, "failed": failed,
 	})
 }
 
