@@ -229,9 +229,17 @@ func fcgiRequest(addr string, timeout time.Duration, params [][2]string, body []
 		case fcgiStderr:
 			stderr.Write(rec.Content)
 		case fcgiEndRequest:
+			// FCGI_EndRequestBody (spec 1.0 §5.5): appStatus is the first 4
+			// bytes, then a 1-byte protocolStatus and 3 reserved bytes —
+			// not the other way around. Reading [4:8] picked up
+			// protocolStatus+reserved instead of appStatus, so a nonzero
+			// reserved byte (implementation-defined; php-fpm doesn't always
+			// zero it) made a perfectly successful response come back as a
+			// 500 to the client, independent of what the script actually
+			// returned.
 			if len(rec.Content) >= 8 {
-				res.AppStatus = uint32(rec.Content[4])<<24 | uint32(rec.Content[5])<<16 |
-					uint32(rec.Content[6])<<8 | uint32(rec.Content[7])
+				res.AppStatus = uint32(rec.Content[0])<<24 | uint32(rec.Content[1])<<16 |
+					uint32(rec.Content[2])<<8 | uint32(rec.Content[3])
 				if res.AppStatus != 0 {
 					res.Status = 500
 				}
