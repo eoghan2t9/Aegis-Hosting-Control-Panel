@@ -338,7 +338,7 @@ ExecStart=${AEGIS_BIN}
 Environment=AEGIS_LISTEN=127.0.0.1:${AEGIS_PANEL_PORT:-8080}
 Environment=AEGIS_PANEL_BASE=${BASE}
 # Credentials live in root-only env files — never inline here: any local user
-# can read unit properties (incl. Environment=) via `systemctl show`.
+# can read unit properties (incl. Environment=) via \`systemctl show\`.
 EnvironmentFile=/etc/aegis/aegis.env
 EnvironmentFile=-/run/aegis-boot.env
 # The panel manages users/services; it must run as root (see docs/ARCHITECTURE.md).
