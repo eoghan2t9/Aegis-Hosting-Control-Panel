@@ -100,7 +100,7 @@ func wire() (*config.Config, *store.Store, *serviceSet, error) {
 	ss := &serviceSet{
 		cfg: cfg, store: st, cipher: cipher, am: am,
 		php: php, web: web,
-		domains: svc.NewDomains(cfg, st, web, php, dnsSvc),
+		domains: svc.NewDomains(cfg, st, web, php, dnsSvc, ftpSvc),
 		dns:     dnsSvc,
 		ssl:     svc.NewSSL(cfg, st, web, dnsSvc),
 		ftp:     ftpSvc,
@@ -462,11 +462,14 @@ func cmdDomain(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		dom, err := ss.domains.Create(ctx, u, fs.Arg(1), svc.CreateOptions{PHPVersion: *php})
+		dom, ftp, err := ss.domains.Create(ctx, u, fs.Arg(1), svc.CreateOptions{PHPVersion: *php})
 		if err != nil {
 			return err
 		}
 		fmt.Printf("domain %s provisioned for %s (docroot %s)\n", dom.Domain, u.Username, dom.DocumentRoot)
+		if ftp != nil {
+			fmt.Printf("ftp account %s created (password shown once): %s\n", ftp.Account.Username, ftp.Password)
+		}
 		return nil
 	case "list":
 		fs := flag.NewFlagSet("domain list", flag.ExitOnError)
