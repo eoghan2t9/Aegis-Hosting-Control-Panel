@@ -33,11 +33,14 @@ addRoute("/system", {
       tuneBody.innerHTML = `<p class="muted">No tuning report yet. Run an inspection to size php-fpm and the web server to this host.</p>`;
     }
     document.getElementById("btn-tune").onclick = async () => {
-      const ok = await confirmDialog("Re-run the automatic tuning inspection?", { title: "Auto-tune", okText: "Run inspection" });
+      const ok = await confirmDialog(
+        "Re-run the automatic tuning inspection? The new php-fpm worker counts are applied to every domain's pool immediately, and nginx's config is updated and reloaded if it's installed.",
+        { title: "Auto-tune", okText: "Run inspection" });
       if (!ok) return;
       try {
         const data = await api.post("/tuning/apply", { apply_sysctl: false });
-        toast("Tuning report regenerated for " + data.cores + " cores / " + data.ram_mb + " MB");
+        toast("Tuning applied for " + data.cores + " cores / " + data.ram_mb + " MB");
+        (data.warnings || []).forEach((w) => toast(w, "err"));
         refresh();
       } catch (ex) { toast(ex.message, "err"); }
     };

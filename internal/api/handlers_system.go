@@ -168,6 +168,34 @@ func (s *Server) handleTuningApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Push the new settings out to every domain and every installed web
+	// server right away, instead of leaving them in the advisory .optimized
+	// files until something else happens to touch each config (a domain
+	// edit, a reboot). Each Apply* is a no-op when that server isn't
+	// installed, so apache/caddy are "prepped" the moment they're enabled
+	// even on a host that's never run them — the config is already
+	// correctly sized before the very first request hits it. Best-effort
+	// and non-fatal to the request: a problem in one of these shouldn't
+	// hide the report that was already generated and saved successfully —
+	// surfaced as warnings instead.
+	var warnings []string
+	if err := s.Domains.ReapplyAll(r.Context()); err != nil {
+		warnings = append(warnings, "php-fpm: "+err.Error())
+	}
+	if err := s.Tuner.ApplyNginx(report); err != nil {
+		warnings = append(warnings, "nginx: "+err.Error())
+	}
+	if err := s.Tuner.ApplyApache(report); err != nil {
+		warnings = append(warnings, "apache: "+err.Error())
+	}
+	if err := s.Tuner.ApplyCaddy(report); err != nil {
+		warnings = append(warnings, "caddy: "+err.Error())
+	}
+
 	s.audit(r, "tuning.apply", "", "cores="+strconv.Itoa(report.Cores))
-	writeJSON(w, http.StatusOK, report)
+	writeJSON(w, http.StatusOK, struct {
+		*svc.TuningReport
+		Warnings []string `json:"warnings,omitempty"`
+	}{report, warnings})
 }
