@@ -202,7 +202,7 @@ function openDetail(id, onChanged) {
           <button class="btn btn-sm" id="dd-wpcli">Run WP-CLI command</button>
         </div>
         <div style="height:16px"></div>
-        ${sslBlock(dom, id)}`;
+        ${sslBlock(dom, id, !!d.webftp_url)}`;
       document.getElementById("dd-install").onclick = () => appPickerDialog(dom, id, m);
       const logView = document.getElementById("dd-log-view");
       const loadLog = async () => {
@@ -266,7 +266,8 @@ function openDetail(id, onChanged) {
         const btn = document.getElementById("ssl-" + (kind === "self" ? "self" : challenge));
         if (btn) btn.classList.add("btn-busy");
         try {
-          const order = await api.post(kind === "self" ? "/ssl/self-signed" : "/ssl/issue", { domain_id: id, challenge });
+          const includeWebftp = document.getElementById("ssl-webftp")?.checked || false;
+          const order = await api.post(kind === "self" ? "/ssl/self-signed" : "/ssl/issue", { domain_id: id, challenge, include_webftp: includeWebftp });
           toast(order.status === "issued" ? "Certificate issued" : "Certificate order " + order.status);
           m.close(); refresh();
         } catch (ex) { toast(ex.message, "err"); }
@@ -371,17 +372,21 @@ async function wpCliDialog(id) {
   } catch (ex) { toast(ex.message, "err"); }
 }
 
-function sslBlock(dom, id) {
+function sslBlock(dom, id, hasWebftp) {
   const certNote = dom.ssl_enabled
     ? `<p class="small dim" style="margin:8px 0">Certificate active. <a href="#/ssl">View in SSL section →</a></p>`
     : `<p class="small dim" style="margin:8px 0">Issue a Let's Encrypt certificate for ${esc(dom.domain)}. HTTP-01 needs the domain pointing at this server on port 80; DNS-01 uses your Cloudflare provider.</p>`;
+  const webftpNote = hasWebftp
+    ? `<label class="checkline" style="margin:8px 0"><input type="checkbox" id="ssl-webftp"> Also cover webftp.${esc(dom.domain)} in this certificate</label>
+       <p class="small dim" style="margin:0 0 8px">Only check this if webftp.${esc(dom.domain)} already resolves to this server — a certificate covers all its names at once, so if that one fails to validate the whole issuance fails, including ${esc(dom.domain)} itself.</p>`
+    : "";
   return `<div style="border-top:1px solid var(--line);padding-top:14px">
     <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">TLS certificate</b>
     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
       <button class="btn" id="ssl-http">${icon("ssl")} Issue Let's Encrypt (HTTP)</button>
       <button class="btn" id="ssl-dns">Issue Let's Encrypt (DNS-01)</button>
       <button class="btn btn-ghost" id="ssl-self">Self-signed</button>
-    </div>${certNote}</div>`;
+    </div>${webftpNote}${certNote}</div>`;
 }
 
 function mkAction(text, cls, fn) {
