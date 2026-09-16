@@ -170,6 +170,17 @@ function openDetail(id, onChanged) {
             <div style="height:14px"></div>
             <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">DNS zone</b>
             <div style="margin-top:8px">${d.zone ? `<span class="tag tag-teal">zone on ${esc(d.zone.provider)}</span> <button class="btn btn-sm" id="dd-dns">Open DNS</button>` : '<span class="dim small">No DNS zone. Manage it under DNS.</span>'}</div>
+            <div style="height:14px"></div>
+            <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">FTP</b>
+            <div style="margin-top:8px">${d.ftp ? `
+              <dl class="kv" style="grid-template-columns:auto 1fr;font-size:12.5px">
+                <dt>username</dt><dd class="mono">${esc(d.ftp.username)}</dd>
+                <dt>home</dt><dd class="mono small">${esc(d.ftp.home_dir)}</dd>
+                <dt>status</dt><dd>${d.ftp.enabled ? statusTag("active") : statusTag("suspended")}</dd>
+                ${d.webftp_url ? `<dt>web ftp</dt><dd><a href="${esc(d.webftp_url)}" target="_blank" rel="noopener" class="mono small">${esc(d.webftp_url)}</a></dd>` : ""}
+              </dl>
+              <button class="btn btn-sm" id="dd-ftp-pass" style="margin-top:6px">${icon("key")} Reset password</button>
+            ` : '<span class="dim small">No dedicated FTP account for this domain.</span>'}</div>
           </div>
         </div>
         <div style="height:16px"></div>
@@ -241,6 +252,16 @@ function openDetail(id, onChanged) {
       });
       const dnsBtn = document.getElementById("dd-dns");
       if (dnsBtn) dnsBtn.onclick = () => { m.close(); location.hash = "#/dns"; };
+      document.getElementById("dd-ftp-pass")?.addEventListener("click", async () => {
+        const vals = await promptDialog(`Reset password for ${d.ftp.username}`, [
+          { name: "password", label: "New password", type: "password", required: true, help: "Also updates the system account, so FTP and Web FTP login changes immediately." },
+        ]);
+        if (!vals) return;
+        try {
+          await api.post(`/ftp/accounts/${d.ftp.id}/password`, { password: vals.password });
+          toast("FTP password updated");
+        } catch (ex) { toast(ex.message, "err"); }
+      });
       const issueSsl = async (challenge, kind) => {
         const btn = document.getElementById("ssl-" + (kind === "self" ? "self" : challenge));
         if (btn) btn.classList.add("btn-busy");
