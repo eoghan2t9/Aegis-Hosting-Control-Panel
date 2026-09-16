@@ -109,6 +109,7 @@ function openCreate(phpVersions, webServers) {
             <p class="small muted">A dedicated FTP account was created for this domain, chrooted to its document root (${esc(created.ftp.home)}). This password is shown once — Aegis only keeps a hash of it.</p>
             <dl class="kv" style="grid-template-columns:auto 1fr;margin-bottom:10px">
               <dt>Username</dt><dd class="mono">${esc(created.ftp.username)}</dd>
+              ${created.ftp.webftp_url ? `<dt>Web FTP</dt><dd><a href="${esc(created.ftp.webftp_url)}" target="_blank" rel="noopener" class="mono">${esc(created.ftp.webftp_url)}</a></dd>` : ""}
             </dl>
             <div class="creds-box mono" style="word-break:break-all;user-select:all">${esc(created.ftp.password)}</div>
           </div>`,
