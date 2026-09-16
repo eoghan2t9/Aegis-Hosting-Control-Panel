@@ -295,7 +295,7 @@ func (d *Domains) createWebftpDomain(ctx context.Context, owner *store.User, dom
 	// (not a separate zone) — best-effort, same as createDefaultZone.
 	if zone, err := d.Store.GetZoneByDomain(ctx, dom.ID); err == nil {
 		if ip := DetectPrimaryIP(); ip != "" {
-			_, _ = d.addRecordIfMissing(ctx, zone.ID, &store.DNSRecord{ZoneID: zone.ID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip})
+			_, _ = d.ensureWebftpRecord(ctx, zone.ID, ip)
 			if d.DNS != nil {
 				_, _ = d.DNS.Sync(ctx, zone.ID)
 			}
@@ -305,9 +305,8 @@ func (d *Domains) createWebftpDomain(ctx context.Context, owner *store.User, dom
 }
 
 // addRecordIfMissing creates rec unless a record with the same name+type
-// already exists in the zone — used by createWebftpDomain and
-// PopulateDefaultDNS so re-running either is a safe no-op. Returns whether
-// it actually created something.
+// already exists in the zone — used by PopulateDefaultDNS so re-running it
+// is a safe no-op. Returns whether it actually created something.
 func (d *Domains) addRecordIfMissing(ctx context.Context, zoneID int64, rec *store.DNSRecord) (bool, error) {
 	existing, err := d.Store.ListRecords(ctx, zoneID)
 	if err != nil {
@@ -318,6 +317,59 @@ func (d *Domains) addRecordIfMissing(ctx context.Context, zoneID int64, rec *sto
 			return false, nil
 		}
 	}
+	if err := ValidateRecord(rec); err != nil {
+		return false, err
+	}
+	if err := d.Store.CreateRecord(ctx, rec); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// zoneApexProxied reports whether zoneID's apex "@" A record is proxied
+// through its provider (Cloudflare orange-cloud) — false (including "no
+// apex record yet") for the "local" provider, which has no such concept.
+func (d *Domains) zoneApexProxied(ctx context.Context, zoneID int64) bool {
+	records, err := d.Store.ListRecords(ctx, zoneID)
+	if err != nil {
+		return false
+	}
+	for _, r := range records {
+		if r.Name == "@" && r.Type == store.RecordA {
+			return r.Proxied
+		}
+	}
+	return false
+}
+
+// ensureWebftpRecord creates the zone's "webftp" A record, or fixes an
+// existing one, so its Proxied flag always matches the zone's apex record.
+// This matters: the webftp vhost itself has no TLS of its own (see
+// createWebftpDomain) — for a Cloudflare zone with the apex proxied, the
+// "webftp" record needs to be proxied too so Cloudflare's edge terminates
+// TLS for it the same way it does for the rest of the site, instead of
+// browsers connecting straight to the plain-HTTP origin over HTTPS (which
+// fails outright — ERR_SSL_VERSION_OR_CIPHER_MISMATCH — since there's no
+// TLS listener there at all). An existing unproxied "webftp" record from
+// before this fix is corrected in place, not left stale. Returns whether it
+// changed anything.
+func (d *Domains) ensureWebftpRecord(ctx context.Context, zoneID int64, ip string) (bool, error) {
+	proxied := d.zoneApexProxied(ctx, zoneID)
+	records, err := d.Store.ListRecords(ctx, zoneID)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range records {
+		if r.Name == "webftp" && r.Type == store.RecordA {
+			if r.Proxied == proxied && r.Content == ip {
+				return false, nil
+			}
+			r.Proxied = proxied
+			r.Content = ip
+			return true, d.Store.UpdateRecord(ctx, r)
+		}
+	}
+	rec := &store.DNSRecord{ZoneID: zoneID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip, Proxied: proxied}
 	if err := ValidateRecord(rec); err != nil {
 		return false, err
 	}
@@ -608,7 +660,7 @@ func (d *Domains) PopulateDefaultDNS(ctx context.Context, ownerID int64) (update
 		if zone, err := d.Store.GetZoneByDomain(ctx, dom.ID); err == nil {
 			if _, err := d.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err == nil {
 				if ip := DetectPrimaryIP(); ip != "" {
-					if ok, _ := d.addRecordIfMissing(ctx, zone.ID, &store.DNSRecord{ZoneID: zone.ID, Name: "webftp", Type: store.RecordA, TTL: 3600, Content: ip}); ok {
+					if ok, _ := d.ensureWebftpRecord(ctx, zone.ID, ip); ok {
 						changed = true
 						if d.DNS != nil {
 							_, _ = d.DNS.Sync(ctx, zone.ID)
