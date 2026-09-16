@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,6 +41,17 @@ type fcgiResult struct {
 }
 
 func fcgiWrite(conn net.Conn, recType byte, reqID uint16, content []byte) error {
+	if len(content) == 0 {
+		// A zero-length record is itself meaningful — it's the FastCGI
+		// stream terminator (PARAMS/STDIN callers pass nil for exactly this
+		// reason). The loop below only fires for len(content) > 0, so
+		// without this case no bytes ever reach the wire for a terminator:
+		// php-fpm then waits indefinitely for more params, and every
+		// request hangs until the caller's timeout fires.
+		hdr := []byte{1, recType, byte(reqID >> 8), byte(reqID), 0, 0, 0, 0}
+		_, err := conn.Write(hdr)
+		return err
+	}
 	for len(content) > 0 {
 		n := len(content)
 		if n > fcgiMaxContent {
@@ -86,6 +100,51 @@ func fcgiRead(conn net.Conn, br *bufio.Reader) (fcgiRecord, error) {
 		ReqID:   uint16(hdr[2])<<8 | uint16(hdr[3]),
 		Content: content,
 	}, nil
+}
+
+// parseCGIResponse splits a FastCGI responder's raw stdout into the CGI
+// header block (terminated by a blank line, per the CGI spec every FastCGI
+// responder including php-fpm follows) and the body that comes after it.
+// Without this, the header block — "Content-type: ...", and on a non-2xx
+// response "Status: 404 Not Found" etc — was being written verbatim as the
+// HTTP response body while the real status stayed hardcoded to 200. An
+// explicit "Status:" header overrides def; anything else falls back to it
+// (the FastCGI app-exit-status-derived 200/500 the caller already computed).
+// stdout with no blank-line-terminated header block at all is treated as
+// pure body, matching what a raw CGI script emitting no headers would do.
+func parseCGIResponse(raw []byte, def int) (int, http.Header, []byte) {
+	status := def
+	headers := http.Header{}
+	sep, sepLen := []byte("\r\n\r\n"), 4
+	idx := bytes.Index(raw, sep)
+	if idx < 0 {
+		sep, sepLen = []byte("\n\n"), 2
+		idx = bytes.Index(raw, sep)
+	}
+	if idx < 0 {
+		return status, headers, raw
+	}
+	for _, line := range strings.Split(string(raw[:idx]), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if strings.EqualFold(k, "Status") {
+			if fields := strings.Fields(v); len(fields) > 0 {
+				if code, err := strconv.Atoi(fields[0]); err == nil {
+					status = code
+				}
+			}
+			continue
+		}
+		headers.Add(k, v)
+	}
+	return status, headers, raw[idx+sepLen:]
 }
 
 // fcgiEncodeParam encodes one name/value pair per the FastCGI length rules.

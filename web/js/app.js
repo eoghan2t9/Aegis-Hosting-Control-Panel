@@ -263,6 +263,7 @@ function startUpdateBadgePoller() {
 Promise.all([
   import("./views/dashboard.js"),
   import("./views/domains.js"),
+  import("./views/logs.js"),
   import("./views/dns.js"),
   import("./views/ssl.js"),
   import("./views/ftp.js"),

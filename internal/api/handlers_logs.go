@@ -9,18 +9,30 @@ import (
 	"aegis/internal/svc"
 )
 
-// domainLogFile resolves the log file for a domain. The web servers write
-// under their own dirs; nginx is the canonical location the panel configures
-// for every generated vhost, caddy logs to its own dir with the same
-// per-domain name.
-func (s *Server) domainLogFile(domain, kind string) string {
-	switch kind {
-	case "error":
-		return "/var/log/nginx/" + domain + ".error.log"
+// domainLogFile resolves the log file for a domain based on the web server
+// actually serving it (dom.WebServer) — each backend writes its own logs to
+// its own dir/naming scheme (see svc.WebServer's generate* methods and
+// svc.GoAccessLogDir for where the native Go server writes). kind is
+// "access" or "error"; caddy combines both into one file.
+func (s *Server) domainLogFile(domain, webserver, kind string) string {
+	switch webserver {
+	case "nginx":
+		if kind == "error" {
+			return "/var/log/nginx/" + domain + ".error.log"
+		}
+		return "/var/log/nginx/" + domain + ".access.log"
+	case "apache":
+		if kind == "error" {
+			return "/var/log/apache2/" + domain + "-error.log"
+		}
+		return "/var/log/apache2/" + domain + "-access.log"
 	case "caddy":
 		return "/var/log/caddy/" + domain + ".log"
-	default: // "access"
-		return "/var/log/nginx/" + domain + ".access.log"
+	default: // "go" — the native panel web server
+		if kind == "error" {
+			return svc.GoAccessLogDir + "/" + domain + ".error.log"
+		}
+		return svc.GoAccessLogDir + "/" + domain + ".access.log"
 	}
 }
 
@@ -43,13 +55,16 @@ func (s *Server) handleDomainLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := r.URL.Query().Get("kind")
+	if kind != "error" {
+		kind = "access"
+	}
 	lines := 200
 	if v := r.URL.Query().Get("lines"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			lines = n
 		}
 	}
-	file := s.domainLogFile(dom.Domain, kind)
+	file := s.domainLogFile(dom.Domain, dom.WebServer, kind)
 	data, err := tailLog(file, lines)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -67,7 +82,9 @@ func (s *Server) handleDomainLogs(w http.ResponseWriter, r *http.Request) {
 // but the guard keeps this helper honest if reused later.
 func tailLog(file string, lines int) ([]string, error) {
 	dir := filepath.Dir(file)
-	if dir != "/var/log/nginx" && dir != "/var/log/caddy" {
+	switch dir {
+	case "/var/log/nginx", "/var/log/caddy", "/var/log/apache2", svc.GoAccessLogDir:
+	default:
 		return nil, os.ErrInvalid
 	}
 	return svc.TailLines(file, lines)
