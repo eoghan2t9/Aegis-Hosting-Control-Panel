@@ -103,11 +103,14 @@ PHP_PKGS=""
 for v in $PHP_VERSIONS; do
   # The modules most sites actually use: database drivers (mysql/pgsql/sqlite),
   # imaging (gd/imagick), strings & encodings (mbstring/iconv), XML stack,
-  # compression (zip/zlib via common), intl, bcmath, curl, soap, opcache and
-  # the extensions Composer/WP-CLI/Laravel/WordPress expect at runtime.
+  # compression (zip/zlib via common), intl, bcmath, curl, soap, opcache, the
+  # extensions Composer/WP-CLI/Laravel/WordPress expect at runtime, plus the
+  # caching backends (redis/memcached/apcu) and imap that most hosted apps
+  # reach for as soon as they need a cache layer or mailbox access.
   PHP_PKGS="$PHP_PKGS php$v-fpm php$v-cli php$v-common php$v-mysql php$v-pgsql php$v-sqlite3 \
     php$v-curl php$v-gd php$v-xml php$v-mbstring php$v-zip php$v-intl php$v-bcmath \
-    php$v-imagick php$v-soap php$v-opcache php$v-readline php$v-ldap"
+    php$v-imagick php$v-soap php$v-opcache php$v-readline php$v-ldap \
+    php$v-redis php$v-memcached php$v-apcu php$v-imap"
 done
 apt_get install $PHP_PKGS
 
@@ -118,7 +121,7 @@ apt_get install $PHP_PKGS
 for v in $PHP_VERSIONS; do
   phpenmod -v "$v" curl gd mbstring xml xmlreader xmlwriter simplexml zip intl \
     bcmath soap mysqli pdo_mysql pgsql pdo_pgsql sqlite3 pdo_sqlite imagick \
-    opcache ldap 2>/dev/null || true
+    opcache ldap redis memcached apcu imap 2>/dev/null || true
 done
 log "PHP installed: $(ls -1 /usr/bin/php* 2>/dev/null | grep -E 'php[0-9.]+$' | tr '\n' ' ')"
 
