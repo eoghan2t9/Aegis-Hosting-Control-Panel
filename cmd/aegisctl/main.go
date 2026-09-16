@@ -100,7 +100,7 @@ func wire() (*config.Config, *store.Store, *serviceSet, error) {
 	ss := &serviceSet{
 		cfg: cfg, store: st, cipher: cipher, am: am,
 		php: php, web: web,
-		domains: svc.NewDomains(cfg, st, web, php),
+		domains: svc.NewDomains(cfg, st, web, php, dnsSvc),
 		dns:     dnsSvc,
 		ssl:     svc.NewSSL(cfg, st, web, dnsSvc),
 		ftp:     ftpSvc,
