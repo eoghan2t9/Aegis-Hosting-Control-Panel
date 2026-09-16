@@ -64,6 +64,31 @@ func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 // have succeeded on its own. On success the domain (and, when covered, the
 // webftp domain) and order are updated and the web server config is
 // regenerated with TLS enabled.
+// upsertPendingOrder returns domainID's single ssl_orders row (enforced
+// unique by domain_id — see migrate()), reset to "pending" for a new
+// attempt, creating it if this is the domain's first-ever issuance. Reusing
+// the same row instead of always inserting a new one is what stops repeated
+// issue/renew attempts from piling up duplicates — including a "pending"
+// row that would otherwise sit there forever, orphaned, if a past attempt
+// never got to update it (e.g. the process restarted mid-issuance).
+func (s *SSL) upsertPendingOrder(ctx context.Context, domainID int64, provider, challenge string) (*store.SSLOrder, error) {
+	if existing, err := s.Store.GetSSLOrderByDomain(ctx, domainID); err == nil {
+		existing.Status = "pending"
+		existing.Provider = provider
+		existing.Challenge = challenge
+		existing.Error = ""
+		if err := s.Store.UpdateSSLOrder(ctx, existing); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+	order := &store.SSLOrder{DomainID: domainID, Status: "pending", Provider: provider, Challenge: challenge}
+	if err := s.Store.CreateSSLOrder(ctx, order); err != nil {
+		return nil, err
+	}
+	return order, nil
+}
+
 func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, includeWebftp bool) (*store.SSLOrder, error) {
 	dom, err := s.Store.GetDomain(ctx, domainID)
 	if err != nil {
@@ -89,13 +114,8 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, inclu
 		webftp = webftpDom
 	}
 
-	order := &store.SSLOrder{
-		DomainID:  dom.ID,
-		Status:    "pending",
-		Provider:  "letsencrypt",
-		Challenge: challenge,
-	}
-	if err := s.Store.CreateSSLOrder(ctx, order); err != nil {
+	order, err := s.upsertPendingOrder(ctx, dom.ID, "letsencrypt", challenge)
+	if err != nil {
 		return nil, err
 	}
 
@@ -308,8 +328,8 @@ func (s *SSL) SelfSigned(ctx context.Context, domainID int64) (*store.SSLOrder, 
 	if err != nil {
 		return nil, err
 	}
-	order := &store.SSLOrder{DomainID: dom.ID, Status: "pending", Provider: "self-signed", Challenge: "self"}
-	if err := s.Store.CreateSSLOrder(ctx, order); err != nil {
+	order, err := s.upsertPendingOrder(ctx, dom.ID, "self-signed", "self")
+	if err != nil {
 		return nil, err
 	}
 
