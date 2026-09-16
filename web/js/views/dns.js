@@ -1,6 +1,6 @@
 import { addRoute, isAdmin, refresh } from "../app.js";
 import { api } from "../api.js";
-import { icon, esc, toast, promptDialog, confirmDialog, statusTag, fmtAgo, pageHead, loading } from "../ui.js";
+import { icon, esc, toast, promptDialog, confirmDialog, statusTag, fmtAgo, pageHead, loading, modal } from "../ui.js";
 
 let selectedZone = null;
 
@@ -85,16 +85,37 @@ addRoute("/dns", {
 
     document.getElementById("btn-zone").onclick = () => createZone(domains, zones, reload);
     document.getElementById("btn-populate").onclick = async () => {
-      if (!await confirmDialog("Create a default DNS zone (A, www, MX, SPF) for every domain that doesn't have one yet? Existing zones are left untouched.", { title: "Populate DNS" })) return;
+      if (!await confirmDialog("Catch every domain up to what a new one gets automatically: the standard DNS records (A, www, ftp, MX, SPF), a dedicated FTP account if it doesn't have one, its webftp vhost, and the webftp DNS record. Nothing already there is changed.", { title: "Populate DNS" })) return;
       try {
         const res = await api.post("/dns/populate");
         const parts = [];
-        if (res.created?.length) parts.push(`${res.created.length} zone(s) created`);
-        if (res.skipped?.length) parts.push(`${res.skipped.length} already had one or aren't allowed DNS`);
+        if (res.updated?.length) parts.push(`${res.updated.length} domain(s) updated`);
+        if (res.skipped?.length) parts.push(`${res.skipped.length} already complete or aren't allowed DNS`);
         const failedCount = Object.keys(res.failed || {}).length;
         if (failedCount) parts.push(`${failedCount} failed`);
-        toast(parts.join(", ") || "Nothing to do — every domain already has a zone", failedCount ? "warn" : "ok");
-        reload();
+        toast(parts.join(", ") || "Nothing to do — every domain already has full DNS", failedCount ? "warn" : "ok");
+        if (res.ftp_created?.length) {
+          const done = document.createElement("button");
+          done.className = "btn btn-primary";
+          done.textContent = "Done";
+          const m = modal({
+            title: "New FTP accounts created — copy these passwords now",
+            wide: true,
+            body: `<div>
+              <p class="small muted">These are shown once — Aegis only keeps a hash of each password.</p>
+              ${res.ftp_created.map((f) => `
+                <div style="margin-bottom:10px">
+                  <div class="small mono dim">${esc(f.domain)} — ${esc(f.username)}</div>
+                  <div class="creds-box mono" style="word-break:break-all;user-select:all">${esc(f.password)}</div>
+                </div>`).join("")}
+            </div>`,
+            actions: [done],
+            onClose: reload,
+          });
+          done.onclick = () => m.close();
+        } else {
+          reload();
+        }
       } catch (ex) { toast(ex.message, "err"); }
     };
   },
