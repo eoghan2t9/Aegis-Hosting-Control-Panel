@@ -170,6 +170,7 @@ func (s *Server) Handler() http.Handler {
 
 	// DNS. Zone/record routes are package-gated (allow_dns); provider
 	// credentials stay admin-only on top of that.
+	mux.HandleFunc("POST /api/dns/populate", s.withAuth(s.withFeature(FeatureDNS, s.handleDNSPopulate)))
 	mux.HandleFunc("GET /api/dns/zones", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesList)))
 	mux.HandleFunc("POST /api/dns/zones", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesCreate)))
 	mux.HandleFunc("GET /api/dns/zones/{id}", s.withAuth(s.withFeature(FeatureDNS, s.handleZonesGet)))
