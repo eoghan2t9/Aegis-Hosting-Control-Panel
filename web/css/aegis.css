@@ -710,3 +710,49 @@ pre.codeblock {
 /* audit log */
 .audit-action { font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
 .audit-time { font-family: var(--mono); font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+/* log viewer */
+.log-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.log-toolbar + .log-toolbar { margin-top: 10px; }
+.log-search { position: relative; flex: 1 1 200px; min-width: 160px; }
+.log-search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+.log-search input { width: 100%; padding-left: 32px; }
+.log-toggle { display: flex; align-items: center; gap: 6px; color: var(--text-2); white-space: nowrap; }
+.log-meta { color: var(--text-3); white-space: nowrap; margin-left: auto; }
+.log-view {
+  margin-top: 12px;
+  max-height: 65vh;
+  overflow: auto;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.log-view:not(.wrap) .log-txt { white-space: pre; }
+.log-view.wrap .log-txt { white-space: pre-wrap; word-break: break-all; }
+.log-row { display: flex; }
+.log-row:nth-child(odd) { background: rgba(255, 255, 255, .015); }
+.log-row:hover { background: var(--bg2); }
+.log-row.log-row-hidden { display: none; }
+.log-ln {
+  flex: none;
+  width: 3.6em;
+  padding: 1px 10px 1px 0;
+  text-align: right;
+  color: var(--text-3);
+  border-right: 1px solid var(--line);
+  margin-right: 12px;
+  user-select: none;
+}
+.log-txt { flex: 1; padding: 1px 12px 1px 0; color: var(--text-2); min-width: 0; }
+.log-empty { padding: 46px 16px; text-align: center; color: var(--text-3); }
+.log-ts { color: var(--text-3); }
+.log-str { color: var(--teal); }
+.log-status-1, .log-status-2, .log-status-3 { color: var(--accent); }
+.log-status-4 { color: var(--warn); }
+.log-status-5 { color: var(--danger); font-weight: 650; }
+.log-lvl-err { color: var(--danger); font-weight: 650; }
+.log-lvl-warn { color: var(--warn); font-weight: 650; }
+.log-lvl-info { color: var(--teal); }
