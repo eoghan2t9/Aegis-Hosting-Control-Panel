@@ -15,7 +15,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-acme/lego/v4/certificate"
@@ -89,7 +88,12 @@ func (s *SSL) upsertPendingOrder(ctx context.Context, domainID int64, provider, 
 	return order, nil
 }
 
-func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, includeWebftp bool) (*store.SSLOrder, error) {
+// includeWebftp is a tri-state choice: nil means the caller made no
+// explicit choice (e.g. re-issuing from the SSL page, which has no such
+// option, or an auto-renewal) — preserve whatever coverage the domain's
+// certificate currently has rather than silently dropping it; non-nil
+// forces it on or off.
+func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, includeWebftp *bool) (*store.SSLOrder, error) {
 	dom, err := s.Store.GetDomain(ctx, domainID)
 	if err != nil {
 		return nil, err
@@ -102,15 +106,22 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, inclu
 		return nil, errors.New("challenge must be 'http' or 'dns'")
 	}
 
-	// Resolved unconditionally (not just when includeWebftp) — even when this
+	// Resolved unconditionally (not just when wantWebftp) — even when this
 	// issuance won't cover it, we still need to know whether an *earlier*
 	// one did, so a re-issuance that overwrites the shared cert file (see
 	// below) can clear its now-stale coverage instead of leaving it
 	// claiming a certificate it no longer actually has.
 	webftpDom, wfErr := s.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain))
 	hasWebftpVhost := wfErr == nil
+	currentlyCovered := hasWebftpVhost && webftpDom.SSLEnabled && dom.SSLEnabled &&
+		webftpDom.SSLCertPath == dom.SSLCertPath && webftpDom.SSLCertPath != ""
+
+	wantWebftp := currentlyCovered // nil case: preserve
+	if includeWebftp != nil {
+		wantWebftp = *includeWebftp
+	}
 	var webftp *store.Domain
-	if includeWebftp && hasWebftpVhost {
+	if wantWebftp && hasWebftpVhost {
 		webftp = webftpDom
 	}
 
@@ -420,14 +431,12 @@ func (s *SSL) renewExpiring(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		// Preserve whatever the previous issuance covered — read straight off
-		// the certificate about to be renewed rather than a stored flag, so
-		// there's no new schema and it can't drift out of sync with reality.
-		includeWebftp := o.CertPath != "" && certCoversHost(o.CertPath, WebftpHostname(dom.Domain))
-		slog.Info("ssl: auto-renewing", "domain", dom.Domain, "webftp", includeWebftp)
+		// No explicit choice on a renewal — Issue's nil case preserves
+		// whatever coverage the domain's certificate currently has.
+		slog.Info("ssl: auto-renewing", "domain", dom.Domain)
 		o.Status = "renewing"
 		_ = s.Store.UpdateSSLOrder(ctx, o)
-		if _, err := s.Issue(ctx, dom.ID, o.Challenge, includeWebftp); err != nil {
+		if _, err := s.Issue(ctx, dom.ID, o.Challenge, nil); err != nil {
 			slog.Error("ssl: auto-renew failed", "domain", dom.Domain, "err", err)
 		}
 	}
@@ -444,30 +453,6 @@ func certNotAfter(pemData []byte) time.Time {
 		return time.Time{}
 	}
 	return cert.NotAfter
-}
-
-// certCoversHost reports whether the certificate at pemPath's SAN list
-// includes host — used by renewExpiring to decide whether to re-request
-// webftp.<domain> coverage on renewal, without needing a stored flag.
-func certCoversHost(pemPath, host string) bool {
-	data, err := os.ReadFile(pemPath)
-	if err != nil {
-		return false
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return false
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return false
-	}
-	for _, n := range cert.DNSNames {
-		if strings.EqualFold(n, host) {
-			return true
-		}
-	}
-	return false
 }
 
 // CertInfo returns parsed certificate metadata for a path (dashboard display).

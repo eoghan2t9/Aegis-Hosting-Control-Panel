@@ -202,7 +202,7 @@ function openDetail(id, onChanged) {
           <button class="btn btn-sm" id="dd-wpcli">Run WP-CLI command</button>
         </div>
         <div style="height:16px"></div>
-        ${sslBlock(dom, id, !!d.webftp_url)}`;
+        ${sslBlock(dom, id, !!d.webftp_url, !!d.webftp_ssl_covered)}`;
       document.getElementById("dd-install").onclick = () => appPickerDialog(dom, id, m);
       const logView = document.getElementById("dd-log-view");
       const loadLog = async () => {
@@ -372,13 +372,15 @@ async function wpCliDialog(id) {
   } catch (ex) { toast(ex.message, "err"); }
 }
 
-function sslBlock(dom, id, hasWebftp) {
+function sslBlock(dom, id, hasWebftp, webftpCovered) {
   const certNote = dom.ssl_enabled
     ? `<p class="small dim" style="margin:8px 0">Certificate active. <a href="#/ssl">View in SSL section →</a></p>`
     : `<p class="small dim" style="margin:8px 0">Issue a Let's Encrypt certificate for ${esc(dom.domain)}. HTTP-01 needs the domain pointing at this server on port 80; DNS-01 uses your Cloudflare provider.</p>`;
   const webftpNote = hasWebftp
-    ? `<label class="checkline" style="margin:8px 0"><input type="checkbox" id="ssl-webftp"> Also cover webftp.${esc(dom.domain)} in this certificate</label>
-       <p class="small dim" style="margin:0 0 8px">Only check this if webftp.${esc(dom.domain)} already resolves to this server — a certificate covers all its names at once, so if that one fails to validate the whole issuance fails, including ${esc(dom.domain)} itself.</p>`
+    ? `<label class="checkline" style="margin:8px 0"><input type="checkbox" id="ssl-webftp" ${webftpCovered ? "checked" : ""}> Also cover webftp.${esc(dom.domain)} in this certificate</label>
+       <p class="small dim" style="margin:0 0 8px">${webftpCovered
+         ? `Currently covered by the live certificate. Leave this checked when re-issuing to keep it that way — unchecking it (or re-issuing from the SSL page, which has no such option) will silently drop webftp's coverage.`
+         : `Only check this if webftp.${esc(dom.domain)} already resolves to this server — a certificate covers all its names at once, so if that one fails to validate the whole issuance fails, including ${esc(dom.domain)} itself.`}</p>`
     : "";
   return `<div style="border-top:1px solid var(--line);padding-top:14px">
     <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">TLS certificate</b>

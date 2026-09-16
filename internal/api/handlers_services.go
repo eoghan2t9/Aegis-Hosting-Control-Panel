@@ -37,9 +37,12 @@ func (s *Server) handleSSLOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 type issueReq struct {
-	DomainID      int64  `json:"domain_id"`
-	Challenge     string `json:"challenge"` // http | dns
-	IncludeWebftp bool   `json:"include_webftp"`
+	DomainID  int64  `json:"domain_id"`
+	Challenge string `json:"challenge"` // http | dns
+	// IncludeWebftp: omitted/null preserves whatever webftp coverage the
+	// domain's certificate currently has (see SSL.Issue); true/false forces
+	// it on or off.
+	IncludeWebftp *bool `json:"include_webftp"`
 }
 
 func (s *Server) handleSSLIssue(w http.ResponseWriter, r *http.Request) {
