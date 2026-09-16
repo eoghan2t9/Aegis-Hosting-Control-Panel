@@ -392,6 +392,39 @@ func parseTime(v interface{}) time.Time {
 	return t
 }
 
+// nullableTime formats t as the same RFC3339 string convention now()/every
+// other timestamp column uses, or SQL NULL when t is nil. Use this — never
+// pass a *time.Time/time.Time directly as a query arg — the sqlite driver
+// falls back to Go's default time.Time.String() format for unrecognized
+// types ("2006-01-02 15:04:05 -0700 MST"), which parseTime/time.Parse(
+// time.RFC3339, ...) then silently fails to parse back, leaving the field
+// nil forever. This bit ssl_orders.expires_at and api_tokens.expires_at.
+func nullableTime(t *time.Time) interface{} {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// parseTimePtr converts a stored nullable timestamp to *time.Time, tolerant
+// of both the canonical RFC3339 format (nullableTime) and Go's default
+// time.Time.String() layout that a past bug (see nullableTime) wrote for
+// some existing rows, so already-affected data displays correctly too
+// without a manual migration.
+func parseTimePtr(v interface{}) *time.Time {
+	s, _ := v.(string)
+	if s == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return &t
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", s); err == nil {
+		return &t
+	}
+	return nil
+}
+
 // getString / getBool / getInt are scan helpers for nullable columns.
 func getString(v interface{}) string {
 	if v == nil {

@@ -102,6 +102,7 @@ func requestHost(r *http.Request) string {
 // Handler returns the http.Handler for the shared webftp listener.
 func (w *WebFTP) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/acme-challenge/{token}", w.handleACMEChallenge)
 	mux.HandleFunc("GET /", w.handleIndex)
 	mux.HandleFunc("POST /login", w.handleLogin)
 	mux.HandleFunc("POST /logout", w.handleLogout)
@@ -145,6 +146,34 @@ func (w *WebFTP) handleIndex(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeWebFTPPage(rw, webftpBrowserPage(requestHost(r)))
+}
+
+// handleACMEChallenge answers a Let's Encrypt HTTP-01 challenge for
+// webftp.<domain>, unauthenticated — this hostname is proxied entirely to
+// this Go process (see Domains.createWebftpDomain), so it has no docroot of
+// its own to serve the token from; instead it reads the same
+// ".well-known/acme-challenge/<token>" file svc.webrootProvider writes into
+// the *parent* domain's document root when SSL.obtain includes this
+// hostname as an additional SAN.
+func (w *WebFTP) handleACMEChallenge(rw http.ResponseWriter, r *http.Request) {
+	host := requestHost(r)
+	parent := strings.TrimPrefix(host, "webftp.")
+	if parent == host {
+		http.NotFound(rw, r)
+		return
+	}
+	dom, err := w.Store.GetDomainByName(r.Context(), parent)
+	if err != nil {
+		http.NotFound(rw, r)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(dom.DocumentRoot, ".well-known", "acme-challenge", r.PathValue("token")))
+	if err != nil {
+		http.NotFound(rw, r)
+		return
+	}
+	rw.Header().Set("Content-Type", "text/plain")
+	_, _ = rw.Write(data)
 }
 
 func (w *WebFTP) handleLogin(rw http.ResponseWriter, r *http.Request) {

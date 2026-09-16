@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"time"
 )
 
 // --- API tokens -------------------------------------------------------------
@@ -15,20 +14,8 @@ func scanAPIToken(row interface{ Scan(...any) error }) (*APIToken, error) {
 	if err := row.Scan(&t.ID, &t.UserID, &t.Label, &t.TokenHash, &t.Scopes, &lastUsed, &expires, &created); err != nil {
 		return nil, wrapErr(err)
 	}
-	if lastUsed != nil {
-		if s := getString(lastUsed); s != "" {
-			if tm, err := time.Parse(time.RFC3339, s); err == nil {
-				t.LastUsedAt = &tm
-			}
-		}
-	}
-	if expires != nil {
-		if s := getString(expires); s != "" {
-			if tm, err := time.Parse(time.RFC3339, s); err == nil {
-				t.ExpiresAt = &tm
-			}
-		}
-	}
+	t.LastUsedAt = parseTimePtr(lastUsed)
+	t.ExpiresAt = parseTimePtr(expires)
 	t.CreatedAt = parseTime(created)
 	return &t, nil
 }
@@ -36,7 +23,7 @@ func scanAPIToken(row interface{ Scan(...any) error }) (*APIToken, error) {
 func (s *Store) CreateAPIToken(ctx context.Context, t *APIToken) error {
 	ts := now()
 	res, err := s.db.ExecContext(ctx, "INSERT INTO api_tokens (user_id, label, token_hash, scopes, expires_at, created_at) VALUES (?,?,?,?,?,?)",
-		t.UserID, t.Label, t.TokenHash, t.Scopes, t.ExpiresAt, ts)
+		t.UserID, t.Label, t.TokenHash, t.Scopes, nullableTime(t.ExpiresAt), ts)
 	if err != nil {
 		return wrapErr(err)
 	}

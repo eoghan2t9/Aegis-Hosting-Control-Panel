@@ -17,11 +17,7 @@ func scanSSLOrder(row interface{ Scan(...any) error }) (*SSLOrder, error) {
 		&o.CertPath, &o.KeyPath, &exp, &o.Error, &created, &updated); err != nil {
 		return nil, wrapErr(err)
 	}
-	if exp != nil {
-		if t, err := time.Parse(time.RFC3339, getString(exp)); err == nil {
-			o.ExpiresAt = &t
-		}
-	}
+	o.ExpiresAt = parseTimePtr(exp)
 	o.CreatedAt = parseTime(created)
 	o.UpdatedAt = parseTime(updated)
 	return &o, nil
@@ -31,7 +27,7 @@ func (s *Store) CreateSSLOrder(ctx context.Context, o *SSLOrder) error {
 	ts := now()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO ssl_orders (domain_id, status, provider, challenge,
 		cert_path, key_path, expires_at, error, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		o.DomainID, o.Status, o.Provider, o.Challenge, o.CertPath, o.KeyPath, o.ExpiresAt, o.Error, ts, ts)
+		o.DomainID, o.Status, o.Provider, o.Challenge, o.CertPath, o.KeyPath, nullableTime(o.ExpiresAt), o.Error, ts, ts)
 	if err != nil {
 		return wrapErr(err)
 	}
@@ -77,7 +73,7 @@ func (s *Store) ListSSLOrders(ctx context.Context, domainID int64) ([]*SSLOrder,
 func (s *Store) UpdateSSLOrder(ctx context.Context, o *SSLOrder) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE ssl_orders SET status=?, provider=?, challenge=?,
 		cert_path=?, key_path=?, expires_at=?, error=?, updated_at=? WHERE id=?`,
-		o.Status, o.Provider, o.Challenge, o.CertPath, o.KeyPath, o.ExpiresAt, o.Error, now(), o.ID)
+		o.Status, o.Provider, o.Challenge, o.CertPath, o.KeyPath, nullableTime(o.ExpiresAt), o.Error, now(), o.ID)
 	return wrapErr(err)
 }
 
