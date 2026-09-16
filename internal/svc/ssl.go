@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-acme/lego/v4/certificate"
@@ -52,7 +53,18 @@ func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 // Issue obtains a certificate for a domain. challenge is "http" (webroot) or
 // "dns" (provider DNS-01). On success the domain and order are updated and the
 // web server config is regenerated with TLS enabled.
-func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string) (*store.SSLOrder, error) {
+// Issue obtains a certificate for a domain. challenge is "http" (webroot) or
+// "dns" (provider DNS-01). includeWebftp additionally covers this domain's
+// webftp.<domain> vhost (see Domains.createWebftpDomain) in the same
+// certificate as a SAN, when that vhost exists — opt-in rather than
+// automatic, because a SAN certificate is all-or-nothing: if webftp's DNS
+// doesn't actually route here (e.g. its "webftp" record was never pushed to
+// a real DNS provider), its challenge validation fails and takes the whole
+// issuance down with it, including the main domain that would otherwise
+// have succeeded on its own. On success the domain (and, when covered, the
+// webftp domain) and order are updated and the web server config is
+// regenerated with TLS enabled.
+func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string, includeWebftp bool) (*store.SSLOrder, error) {
 	dom, err := s.Store.GetDomain(ctx, domainID)
 	if err != nil {
 		return nil, err
@@ -65,6 +77,13 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string) (*sto
 		return nil, errors.New("challenge must be 'http' or 'dns'")
 	}
 
+	var webftp *store.Domain
+	if includeWebftp {
+		if wf, err := s.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err == nil {
+			webftp = wf
+		}
+	}
+
 	order := &store.SSLOrder{
 		DomainID:  dom.ID,
 		Status:    "pending",
@@ -75,8 +94,8 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string) (*sto
 		return nil, err
 	}
 
-	slog.Info("ssl: issuing certificate", "domain", dom.Domain, "challenge", challenge)
-	certRes, err := s.obtain(ctx, dom, challenge)
+	slog.Info("ssl: issuing certificate", "domain", dom.Domain, "challenge", challenge, "webftp", webftp != nil)
+	certRes, err := s.obtain(ctx, dom, challenge, webftp)
 	if err != nil {
 		order.Status = "failed"
 		order.Error = err.Error()
@@ -120,11 +139,27 @@ func (s *SSL) Issue(ctx context.Context, domainID int64, challenge string) (*sto
 	if err := s.Web.Apply(dom, aliases, user.Username); err != nil {
 		slog.Warn("ssl: cert issued but web config apply failed", "domain", dom.Domain, "err", err)
 	}
+
+	// The cert also covers webftp.<domain> — point that vhost at the same
+	// files too, so it gets real trusted TLS instead of the native server's
+	// self-signed fallback (see WebServer.GoTLSCert).
+	if webftp != nil {
+		webftp.SSLEnabled = true
+		webftp.SSLCertPath = certPath
+		webftp.SSLKeyPath = keyPath
+		webftp.SSLProvider = "letsencrypt"
+		if err := s.Store.UpdateDomain(ctx, webftp); err != nil {
+			slog.Warn("ssl: failed to record webftp cert coverage", "domain", webftp.Domain, "err", err)
+		} else if err := s.Web.Apply(webftp, nil, user.Username); err != nil {
+			slog.Warn("ssl: cert issued but webftp web config apply failed", "domain", webftp.Domain, "err", err)
+		}
+	}
 	return order, nil
 }
 
-// obtain drives the ACME flow.
-func (s *SSL) obtain(ctx context.Context, dom *store.Domain, challenge string) (*certificate.Resource, error) {
+// obtain drives the ACME flow. webftp, when non-nil, is included as an
+// additional SAN in the same certificate (see Issue).
+func (s *SSL) obtain(ctx context.Context, dom *store.Domain, challenge string, webftp *store.Domain) (*certificate.Resource, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -169,8 +204,18 @@ func (s *SSL) obtain(ctx context.Context, dom *store.Domain, challenge string) (
 		}
 	}
 
+	sans := []string{dom.Domain}
+	if webftp != nil {
+		// HTTP-01: webrootProvider writes every SAN's challenge token into
+		// the same dom.DocumentRoot regardless of which hostname is being
+		// validated (it ignores the "domain" argument), which works for
+		// webftp.<domain> too — WebFTP.handleACMEChallenge reads from that
+		// same parent docroot. DNS-01: cfDNS01Provider resolves the zone
+		// per-hostname itself, no extra wiring needed either way.
+		sans = append(sans, webftp.Domain)
+	}
 	req := certificate.ObtainRequest{
-		Domains: []string{dom.Domain},
+		Domains: sans,
 		Bundle:  true,
 	}
 	res, err := client.Certificate.Obtain(req)
@@ -333,10 +378,14 @@ func (s *SSL) renewExpiring(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		slog.Info("ssl: auto-renewing", "domain", dom.Domain)
+		// Preserve whatever the previous issuance covered — read straight off
+		// the certificate about to be renewed rather than a stored flag, so
+		// there's no new schema and it can't drift out of sync with reality.
+		includeWebftp := o.CertPath != "" && certCoversHost(o.CertPath, WebftpHostname(dom.Domain))
+		slog.Info("ssl: auto-renewing", "domain", dom.Domain, "webftp", includeWebftp)
 		o.Status = "renewing"
 		_ = s.Store.UpdateSSLOrder(ctx, o)
-		if _, err := s.Issue(ctx, dom.ID, o.Challenge); err != nil {
+		if _, err := s.Issue(ctx, dom.ID, o.Challenge, includeWebftp); err != nil {
 			slog.Error("ssl: auto-renew failed", "domain", dom.Domain, "err", err)
 		}
 	}
@@ -353,6 +402,30 @@ func certNotAfter(pemData []byte) time.Time {
 		return time.Time{}
 	}
 	return cert.NotAfter
+}
+
+// certCoversHost reports whether the certificate at pemPath's SAN list
+// includes host — used by renewExpiring to decide whether to re-request
+// webftp.<domain> coverage on renewal, without needing a stored flag.
+func certCoversHost(pemPath, host string) bool {
+	data, err := os.ReadFile(pemPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	for _, n := range cert.DNSNames {
+		if strings.EqualFold(n, host) {
+			return true
+		}
+	}
+	return false
 }
 
 // CertInfo returns parsed certificate metadata for a path (dashboard display).

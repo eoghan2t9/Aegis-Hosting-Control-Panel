@@ -37,8 +37,9 @@ func (s *Server) handleSSLOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 type issueReq struct {
-	DomainID  int64  `json:"domain_id"`
-	Challenge string `json:"challenge"` // http | dns
+	DomainID      int64  `json:"domain_id"`
+	Challenge     string `json:"challenge"` // http | dns
+	IncludeWebftp bool   `json:"include_webftp"`
 }
 
 func (s *Server) handleSSLIssue(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +60,7 @@ func (s *Server) handleSSLIssue(w http.ResponseWriter, r *http.Request) {
 	if challenge == "" {
 		challenge = "http"
 	}
-	order, err := s.SSL.Issue(r.Context(), req.DomainID, challenge)
+	order, err := s.SSL.Issue(r.Context(), req.DomainID, challenge, req.IncludeWebftp)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
