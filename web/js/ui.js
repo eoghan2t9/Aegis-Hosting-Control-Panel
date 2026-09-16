@@ -46,6 +46,7 @@ const paths = {
   dollar: '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   ssl: '<path d="M12 2 20 6v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/>',
   box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
 };
 
 export function icon(name, cls) {
@@ -286,3 +287,147 @@ function copyTextFallback(text) {
 export function debounce(fn, ms = 250) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
+
+/* -------------------------------------------------------------- dropdowns */
+// Every <select> in the app is progressively enhanced into a themed dropdown
+// (native <select> popups render with browser/OS chrome and can't be styled
+// to match the panel). The original <select> is kept in the DOM — hidden via
+// .dd-native, still holding the real value, still the target of "change"
+// listeners and by-id/by-name lookups — so no view needs to know this
+// happened; it just keeps reading/writing `select.value` as before.
+let openDD = null;
+
+function dressSelect(sel) {
+  if (sel.classList.contains("dd-native")) return;
+  sel.classList.add("dd-native");
+
+  const wrap = document.createElement("div");
+  wrap.className = "dd";
+  const style = sel.getAttribute("style");
+  if (style) { wrap.setAttribute("style", style); sel.removeAttribute("style"); }
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+
+  const btn = h(`<button type="button" class="dd-btn"><span class="dd-val"></span>${icon("chevron", "dd-arrow")}</button>`);
+  const menu = h(`<div class="dd-menu" role="listbox" hidden></div>`);
+  wrap.appendChild(btn);
+  document.body.appendChild(menu); // portalled so it can't be clipped by a modal/table's overflow
+  sel._ddMenu = menu;
+  btn.disabled = sel.disabled;
+
+  const syncLabel = () => {
+    const cur = sel.options[sel.selectedIndex];
+    btn.querySelector(".dd-val").textContent = cur ? cur.textContent : "";
+  };
+  const buildOptions = () => {
+    menu.innerHTML = "";
+    Array.from(sel.options).forEach((o, i) => {
+      const opt = h(`<div class="dd-opt${o.selected ? " active" : ""}${o.disabled ? " disabled" : ""}" role="option" data-i="${i}">
+        <span>${esc(o.textContent)}</span>${o.selected ? icon("check", "dd-check") : ""}</div>`);
+      menu.appendChild(opt);
+    });
+  };
+  const place = () => {
+    const r = btn.getBoundingClientRect();
+    menu.style.width = r.width + "px";
+    menu.style.left = r.left + "px";
+    const spaceBelow = window.innerHeight - r.bottom;
+    if (spaceBelow < 200 && r.top > spaceBelow) {
+      menu.style.top = "";
+      menu.style.bottom = (window.innerHeight - r.top + 4) + "px";
+    } else {
+      menu.style.bottom = "";
+      menu.style.top = (r.bottom + 4) + "px";
+    }
+  };
+  const close = () => {
+    menu.hidden = true;
+    wrap.removeAttribute("data-open");
+    btn.setAttribute("aria-expanded", "false");
+    if (openDD?.menu === menu) openDD = null;
+  };
+  const open = () => {
+    if (sel.disabled) return;
+    openDD?.close();
+    buildOptions();
+    place();
+    menu.hidden = false;
+    wrap.setAttribute("data-open", "");
+    btn.setAttribute("aria-expanded", "true");
+    openDD = { wrap, menu, close };
+    (menu.querySelector(".dd-opt.active") || menu.querySelector(".dd-opt:not(.disabled)"))?.classList.add("focus");
+  };
+  const choose = (opt) => {
+    if (!opt || opt.classList.contains("disabled")) return;
+    sel.selectedIndex = +opt.dataset.i;
+    syncLabel();
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    close();
+    btn.focus();
+  };
+
+  btn.addEventListener("click", () => { menu.hidden ? open() : close(); });
+  btn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (menu.hidden) { open(); return; }
+      const list = Array.from(menu.querySelectorAll(".dd-opt:not(.disabled)"));
+      const idx = list.indexOf(menu.querySelector(".dd-opt.focus"));
+      const next = e.key === "ArrowDown" ? Math.min(list.length - 1, idx + 1) : Math.max(0, idx - 1);
+      list.forEach((o) => o.classList.remove("focus"));
+      list[next]?.classList.add("focus");
+      list[next]?.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (menu.hidden) open(); else choose(menu.querySelector(".dd-opt.focus"));
+    } else if (e.key === "Escape") {
+      close();
+    } else if (e.key === "Tab") {
+      close();
+    }
+  });
+  menu.addEventListener("mousedown", (e) => {
+    const opt = e.target.closest(".dd-opt");
+    if (opt) { e.preventDefault(); choose(opt); }
+  });
+  menu.addEventListener("mousemove", (e) => {
+    const opt = e.target.closest(".dd-opt");
+    if (opt && !opt.classList.contains("disabled")) {
+      menu.querySelectorAll(".dd-opt.focus").forEach((o) => o.classList.remove("focus"));
+      opt.classList.add("focus");
+    }
+  });
+
+  syncLabel();
+}
+
+document.addEventListener("mousedown", (e) => {
+  if (openDD && !openDD.wrap.contains(e.target) && !openDD.menu.contains(e.target)) openDD.close();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") openDD?.close(); });
+window.addEventListener("scroll", () => openDD?.close(), true);
+window.addEventListener("resize", () => openDD?.close());
+
+new MutationObserver((muts) => {
+  for (const m of muts) {
+    for (const node of m.addedNodes) {
+      if (node.nodeType !== 1) continue;
+      if (node.matches?.("select")) dressSelect(node);
+      node.querySelectorAll?.("select:not(.dd-native)").forEach(dressSelect);
+    }
+    for (const node of m.removedNodes) {
+      if (node.nodeType !== 1) continue;
+      const sels = node.matches?.("select.dd-native") ? [node] : Array.from(node.querySelectorAll?.("select.dd-native") || []);
+      sels.forEach((s) => {
+        // A removal record fires even when a node is only moved to a new
+        // parent within the same document (e.g. dressSelect wrapping the
+        // <select> itself generates one) — only clean up once it's truly
+        // gone, or the portalled menu gets deleted the instant it's made.
+        if (document.contains(s)) return;
+        if (openDD?.menu === s._ddMenu) openDD = null;
+        s._ddMenu?.remove();
+      });
+    }
+  }
+}).observe(document.documentElement, { childList: true, subtree: true });

@@ -42,6 +42,7 @@ addRoute("/accounts", {
           <td class="small dim">${fmtAgo(u.created_at)}</td>
           <td><div class="row-actions">
             ${isAdmin() ? `<button class="btn btn-ghost act-imp" title="Log in as user">${icon("eye")}</button>` : ""}
+            ${packages.length ? `<button class="btn btn-ghost act-pkg" title="Change package">${icon("box")}</button>` : ""}
             <button class="btn btn-ghost act-pass" title="Reset password">${icon("key")}</button>
             <button class="btn btn-ghost act-susp" title="Suspend/unsuspend">${icon("toggle")}</button>
             <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
@@ -60,6 +61,18 @@ addRoute("/accounts", {
           api.setToken(data.token);
           location.hash = "#/dashboard";
           location.reload();
+        } catch (ex) { toast(ex.message, "err"); }
+      });
+      tr.querySelector(".act-pkg")?.addEventListener("click", async () => {
+        const pkgOpts = packages.map((p) => ({ value: String(p.id), label: p.name + (p.is_default ? " (default)" : "") }));
+        const vals = await promptDialog(`Change package for ${row.username}`, [
+          { name: "package_id", label: "Package", type: "select", options: pkgOpts, value: String(row.package_id || pkgOpts[0]?.value) },
+        ], { okText: "Change package" });
+        if (!vals) return;
+        try {
+          await api.patch(`/users/${row.id}`, { package_id: +vals.package_id });
+          toast("Package changed");
+          refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
       tr.querySelector(".act-pass")?.addEventListener("click", async () => {
