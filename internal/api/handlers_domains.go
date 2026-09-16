@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"aegis/internal/store"
 	"aegis/internal/svc"
@@ -44,7 +45,16 @@ func (s *Server) handleDomainsList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, domains)
+	// Hide auto-created "webftp.<domain>" proxy rows (see
+	// svc.Domains.createWebftpDomain) from every domain picker across the
+	// panel — they're an implementation detail, not a site to manage.
+	out := domains[:0]
+	for _, d := range domains {
+		if !strings.HasPrefix(d.Domain, "webftp.") {
+			out = append(out, d)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type createDomainReq struct {
@@ -90,9 +100,10 @@ func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
 	if ftp != nil {
 		// One-time: the plaintext password only ever exists in this response.
 		resp["ftp"] = map[string]interface{}{
-			"username": ftp.Account.Username,
-			"password": ftp.Password,
-			"home":     ftp.Account.HomeDir,
+			"username":   ftp.Account.Username,
+			"password":   ftp.Password,
+			"home":       ftp.Account.HomeDir,
+			"webftp_url": ftp.WebFTPURL, // "" if the webftp subdomain wasn't provisioned
 		}
 	}
 	writeJSON(w, http.StatusCreated, resp)

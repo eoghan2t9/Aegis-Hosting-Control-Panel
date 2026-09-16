@@ -469,6 +469,9 @@ func cmdDomain(ctx context.Context, args []string) error {
 		fmt.Printf("domain %s provisioned for %s (docroot %s)\n", dom.Domain, u.Username, dom.DocumentRoot)
 		if ftp != nil {
 			fmt.Printf("ftp account %s created (password shown once): %s\n", ftp.Account.Username, ftp.Password)
+			if ftp.WebFTPURL != "" {
+				fmt.Printf("web ftp: %s\n", ftp.WebFTPURL)
+			}
 		}
 		return nil
 	case "list":

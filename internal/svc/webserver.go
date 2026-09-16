@@ -571,6 +571,13 @@ func (w *WebServer) writeApacheVhost(sb *strings.Builder, d *store.Domain, port 
 	if d.ProxyTarget != "" {
 		// Container/app domain: ProxyPass on "/" takes priority over the
 		// filesystem, so PHP/static handling below is simply skipped.
+		// ProxyPreserveHost matters here — without it mod_proxy rewrites the
+		// Host header to the backend target instead of forwarding the
+		// original one (nginx's proxy_set_header and Caddy's reverse_proxy
+		// both already preserve it), which breaks any backend that resolves
+		// per-request behavior from Host, like the webftp server does to
+		// pick which domain's files to serve.
+		fmt.Fprintf(sb, "    ProxyPreserveHost On\n")
 		fmt.Fprintf(sb, "    ProxyPass / http://%s/ retry=0 upgrade=websocket\n", d.ProxyTarget)
 		fmt.Fprintf(sb, "    ProxyPassReverse / http://%s/\n", d.ProxyTarget)
 	} else if sock != "" {
