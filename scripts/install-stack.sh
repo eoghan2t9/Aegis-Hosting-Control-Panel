@@ -278,6 +278,16 @@ if [ "$WITH_FTP" = 1 ]; then
   if [ -f /etc/pam.d/vsftpd ]; then
     sed -i '/pam_shells\.so/d' /etc/pam.d/vsftpd
   fi
+  # The stock config listens in dual-stack IPv6 mode (listen=NO,
+  # listen_ipv6=YES). In that mode vsftpd's classic (non-EPSV) PASV reply
+  # reports 0.0.0.0 instead of the real address — pasv_address is silently
+  # ignored — which every non-EPSV client (ncftpput, many legacy FTP
+  # clients) tries to connect to and gets "connect failed: Connection
+  # refused". Force plain IPv4-only listening instead; this is a standard
+  # single-stack hosting box, so there's no IPv6-only client to lose.
+  if [ -f /etc/vsftpd.conf ]; then
+    sed -i 's/^listen=NO/listen=YES/; s/^listen_ipv6=YES/listen_ipv6=NO/' /etc/vsftpd.conf
+  fi
   # Passive-mode data transfers need a second connection on top of control
   # port 21 — without a fixed range, vsftpd picks a random port anywhere in
   # the OS ephemeral range, which almost never matches what's open in an
