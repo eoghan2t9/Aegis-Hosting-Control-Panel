@@ -306,12 +306,13 @@ func (f *Files) Search(user *store.User, rel, needle string) ([]string, error) {
 		return nil, errors.New("empty search term")
 	}
 	var hits []string
+	errSearchLimit := errors.New("limit reached")
 	err = filepath.Walk(abs, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 		if len(hits) >= 200 {
-			return errors.New("limit reached")
+			return errSearchLimit
 		}
 		if strings.Contains(strings.ToLower(info.Name()), needle) {
 			rel2, err := filepath.Rel(user.HomeDir, path)
@@ -321,6 +322,12 @@ func (f *Files) Search(user *store.User, rel, needle string) ([]string, error) {
 		}
 		return nil
 	})
+	// Hitting the cap isn't a failure — the caller gets the first 200 matches
+	// (still ordered by Walk's lexical directory order) instead of losing
+	// every hit to what looks like a search error.
+	if err == errSearchLimit {
+		err = nil
+	}
 	return hits, err
 }
 

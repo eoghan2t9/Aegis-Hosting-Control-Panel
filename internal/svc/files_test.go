@@ -3,6 +3,7 @@ package svc
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"aegis/internal/config"
@@ -223,6 +224,24 @@ func TestSearchFinds(t *testing.T) {
 	}
 	if len(hits) != 1 {
 		t.Fatalf("search hits = %v", hits)
+	}
+}
+
+// TestSearchCapDoesNotError guards against the 200-result cap being treated
+// as a search failure — hitting the cap should still return the first 200
+// matches with a nil error, not discard them (see Search's errSearchLimit
+// handling).
+func TestSearchCapDoesNotError(t *testing.T) {
+	f, u := newFilesT(t)
+	for i := 0; i < 250; i++ {
+		_ = f.Write(u, "/many/match-"+strconv.Itoa(i)+".txt", []byte("x"), 0o644)
+	}
+	hits, err := f.Search(u, "/", "match")
+	if err != nil {
+		t.Fatalf("Search returned an error at the cap instead of truncated results: %v", err)
+	}
+	if len(hits) != 200 {
+		t.Fatalf("expected 200 capped hits, got %d", len(hits))
 	}
 }
 
