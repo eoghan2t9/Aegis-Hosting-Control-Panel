@@ -185,6 +185,17 @@ CREATE TABLE IF NOT EXISTS sessions (
 	expires_at TEXT NOT NULL,
 	created_at TEXT NOT NULL
 );
+-- Short-lived, single-use: issued once a TOTP-enabled account's password
+-- has checked out, redeemed by /auth/totp/verify for a real session. Never
+-- itself usable as a bearer token (see withAuth in internal/api) — carrying
+-- this instead of a session id is exactly what stops a stolen password
+-- alone from granting access to a 2FA-protected account.
+CREATE TABLE IF NOT EXISTS totp_challenges (
+	id TEXT PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	expires_at TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -302,6 +313,17 @@ CREATE TABLE IF NOT EXISTS ips (
 	if err := s.addColumnIfMissing(ctx, "users", "suspended_by_quota", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return fmt.Errorf("migrate users.suspended_by_quota: %w", err)
 	}
+	// TOTP two-factor auth: opt-in per account, so every existing user comes
+	// back with totp_enabled=0 (unchanged login behaviour) until they enroll.
+	for _, c := range []struct{ col, def string }{
+		{"totp_secret", "TEXT NOT NULL DEFAULT ''"},
+		{"totp_enabled", "INTEGER NOT NULL DEFAULT 0"},
+		{"totp_backup_codes", "TEXT NOT NULL DEFAULT '[]'"},
+	} {
+		if err := s.addColumnIfMissing(ctx, "users", c.col, c.def); err != nil {
+			return fmt.Errorf("migrate users.%s: %w", c.col, err)
+		}
+	}
 	// Package feature flags added after the first release: retrofit them so
 	// existing databases keep every panel area enabled (matching the old
 	// behaviour, where the flags didn't exist and nothing was gated).
@@ -334,6 +356,12 @@ CREATE TABLE IF NOT EXISTS ips (
 	// on the wildcard address, the pre-existing behaviour).
 	if err := s.addColumnIfMissing(ctx, "domains", "ip_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return fmt.Errorf("migrate domains.ip_id: %w", err)
+	}
+	// parent_domain_id references domains(id); 0 means "top-level domain".
+	// Set only at creation (see svc.Domains.Create) to link a sub-domain to
+	// its master for display/grouping — see store.Domain.ParentDomainID.
+	if err := s.addColumnIfMissing(ctx, "domains", "parent_domain_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate domains.parent_domain_id: %w", err)
 	}
 	// Seed a default package on first run.
 	var n int
@@ -616,5 +644,39 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 
 func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID)
+	return err
+}
+
+// --- totp challenges -----------------------------------------------------
+
+func (s *Store) CreateTOTPChallenge(ctx context.Context, id string, userID int64, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO totp_challenges (id, user_id, expires_at, created_at) VALUES (?,?,?,?)",
+		id, userID, expiresAt.UTC().Format(time.RFC3339), now())
+	return err
+}
+
+// GetTOTPChallengeUser mirrors GetSessionUser's expiry handling — an
+// expired challenge is treated as not found, not as a still-live one.
+func (s *Store) GetTOTPChallengeUser(ctx context.Context, id string) (int64, error) {
+	var userID int64
+	var exp string
+	err := s.db.QueryRowContext(ctx, "SELECT user_id, expires_at FROM totp_challenges WHERE id = ?", id).Scan(&userID, &exp)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	t, err := time.Parse(time.RFC3339, exp)
+	if err != nil || t.Before(time.Now()) {
+		return 0, ErrNotFound
+	}
+	return userID, nil
+}
+
+// DeleteTOTPChallenge is called both on successful verification (so the
+// challenge can't be replayed) and should be called on a failed code too —
+// callers that want "N attempts against the same challenge" instead of
+// single-shot need to decide that explicitly rather than get it by default.
+func (s *Store) DeleteTOTPChallenge(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM totp_challenges WHERE id = ?", id)
 	return err
 }

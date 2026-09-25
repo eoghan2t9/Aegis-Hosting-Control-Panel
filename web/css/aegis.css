@@ -265,18 +265,6 @@ select { cursor: pointer; }
   box-shadow: 0 24px 60px rgba(0,0,0,.45);
 }
 .login-error { color: var(--danger); font-size: 12.5px; min-height: 18px; margin: 10px 0 0; }
-.login-hint {
-  margin-top: 22px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--bg1);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
 
 /* ---------------------------------------------------------------- app shell */
 .shell { display: flex; min-height: 100vh; }

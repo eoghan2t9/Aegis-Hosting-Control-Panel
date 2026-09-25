@@ -87,10 +87,17 @@ func (s *Server) Handler() http.Handler {
 
 	// Public.
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	// Not withAuth: the account isn't logged in yet at this step — a
+	// challenge id (short-lived, single-use, never a valid bearer token)
+	// plus the code are what authorize this call instead.
+	mux.HandleFunc("POST /api/auth/totp/verify", s.handleTOTPVerify)
 
 	// Authenticated.
 	mux.HandleFunc("GET /api/auth/me", s.withAuth(s.handleMe))
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
+	mux.HandleFunc("POST /api/auth/totp/enroll", s.withAuth(s.handleTOTPEnroll))
+	mux.HandleFunc("POST /api/auth/totp/confirm", s.withAuth(s.handleTOTPConfirm))
+	mux.HandleFunc("POST /api/auth/totp/disable", s.withAuth(s.handleTOTPDisable))
 	mux.HandleFunc("POST /api/admin/impersonate", s.withAuth(s.handleImpersonate))
 	mux.HandleFunc("POST /api/admin/unimpersonate", s.withAuth(s.handleUnimpersonate))
 	mux.HandleFunc("GET /api/domains/{id}/preview/", s.withAuth(s.handlePreview))
@@ -275,6 +282,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/docker/install", s.withAuth(s.withRole(s.handleDockerInstall, store.RoleAdmin)))
 	mux.HandleFunc("GET /api/containers", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersList)))
 	mux.HandleFunc("POST /api/containers", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersCreate)))
+	mux.HandleFunc("POST /api/containers/import-compose", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersImportCompose)))
 	mux.HandleFunc("GET /api/containers/{id}", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersGet)))
 	mux.HandleFunc("POST /api/containers/{id}/start", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersStart)))
 	mux.HandleFunc("POST /api/containers/{id}/stop", s.withAuth(s.withFeature(FeatureDocker, s.handleContainersStop)))

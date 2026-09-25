@@ -29,7 +29,15 @@
         <button class="btn btn-primary btn-block" type="submit">Authenticate</button>
         <p id="login-error" class="login-error" role="alert"></p>
       </form>
-      <p class="login-hint" id="login-hint"></p>
+      <form id="totp-form" class="login-card hidden" autocomplete="off">
+        <label class="field">
+          <span class="field-label">Two-factor code</span>
+          <input id="totp-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456 or a backup code" required>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">Verify</button>
+        <button class="btn btn-block" type="button" id="totp-back">Back</button>
+        <p id="totp-error" class="login-error" role="alert"></p>
+      </form>
     </div>
   </div>
 

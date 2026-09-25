@@ -67,6 +67,28 @@ func (s *Server) handleContainersCreate(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, c)
 }
 
+type composeImportReq struct {
+	Compose string `json:"compose"`
+	Service string `json:"service,omitempty"`
+}
+
+// handleContainersImportCompose parses a pasted docker-compose.yml into a
+// CreateContainerRequest-shaped preview for the "New container" form. Purely
+// read-only — no container is created, no filesystem path is touched; see
+// svc.ParseCompose.
+func (s *Server) handleContainersImportCompose(w http.ResponseWriter, r *http.Request) {
+	var req composeImportReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	result, err := svc.ParseCompose(req.Compose, req.Service)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleContainersGet(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.ownsContainer(r)
 	if !ok {

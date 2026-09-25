@@ -50,6 +50,12 @@ type CreateOptions struct {
 	// "shop.example.com" for its own top-level folder). Empty uses the
 	// default <domain>/public. Must stay inside the home directory.
 	RelPath string `json:"rel_root"`
+	// ParentDomainID links this domain to a master domain (see
+	// store.Domain.ParentDomainID) for the sub-domain manager. The caller
+	// (handlers_domains.go) is responsible for verifying the parent exists
+	// and belongs to the same owner before passing this through — Create
+	// itself just persists it.
+	ParentDomainID int64 `json:"-"`
 }
 
 // UserHome returns the home directory for a panel user.
@@ -188,12 +194,13 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 	}
 
 	dom := &store.Domain{
-		UserID:       user.ID,
-		Domain:       domain,
-		DocumentRoot: root,
-		PHPVersion:   opts.PHPVersion,
-		WebServer:    ws,
-		SSLAutoRenew: true,
+		UserID:         user.ID,
+		Domain:         domain,
+		DocumentRoot:   root,
+		PHPVersion:     opts.PHPVersion,
+		WebServer:      ws,
+		SSLAutoRenew:   true,
+		ParentDomainID: opts.ParentDomainID,
 	}
 	if err := d.Store.CreateDomain(ctx, dom); err != nil {
 		return nil, nil, err
