@@ -278,6 +278,30 @@ if [ "$WITH_FTP" = 1 ]; then
   if [ -f /etc/pam.d/vsftpd ]; then
     sed -i '/pam_shells\.so/d' /etc/pam.d/vsftpd
   fi
+  # Passive-mode data transfers need a second connection on top of control
+  # port 21 — without a fixed range, vsftpd picks a random port anywhere in
+  # the OS ephemeral range, which almost never matches what's open in an
+  # external firewall/cloud security group (symptom: login succeeds, then
+  # the client gets "connect failed: Connection refused" on the data
+  # channel). Pin it to a small, predictable range instead — kept outside
+  # svc.Docker's reserved container port range (20000-29999, see docker.go)
+  # — and pin pasv_address to this host's own public IP so a multi-homed
+  # box (e.g. one with a docker0 bridge) can't advertise the wrong address.
+  FTP_PASV_MIN=30100
+  FTP_PASV_MAX=30120
+  FTP_PUBLIC_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+  if [ -n "$FTP_PUBLIC_IP" ] && [ -f /etc/vsftpd.conf ] && ! grep -q "^pasv_min_port=" /etc/vsftpd.conf; then
+    cat >> /etc/vsftpd.conf <<EOF
+
+# --- Aegis: fixed PASV port range + explicit public address (see
+# install-stack.sh) so an external firewall only needs to allow one small,
+# predictable range instead of the whole ephemeral port space.
+pasv_enable=YES
+pasv_min_port=$FTP_PASV_MIN
+pasv_max_port=$FTP_PASV_MAX
+pasv_address=$FTP_PUBLIC_IP
+EOF
+  fi
 fi
 
 if [ "$WITH_MAIL" = 1 ]; then
@@ -429,7 +453,7 @@ cat <<EOF
  MariaDB admin:  root@127.0.0.1  (password: $MDB_NOTE)
  PostgreSQL:     postgres        (password: $PG_NOTE)
  Mail:           $([ "$WITH_MAIL" = 1 ] && echo postfix+dovecot+opendkim || echo skipped)
- FTP:            $([ "$WITH_FTP" = 1 ] && echo vsftpd || echo skipped)
+ FTP:            $([ "$WITH_FTP" = 1 ] && echo "vsftpd — open TCP 21 and 30100-30120 (passive mode) in any external firewall" || echo skipped)
  fail2ban:       $([ "$WITH_FAIL2BAN" = 1 ] && echo yes || echo no)
  Docker:         $([ "$WITH_DOCKER" = 1 ] && echo "installed" || echo "not installed (admin can install it from Containers in the panel)")
  Binary:         $([ -x "$AEGIS_BIN" ] && echo "$AEGIS_BIN" || echo "(not built)")
