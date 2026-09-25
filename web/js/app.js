@@ -16,23 +16,48 @@ export function addRoute(path, def) {
 async function boot() {
   // Login form.
   const loginForm = document.getElementById("login-form");
-  const hint = document.getElementById("login-hint");
-  if (!api.token) {
-    const res = await api.get("/system/overview").catch(() => null);
-    if (res?.hostname) {
-      hint.innerHTML = `host: ${esc(res.hostname)} · kernel ${esc(res.kernel)}`;
-    }
-  }
+  const totpForm = document.getElementById("totp-form");
+  let totpChallenge = "";
+
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = document.getElementById("login-error");
     err.textContent = "";
-    const btn = loginForm.querySelector("button");
+    const btn = loginForm.querySelector("button[type=submit]");
     btn.classList.add("btn-busy");
     try {
       const data = await api.post("/auth/login", {
         username: document.getElementById("login-user").value.trim(),
         password: document.getElementById("login-pass").value,
+      });
+      if (data.totp_required) {
+        totpChallenge = data.challenge;
+        loginForm.classList.add("hidden");
+        totpForm.classList.remove("hidden");
+        document.getElementById("totp-code").value = "";
+        document.getElementById("totp-error").textContent = "";
+        document.getElementById("totp-code").focus();
+        return;
+      }
+      api.setToken(data.token);
+      await enterApp();
+    } catch (ex) {
+      err.textContent = ex.message;
+    } finally {
+      btn.classList.remove("btn-busy");
+    }
+  });
+
+  totpForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("totp-error");
+    err.textContent = "";
+    const btn = totpForm.querySelector("button[type=submit]");
+    btn.classList.add("btn-busy");
+    try {
+      const data = await api.post("/auth/totp/verify", {
+        challenge: totpChallenge,
+        code: document.getElementById("totp-code").value.trim(),
       });
       api.setToken(data.token);
       await enterApp();
@@ -43,10 +68,19 @@ async function boot() {
     }
   });
 
+  document.getElementById("totp-back").addEventListener("click", () => {
+    totpChallenge = "";
+    totpForm.classList.add("hidden");
+    loginForm.classList.remove("hidden");
+    document.getElementById("login-pass").value = "";
+  });
+
   window.addEventListener("aegis:logout", () => {
     document.getElementById("screen-app").classList.add("hidden");
     document.getElementById("screen-login").classList.remove("hidden");
-    showLoginHint();
+    totpChallenge = "";
+    totpForm.classList.add("hidden");
+    loginForm.classList.remove("hidden");
   });
 
   if (api.token) {
@@ -54,17 +88,10 @@ async function boot() {
       await enterApp();
     } catch {
       document.getElementById("screen-login").classList.remove("hidden");
-      showLoginHint();
     }
   } else {
     document.getElementById("screen-login").classList.remove("hidden");
   }
-}
-
-async function showLoginHint() {
-  const hint = document.getElementById("login-hint");
-  const res = await api.get("/system/overview").catch(() => null);
-  if (res?.hostname) hint.innerHTML = `host: ${esc(res.hostname)}`;
 }
 
 let state = { user: null, claims: null, features: {} };

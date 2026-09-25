@@ -9,7 +9,10 @@ addRoute("/domains", {
   group: "Websites",
   order: 0,
   render: async (view) => {
+    const admin = isAdmin();
     view.innerHTML = pageHead("Domains", "Websites attached to your account. Each domain gets its own document root, PHP version and web server config.", `
+      ${admin ? `<input type="search" id="domain-user-q" placeholder="Filter by user…" style="margin-right:8px">` : ""}
+      <button class="btn" id="btn-add-subdomain">${icon("plus")} Add sub-domain</button>
       <button class="btn btn-primary" id="btn-add-domain">${icon("plus")} Add domain</button>`);
     view.insertAdjacentHTML("beforeend", `<div id="domain-list">${loading()}</div>`);
 
@@ -21,17 +24,35 @@ addRoute("/domains", {
     const listEl = document.getElementById("domain-list");
     const phpVersions = phpInfo.versions?.map((v) => v.version) || [];
 
+    document.getElementById("btn-add-subdomain").onclick = () => openCreateSubdomain(domains, phpVersions, wsInfo.available);
+
     if (!domains.length) {
       listEl.innerHTML = `<div class="card empty-state"><span class="glyph">◈</span><p>No websites yet. Add your first domain and Aegis will provision the document root, PHP-FPM pool and ${esc(wsInfo.active || "web server")} vhost automatically.</p>
         <button class="btn btn-primary" id="btn-add-domain2">${icon("plus")} Add domain</button></div>`;
       listEl.querySelector("#btn-add-domain2").onclick = () => openCreate(phpVersions, wsInfo.available, refresh);
       return;
     }
-    listEl.innerHTML = `<div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Domain</th><th>PHP</th><th>Web server</th><th>SSL</th><th>Created</th><th></th></tr></thead>
-      <tbody>${domains.map((d) => `
+
+    // Group sub-domains directly beneath their master (parent_domain_id),
+    // in the existing alphabetical order; a sub-domain whose parent isn't in
+    // this list (deleted, or the hidden webftp.* rows) falls back to
+    // top-level so it's never silently dropped from the table.
+    const byID = Object.fromEntries(domains.map((d) => [d.id, d]));
+    const childrenOf = {};
+    for (const d of domains) {
+      if (d.parent_domain_id && byID[d.parent_domain_id]) (childrenOf[d.parent_domain_id] ||= []).push(d);
+    }
+    const ordered = [];
+    for (const d of domains) {
+      if (d.parent_domain_id && byID[d.parent_domain_id]) continue; // placed under its parent below
+      ordered.push({ d, sub: false });
+      for (const child of (childrenOf[d.id] || [])) ordered.push({ d: child, sub: true });
+    }
+
+    const row = ({ d, sub }) => `
         <tr class="hoverable" data-id="${d.id}">
-          <td><b class="mono">${esc(d.domain)}</b><div class="small dim">${esc(d.document_root)}</div></td>
+          <td>${sub ? '<span class="dim mono" style="margin-right:4px">↳</span>' : ""}<b class="mono">${esc(d.domain)}</b>${sub ? ' <span class="tag">sub</span>' : ""}<div class="small dim">${esc(d.document_root)}</div></td>
+          ${admin ? `<td class="small">${esc(d.username || "")}</td>` : ""}
           <td>${d.php_version ? `<span class="tag">php ${esc(d.php_version)}</span>` : '<span class="dim small">static</span>'}</td>
           <td><span class="tag">${esc(d.webserver)}</span></td>
           <td>${d.ssl_enabled ? '<span class="tag tag-lime">' + icon("ssl", "") + ' secured</span>' : '<span class="tag">none</span>'}</td>
@@ -41,12 +62,23 @@ addRoute("/domains", {
             <button class="btn btn-ghost act-preview" title="Preview (works before DNS propagates)">${icon("eye")}</button>
             <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
           </div></td>
-        </tr>`).join("")}</tbody></table></div>`;
+        </tr>`;
+
+    listEl.innerHTML = `<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Domain</th>${admin ? "<th>User</th>" : ""}<th>PHP</th><th>Web server</th><th>SSL</th><th>Created</th><th></th></tr></thead>
+      <tbody>${ordered.map(row).join("")}</tbody></table></div>`;
 
     listEl.querySelectorAll("tr[data-id]").forEach((tr) => {
       tr.querySelector(".act-open")?.addEventListener("click", () => openDetail(+tr.dataset.id));
       tr.querySelector(".act-preview")?.addEventListener("click", (e) => { e.stopPropagation(); openPreview(+tr.dataset.id); });
       tr.querySelector(".act-del")?.addEventListener("click", (e) => { e.stopPropagation(); del(tr.dataset.id); });
+    });
+
+    document.getElementById("domain-user-q")?.addEventListener("input", (e) => {
+      const q = e.target.value.toLowerCase();
+      listEl.querySelectorAll("tbody tr").forEach((tr) => {
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+      });
     });
 
     document.getElementById("btn-add-domain").onclick = () => openCreate(phpVersions, wsInfo.available);
@@ -124,6 +156,58 @@ function openCreate(phpVersions, webServers) {
   });
 }
 
+function openCreateSubdomain(domains, phpVersions, webServers) {
+  if (!domains.length) { toast("Add a domain first, then attach sub-domains to it", "warn"); return; }
+  const phpOptions = [{ value: "", label: "No PHP (static site)" }].concat(phpVersions.map((v) => ({ value: v, label: "PHP " + v })));
+  const wsOptions = (webServers.length ? webServers : ["go"]).map((s) => ({ value: s, label: s }));
+  const fields = [
+    { name: "master", label: "Master domain", type: "select", required: true,
+      options: domains.map((d) => ({ value: String(d.id), label: d.domain })) },
+    { name: "label", label: "Sub-domain label", placeholder: "shop", required: true, mono: true,
+      help: "Full name will be <label>.<master domain> — nested inside the master domain's folder by default." },
+    { name: "php_version", label: "PHP version", type: "select", options: phpOptions },
+    { name: "webserver", label: "Web server", type: "select", options: wsOptions },
+  ];
+  promptDialog("Add a sub-domain", fields).then(async (vals) => {
+    if (!vals) return;
+    const master = domains.find((d) => String(d.id) === vals.master);
+    if (!master) { toast("Master domain not found", "err"); return; }
+    const label = vals.label.trim().replace(/^\.+|\.+$/g, "");
+    if (!label) { toast("Sub-domain label is required", "err"); return; }
+    try {
+      const created = await api.post("/domains", {
+        domain: `${label}.${master.domain}`,
+        php_version: vals.php_version || "",
+        webserver: vals.webserver || "",
+        parent_domain_id: master.id,
+      });
+      toast(`Sub-domain ${created.domain.domain} is live`);
+      if (created.ftp) {
+        const done = document.createElement("button");
+        done.className = "btn btn-primary";
+        done.textContent = "Done";
+        const m = modal({
+          title: "FTP account created — copy the password now",
+          wide: true,
+          body: `<div>
+            <p class="small muted">A dedicated FTP account was created for this sub-domain, chrooted to its document root (${esc(created.ftp.home)}). This password is shown once — Aegis only keeps a hash of it.</p>
+            <dl class="kv" style="grid-template-columns:auto 1fr;margin-bottom:10px">
+              <dt>Username</dt><dd class="mono">${esc(created.ftp.username)}</dd>
+              ${created.ftp.webftp_url ? `<dt>Web FTP</dt><dd><a href="${esc(created.ftp.webftp_url)}" target="_blank" rel="noopener" class="mono">${esc(created.ftp.webftp_url)}</a></dd>` : ""}
+            </dl>
+            <div class="creds-box mono" style="word-break:break-all;user-select:all">${esc(created.ftp.password)}</div>
+          </div>`,
+          actions: [done],
+          onClose: refresh,
+        });
+        done.onclick = () => m.close();
+      } else {
+        refresh();
+      }
+    } catch (ex) { toast(ex.message, "err"); }
+  });
+}
+
 function openDetail(id, onChanged) {
   api.get("/domains/" + id).then((d) => {
     const dom = d.domain;
@@ -147,6 +231,7 @@ function openDetail(id, onChanged) {
               <dt>webserver</dt><dd><span class="tag">${esc(dom.webserver)}</span></dd>
               <dt>ip</dt><dd class="mono">${dom.ip_address ? esc(dom.ip_address) : '<span class="dim">any (unassigned)</span>'} ${isAdmin() ? '<a href="#/ips" class="small">manage</a>' : ""}</dd>
               <dt>ssl</dt><dd>${dom.ssl_enabled ? statusTag("issued") : '<span class="tag">off</span>'} ${dom.ssl_enabled ? '<span class="small dim mono">' + esc(dom.ssl_provider || "") + "</span>" : ""}</dd>
+              ${dom.parent_domain_id ? `<dt>master domain</dt><dd><a href="#" id="dd-master-link" class="mono small">${icon("globe", "")} view master →</a></dd>` : ""}
               <dt>created</dt><dd class="small">${fmtAgo(dom.created_at)}</dd>
             </dl>
             <div style="height:14px"></div>
@@ -191,6 +276,11 @@ function openDetail(id, onChanged) {
         </div>
         <div style="height:16px"></div>
         ${sslBlock(dom, id, !!d.webftp_url, !!d.webftp_ssl_covered)}`;
+      document.getElementById("dd-master-link")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        m.close();
+        openDetail(dom.parent_domain_id);
+      });
       document.getElementById("dd-install").onclick = () => appPickerDialog(dom, id, m);
       document.getElementById("dd-wpcli").onclick = () => wpCliDialog(id);
       document.getElementById("dd-apply-php").onclick = async () => {

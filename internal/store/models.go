@@ -29,6 +29,16 @@ type User struct {
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 
+	// TOTP two-factor auth — opt-in per user (see internal/auth/totp.go).
+	// TOTPSecret holds the base32 secret once enrollment starts (set before
+	// TOTPEnabled flips true, so a half-finished enrollment never grants
+	// access on its own) and TOTPBackupCodes is a JSON array of bcrypt
+	// hashes, never the plaintext codes — both excluded from JSON output
+	// unconditionally since even publicUser must never leak them.
+	TOTPSecret      string `json:"-"`
+	TOTPEnabled     bool   `json:"totp_enabled"`
+	TOTPBackupCodes string `json:"-"`
+
 	// Populated on list requests.
 	DiskUsedBytes int64  `json:"disk_used_bytes,omitempty"`
 	DomainCount   int    `json:"domain_count,omitempty"`
@@ -95,8 +105,17 @@ type Domain struct {
 	IPID int64 `json:"ip_id,omitempty"`
 	// IPAddress is IP.Address joined in at read time for convenience
 	// (empty when IPID is 0) — see store/domains.go's domainCols query.
-	IPAddress string    `json:"ip_address,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	IPAddress string `json:"ip_address,omitempty"`
+	// Username is User.Username joined in at read time for convenience
+	// (like IPAddress above) — never written back through UpdateDomain.
+	Username string `json:"username,omitempty"`
+	// ParentDomainID references another Domain.ID this one is nested under
+	// (0 = top-level domain). Set only at creation time via svc.Domains.Create
+	// (see CreateOptions.ParentDomainID) — a sub-domain is otherwise a fully
+	// independent Domain row with its own PHP/webserver/SSL/document root;
+	// this field exists purely to group/link it to its master in the UI.
+	ParentDomainID int64     `json:"parent_domain_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // IP is one address in the panel's managed IP pool. kind="shared" (the

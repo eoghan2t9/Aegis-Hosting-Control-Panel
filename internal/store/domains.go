@@ -7,12 +7,13 @@ import (
 	"time"
 )
 
-// domainCols is always selected against "FROM domains d LEFT JOIN ips ip ON
-// ip.id = d.ip_id" so ip_address comes back resolved without every caller
-// needing its own join.
+// domainCols is always selected against domainFrom ("FROM domains d LEFT
+// JOIN ips ip ON ip.id = d.ip_id LEFT JOIN users u ON u.id = d.user_id") so
+// ip_address and username come back resolved without every caller needing
+// its own join.
 const domainCols = `d.id, d.user_id, d.domain, d.document_root, d.php_version, d.webserver, d.ssl_enabled,
 	d.ssl_cert_path, d.ssl_key_path, d.ssl_provider, d.ssl_auto_renew, d.proxy_target, d.php_settings,
-	d.ip_id, COALESCE(ip.address, ''), d.created_at`
+	d.ip_id, COALESCE(ip.address, ''), COALESCE(u.username, ''), d.parent_domain_id, d.created_at`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var d Domain
@@ -20,7 +21,8 @@ func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var phpSettings string
 	if err := row.Scan(&d.ID, &d.UserID, &d.Domain, &d.DocumentRoot, &d.PHPVersion,
 		&d.WebServer, &enabled, &d.SSLCertPath, &d.SSLKeyPath, &d.SSLProvider,
-		&autoRenew, &d.ProxyTarget, &phpSettings, &d.IPID, &d.IPAddress, &created); err != nil {
+		&autoRenew, &d.ProxyTarget, &phpSettings, &d.IPID, &d.IPAddress, &d.Username,
+		&d.ParentDomainID, &created); err != nil {
 		return nil, wrapErr(err)
 	}
 	d.SSLEnabled = getBool(enabled)
@@ -39,9 +41,10 @@ func (s *Store) CreateDomain(ctx context.Context, d *Domain) error {
 	ts := now()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO domains (user_id, domain, document_root,
 		php_version, webserver, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_provider,
-		ssl_auto_renew, proxy_target, php_settings, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ssl_auto_renew, proxy_target, php_settings, parent_domain_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.UserID, d.Domain, d.DocumentRoot, d.PHPVersion, d.WebServer, d.SSLEnabled,
-		d.SSLCertPath, d.SSLKeyPath, d.SSLProvider, d.SSLAutoRenew, d.ProxyTarget, string(phpSettings), ts)
+		d.SSLCertPath, d.SSLKeyPath, d.SSLProvider, d.SSLAutoRenew, d.ProxyTarget, string(phpSettings),
+		d.ParentDomainID, ts)
 	if err != nil {
 		return wrapErr(err)
 	}
@@ -54,7 +57,7 @@ func (s *Store) CreateDomain(ctx context.Context, d *Domain) error {
 	return nil
 }
 
-const domainFrom = `domains d LEFT JOIN ips ip ON ip.id = d.ip_id`
+const domainFrom = `domains d LEFT JOIN ips ip ON ip.id = d.ip_id LEFT JOIN users u ON u.id = d.user_id`
 
 func (s *Store) GetDomain(ctx context.Context, id int64) (*Domain, error) {
 	row := s.db.QueryRowContext(ctx, "SELECT "+domainCols+" FROM "+domainFrom+" WHERE d.id = ?", id)
@@ -134,6 +137,9 @@ func (s *Store) DeleteDomain(ctx context.Context, id int64) error {
 		// otherwise domain_id would dangle and web_port would silently start
 		// pointing at whatever new domain later reuses this id.
 		"UPDATE containers SET domain_id = 0, web_port = 0 WHERE domain_id = ?",
+		// Sub-domains survive their master's deletion too, same reasoning —
+		// they un-link (become top-level) rather than dangling or cascading.
+		"UPDATE domains SET parent_domain_id = 0 WHERE parent_domain_id = ?",
 		"DELETE FROM domains WHERE id = ?",
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

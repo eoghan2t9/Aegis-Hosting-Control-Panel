@@ -49,6 +49,19 @@ function parseVolumes(text) {
   return out;
 }
 
+// Inverse of parsePorts/parseEnv/parseVolumes above — used to prefill the
+// "New container" textareas from a parsed docker-compose.yml (see
+// importCompose()) with exactly the text a user would have typed by hand.
+function fmtPortsText(ports) {
+  return (ports || []).map((p) => `${p.container_port}:${p.host_port || 0}/${p.proto || "tcp"}${p.public ? " public" : ""}`).join("\n");
+}
+function fmtEnvText(env) {
+  return Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+}
+function fmtVolumesText(volumes) {
+  return (volumes || []).map((v) => `${v.host_path}:${v.container_path}`).join("\n");
+}
+
 addRoute("/containers", {
   title: "Containers",
   icon: "box",
@@ -57,6 +70,7 @@ addRoute("/containers", {
   feature: "docker",
   render: async (view) => {
     view.innerHTML = pageHead("Containers", "Run Docker containers under your account — attach one to a domain to reverse-proxy it, or publish a port directly for standalone services.", `
+      <button class="btn" id="btn-import-compose">${icon("upload")} Import compose file</button>
       <button class="btn btn-primary" id="btn-container">${icon("plus")} New container</button>`);
     view.insertAdjacentHTML("beforeend", `<div id="containers-setup"></div><div id="containers-root">${loading()}</div>`);
 
@@ -108,15 +122,15 @@ addRoute("/containers", {
           </tr>`).join("")}</tbody></table></div>`;
     }
 
-    async function newContainer() {
+    async function newContainer(prefill = {}) {
       const vals = await promptDialog("New container", [
-        { name: "name", label: "Name", required: true, placeholder: "my-app", help: "Lowercase letters, digits, hyphens." },
-        { name: "image", label: "Image", required: true, mono: true, placeholder: "nginx:alpine" },
-        { name: "ports", label: "Ports", type: "textarea", mono: true, required: true,
+        { name: "name", label: "Name", required: true, placeholder: "my-app", value: prefill.name || "", help: "Lowercase letters, digits, hyphens." },
+        { name: "image", label: "Image", required: true, mono: true, placeholder: "nginx:alpine", value: prefill.image || "" },
+        { name: "ports", label: "Ports", type: "textarea", mono: true, required: true, value: fmtPortsText(prefill.ports),
           placeholder: "80:0/tcp", help: "One per line: container_port[:host_port][/proto] [public]. host_port 0 or omitted auto-allocates. Add 'public' to bind 0.0.0.0 instead of localhost-only." },
-        { name: "env", label: "Environment", type: "textarea", mono: true, placeholder: "KEY=value", help: "One per line: KEY=VALUE." },
-        { name: "volumes", label: "Volumes", type: "textarea", mono: true, placeholder: "data:/var/lib/data", help: "One per line: path-under-your-home:/container/path." },
-        { name: "restart_policy", label: "Restart policy", type: "select", value: "unless-stopped",
+        { name: "env", label: "Environment", type: "textarea", mono: true, placeholder: "KEY=value", value: fmtEnvText(prefill.env), help: "One per line: KEY=VALUE." },
+        { name: "volumes", label: "Volumes", type: "textarea", mono: true, placeholder: "data:/var/lib/data", value: fmtVolumesText(prefill.volumes), help: "One per line: path-under-your-home:/container/path." },
+        { name: "restart_policy", label: "Restart policy", type: "select", value: prefill.restart_policy || "unless-stopped",
           options: [{ label: "Unless stopped", value: "unless-stopped" }, { label: "Always", value: "always" }, { label: "On failure", value: "on-failure" }, { label: "No", value: "no" }] },
         { name: "memory_limit_mb", label: "Memory limit (MB)", type: "number", placeholder: "0 = unlimited" },
         { name: "cpu_limit", label: "CPU limit (cores)", placeholder: "0 = unlimited" },
@@ -141,6 +155,27 @@ addRoute("/containers", {
         toast("Container created");
         refresh();
       } catch (ex) { toast(ex.message, "err"); }
+    }
+
+    async function importCompose() {
+      const step1 = await promptDialog("Import docker-compose.yml", [
+        { name: "compose", label: "Paste your compose file", type: "textarea", mono: true, required: true, rows: 14 },
+      ], { wide: true, okText: "Next" });
+      if (!step1) return;
+      let result;
+      try { result = await api.post("/containers/import-compose", { compose: step1.compose }); }
+      catch (ex) { toast(ex.message, "err"); return; }
+      if (result.needs_service) {
+        const step2 = await promptDialog("Which service?", [
+          { name: "service", label: "Service", type: "select", required: true,
+            options: result.services.map((s) => ({ label: s, value: s })) },
+        ], { okText: "Next" });
+        if (!step2) return;
+        try { result = await api.post("/containers/import-compose", { compose: step1.compose, service: step2.service }); }
+        catch (ex) { toast(ex.message, "err"); return; }
+      }
+      if (result.warnings?.length) toast(result.warnings.join(" · "), "warn");
+      newContainer(result);
     }
 
     root.querySelectorAll("tbody tr").forEach((tr) => {
@@ -199,6 +234,7 @@ addRoute("/containers", {
       });
     });
 
-    document.getElementById("btn-container").onclick = newContainer;
+    document.getElementById("btn-container").onclick = () => newContainer();
+    document.getElementById("btn-import-compose").onclick = importCompose;
   },
 });

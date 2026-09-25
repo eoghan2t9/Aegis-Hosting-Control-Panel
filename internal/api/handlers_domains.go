@@ -63,9 +63,14 @@ type createDomainReq struct {
 	WebServer  string `json:"webserver"`
 	// RelRoot optionally places the document root at a custom folder
 	// relative to the owner's home (e.g. "example.com/sub" to nest a
-	// subdomain inside the master domain's folder). Empty = <domain>/public.
+	// subdomain inside the master domain's folder). Empty = <domain>/public,
+	// unless ParentDomainID is set (see handleDomainsCreate's default).
 	RelRoot string `json:"rel_root,omitempty"`
 	UserID  int64  `json:"user_id,omitempty"` // admin: create for another user
+	// ParentDomainID, when set, links this domain to an existing master
+	// domain (see the sub-domain manager on the Domains page). The parent
+	// must belong to the same owner as the domain being created.
+	ParentDomainID int64 `json:"parent_domain_id,omitempty"`
 }
 
 func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
@@ -86,10 +91,30 @@ func (s *Server) handleDomainsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "only admins can create domains for other users")
 		return
 	}
+	relRoot := req.RelRoot
+	if req.ParentDomainID > 0 {
+		parent, err := s.Store.GetDomain(r.Context(), req.ParentDomainID)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "master domain not found")
+			return
+		}
+		if parent.UserID != owner.ID {
+			writeErr(w, http.StatusBadRequest, "master domain must belong to the same account")
+			return
+		}
+		if strings.TrimSpace(relRoot) == "" {
+			label := req.Domain
+			if i := strings.Index(label, "."); i > 0 {
+				label = label[:i]
+			}
+			relRoot = parent.Domain + "/" + label
+		}
+	}
 	dom, ftp, err := s.Domains.Create(r.Context(), owner, req.Domain, svc.CreateOptions{
-		PHPVersion: req.PHPVersion,
-		WebServer:  req.WebServer,
-		RelPath:    req.RelRoot,
+		PHPVersion:     req.PHPVersion,
+		WebServer:      req.WebServer,
+		RelPath:        relRoot,
+		ParentDomainID: req.ParentDomainID,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
