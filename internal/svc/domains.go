@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"aegis/internal/config"
 	"aegis/internal/store"
@@ -192,6 +193,12 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 		_ = os.Remove(root) // only succeeds when the dir we just made is empty
 		return nil, nil, fmt.Errorf("seed placeholder page: %w", err)
 	}
+	// MkdirAll above runs as the panel's own (root) process, so without this
+	// the docroot and placeholder page would stay root:root — unusable over
+	// the owner's FTP/web-FTP account and unreadable by their PHP-FPM pool.
+	// Same "chown to <owner>:www-data" convention as ftp.go, cron.go,
+	// backup.go, docker.go and webapps.go.
+	_, _ = RunTimeout(15*time.Second, "chown", "-R", user.Username+":www-data", root)
 
 	dom := &store.Domain{
 		UserID:         user.ID,
