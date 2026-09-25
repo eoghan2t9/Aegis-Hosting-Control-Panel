@@ -187,7 +187,7 @@ func run(configPath string) error {
 	// Shared webftp server: every domain's "webftp.<domain>" vhost reverse
 	// proxies here (see svc.Domains.createWebftpDomain), loopback-only since
 	// it's only ever reached through that proxy, never directly.
-	webftpSvc := svc.NewWebFTP(st, files)
+	webftpSvc := svc.NewWebFTP(st, files, thumbsSvc)
 	go func() {
 		if err := http.ListenAndServe(svc.WebFTPAddr, webftpSvc.Handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("webftp server: %w", err)
