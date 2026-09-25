@@ -268,6 +268,16 @@ if [ "$WITH_FTP" = 1 ]; then
   log "installing vsftpd"
   apt_get install vsftpd
   mkdir -p /var/run/vsftpd/empty
+  # Every FTP account svc/ftp.go creates uses `useradd -s /sbin/nologin` (it's
+  # an FTP-only account, never meant to get an interactive shell) — but the
+  # distro's stock /etc/pam.d/vsftpd ends with `auth required pam_shells.so`,
+  # which rejects any account whose shell isn't listed in /etc/shells.
+  # /sbin/nologin never is, so every single FTP login would otherwise fail
+  # with "530 Login incorrect" regardless of a correct password. Strip it;
+  # idempotent (a no-op on a rerun once it's already gone).
+  if [ -f /etc/pam.d/vsftpd ]; then
+    sed -i '/pam_shells\.so/d' /etc/pam.d/vsftpd
+  fi
 fi
 
 if [ "$WITH_MAIL" = 1 ]; then
