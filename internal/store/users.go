@@ -6,18 +6,20 @@ import (
 )
 
 const userCols = `id, username, email, password_hash, role, package_id, status, owner_id,
-	home_dir, quota_disk_bytes, quota_bandwidth_bytes, created_at, updated_at`
+	home_dir, quota_disk_bytes, quota_bandwidth_bytes, created_at, updated_at,
+	totp_secret, totp_enabled, totp_backup_codes`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var created, updated interface{}
+	var created, updated, totpEnabled interface{}
 	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role, &u.PackageID,
 		&u.Status, &u.OwnerID, &u.HomeDir, &u.QuotaDiskBytes, &u.QuotaBandwidthBytes,
-		&created, &updated); err != nil {
+		&created, &updated, &u.TOTPSecret, &totpEnabled, &u.TOTPBackupCodes); err != nil {
 		return nil, wrapErr(err)
 	}
 	u.CreatedAt = parseTime(created)
 	u.UpdatedAt = parseTime(updated)
+	u.TOTPEnabled = getBool(totpEnabled)
 	return &u, nil
 }
 
@@ -114,6 +116,40 @@ func (s *Store) SetUserPassword(ctx context.Context, id int64, hash string) erro
 
 func (s *Store) SetUserStatus(ctx context.Context, id int64, status string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE users SET status=?, updated_at=? WHERE id=?", status, now(), id)
+	return err
+}
+
+// SetTOTPSecret stores a newly generated secret for an in-progress
+// enrollment. Deliberately doesn't touch totp_enabled — a secret alone
+// grants nothing until EnableTOTP confirms the user actually controls an
+// authenticator app that can produce a matching code.
+func (s *Store) SetTOTPSecret(ctx context.Context, id int64, secret string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE users SET totp_secret=?, updated_at=? WHERE id=?", secret, now(), id)
+	return err
+}
+
+// EnableTOTP flips totp_enabled on and stores the backup-code hashes,
+// completing an enrollment that SetTOTPSecret started.
+func (s *Store) EnableTOTP(ctx context.Context, id int64, backupCodeHashesJSON string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE users SET totp_enabled=1, totp_backup_codes=?, updated_at=? WHERE id=?",
+		backupCodeHashesJSON, now(), id)
+	return err
+}
+
+// SetTOTPBackupCodes rewrites the stored hash list — used to remove a
+// backup code the instant it's spent, so it can never be replayed.
+func (s *Store) SetTOTPBackupCodes(ctx context.Context, id int64, backupCodeHashesJSON string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE users SET totp_backup_codes=?, updated_at=? WHERE id=?",
+		backupCodeHashesJSON, now(), id)
+	return err
+}
+
+// DisableTOTP clears the secret, backup codes and enabled flag in one go —
+// a half-cleared state (e.g. enabled=0 but the old secret still present)
+// would let a stale QR code or a leaked secret silently work again if the
+// flag were ever flipped back on some other way.
+func (s *Store) DisableTOTP(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE users SET totp_enabled=0, totp_secret='', totp_backup_codes='[]', updated_at=? WHERE id=?", now(), id)
 	return err
 }
 
