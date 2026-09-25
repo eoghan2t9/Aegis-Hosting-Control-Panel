@@ -130,11 +130,12 @@ function buildShell() {
     <span class="user-actions">
       <button id="btn-logout" class="btn btn-ghost" title="Log out">${icon("logout")}</button>
     </span>`;
-  document.getElementById("btn-logout").onclick = async () => {
+  const doLogout = async () => {
     await api.post("/auth/logout").catch(() => {});
     api.setToken("");
     location.reload();
   };
+  document.getElementById("btn-logout").onclick = doLogout;
 
   // Impersonation banner.
   const bar = document.getElementById("impersonate-bar");
@@ -192,6 +193,12 @@ function buildShell() {
       document.getElementById("sidebar-backdrop")?.remove();
     });
   });
+
+  const logoutBtn = document.createElement("button");
+  logoutBtn.className = "nav-link nav-logout";
+  logoutBtn.innerHTML = `${icon("logout")}<span>Log out</span>`;
+  logoutBtn.onclick = doLogout;
+  nav.appendChild(logoutBtn);
 
   document.getElementById("nav-toggle").onclick = () => {
     const sb = document.getElementById("sidebar");

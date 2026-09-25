@@ -330,6 +330,7 @@ select { cursor: pointer; }
   color: var(--accent);
 }
 .nav-badge { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+.nav-logout { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .sidebar-foot { padding: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .server-pill {
   display: flex; align-items: center; gap: 8px;
