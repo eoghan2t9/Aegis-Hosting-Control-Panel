@@ -1,7 +1,7 @@
 import { addRoute, isAdmin, me } from "../app.js";
 import { p } from "../base.js";
 import { api } from "../api.js";
-import { icon, fmtBytes, fmtPct, fmtNum, fmtAgo, statusTag, sparkline, ring, esc, pageHead, toast } from "../ui.js";
+import { icon, fmtBytes, fmtPct, fmtNum, fmtAgo, statusTag, sparkline, ring, esc, pageHead, toast, promptDialog, modal } from "../ui.js";
 
 addRoute("/dashboard", {
   title: "Dashboard",
@@ -189,6 +189,39 @@ async function loadUsage(view) {
 
 function spinnerHtml() { return `<div class="spinner"></div>`; }
 
+// loginMaybe2FA wraps /auth/login for in-app callers that need a fresh
+// token (password change, below) — if the account has 2FA enabled, the
+// bare login call now returns totp_required instead of a token, so this
+// prompts for a code inline and completes the second step, rather than
+// leaving the caller with an unusable half-finished login.
+async function loginMaybe2FA(username, password) {
+  const data = await api.post("/auth/login", { username, password });
+  if (!data.totp_required) return data;
+  const vals = await promptDialog("Two-factor code required", [
+    { name: "code", label: "Authenticator code or backup code", required: true, mono: true },
+  ], { okText: "Verify" });
+  if (!vals) throw new Error("Two-factor verification cancelled");
+  return api.post("/auth/totp/verify", { challenge: data.challenge, code: vals.code });
+}
+
+// showBackupCodes is the final step of enabling 2FA — shown exactly once,
+// right after the server generates them, matching how the FTP
+// account-creation flow (web/js/views/domains.js) shows a one-time password.
+function showBackupCodes(codes) {
+  const done = document.createElement("button");
+  done.className = "btn btn-primary";
+  done.textContent = "I've saved these";
+  const m = modal({
+    title: "Save your backup codes",
+    body: `<div>
+      <p class="small dim">Each code works once, if you ever lose access to your authenticator app. Aegis only keeps a hash of them — save these somewhere safe now, they won't be shown again.</p>
+      <div class="creds-box mono" style="margin:10px 0;line-height:1.9;user-select:all">${codes.map(esc).join("<br>")}</div>
+    </div>`,
+    actions: [done],
+  });
+  done.onclick = () => m.close();
+}
+
 addRoute("/account", {
   title: "My account",
   icon: "user",
@@ -221,6 +254,12 @@ addRoute("/account", {
           </form>
         </div>
         <div class="card">
+          <div class="card-head"><span class="card-title">Two-factor authentication</span>
+            <span class="card-actions">${u.totp_enabled ? statusTag("active") : `<span class="tag">off</span>`}</span></div>
+          <p class="small dim" style="margin:0 0 12px">Opt-in — off by default. Once enabled, login asks for a code from your authenticator app (or a saved backup code) after your password.</p>
+          <button class="btn ${u.totp_enabled ? "" : "btn-primary"}" id="totp-toggle">${u.totp_enabled ? "Disable 2FA" : "Enable 2FA"}</button>
+        </div>
+        <div class="card">
           <div class="card-head"><span class="card-title">Usage</span></div>
           <div id="usage-root" class="small dim">loading…</div>
         </div>
@@ -249,15 +288,74 @@ addRoute("/account", {
       if (newPw.length < 8) return toast("Password must be at least 8 characters", "warn");
       try {
         // Verify current password via login, then reset.
-        await api.post("/auth/login", { username: u.username, password: oldPw });
+        await loginMaybe2FA(u.username, oldPw);
         await api.post(`/users/${u.id}/reset-password`, { password: newPw });
         // Session was revoked by the reset — sign back in with the new password.
-        const data = await api.post("/auth/login", { username: u.username, password: newPw });
+        const data = await loginMaybe2FA(u.username, newPw);
         api.setToken(data.token);
         toast("Password updated");
         document.getElementById("pw-old").value = "";
         document.getElementById("pw-new").value = "";
       } catch (ex) { toast(ex.message, "err"); }
+    };
+
+    document.getElementById("totp-toggle").onclick = async () => {
+      if (u.totp_enabled) {
+        const vals = await promptDialog("Disable two-factor authentication", [
+          { name: "password", label: "Current password", type: "password", required: true },
+        ], { okText: "Disable" });
+        if (!vals) return;
+        try {
+          await api.post("/auth/totp/disable", { password: vals.password });
+          toast("Two-factor authentication disabled");
+          u.totp_enabled = false;
+          refresh();
+        } catch (ex) { toast(ex.message, "err"); }
+        return;
+      }
+
+      let enroll;
+      try { enroll = await api.post("/auth/totp/enroll", {}); }
+      catch (ex) { toast(ex.message, "err"); return; }
+
+      const confirmBtn = document.createElement("button");
+      confirmBtn.className = "btn btn-primary";
+      confirmBtn.textContent = "Confirm";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "btn";
+      cancelBtn.textContent = "Cancel";
+      const enrollModal = modal({
+        title: "Enable two-factor authentication",
+        body: `<div>
+          <p class="small dim">Add this key to your authenticator app (Google Authenticator, Authy, 1Password, Bitwarden…) — enter it manually or open the link below on the same device as the app.</p>
+          <div class="creds-box mono" style="word-break:break-all;user-select:all;margin:10px 0">${esc(enroll.secret)}</div>
+          <p class="small dim mono" style="word-break:break-all"><a href="${esc(enroll.otpauth_uri)}">${esc(enroll.otpauth_uri)}</a></p>
+          <label class="field" style="margin-top:14px">
+            <span class="field-label">Code from your app</span>
+            <input type="text" id="totp-confirm-code" inputmode="numeric" class="mono" autocomplete="one-time-code" placeholder="123456">
+          </label>
+          <p id="totp-confirm-error" class="login-error" role="alert"></p>
+        </div>`,
+        actions: [cancelBtn, confirmBtn],
+      });
+      cancelBtn.onclick = () => enrollModal.close();
+      confirmBtn.onclick = async () => {
+        const code = document.getElementById("totp-confirm-code").value.trim();
+        const err = document.getElementById("totp-confirm-error");
+        if (!code) { err.textContent = "Enter the code from your authenticator app."; return; }
+        confirmBtn.classList.add("btn-busy");
+        try {
+          const res = await api.post("/auth/totp/confirm", { code });
+          enrollModal.close();
+          u.totp_enabled = true;
+          showBackupCodes(res.backup_codes);
+          refresh();
+        } catch (ex) {
+          err.textContent = ex.message;
+        } finally {
+          confirmBtn.classList.remove("btn-busy");
+        }
+      };
     };
   },
 });
