@@ -13,6 +13,8 @@ import (
 
 	"aegis/internal/config"
 	"aegis/internal/store"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 // WebServer generates and applies site configurations across supported web
@@ -41,6 +43,7 @@ type WebServer struct {
 	// effect immediately instead of only on the next process restart.
 	goHTTP  *http.Server
 	goHTTPS *http.Server
+	goH3    *http3.Server // nil when HTTP/3 is off or its UDP port could not be bound
 
 	// fallbackCerts caches lazily-generated self-signed certificates for
 	// known GoRoutes that have no real SSL configured yet (see GoTLSCert) —

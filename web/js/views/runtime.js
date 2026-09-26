@@ -39,7 +39,7 @@ addRoute("/runtime", {
         <div>
           <div class="card" style="margin-bottom:16px">
             <div class="card-head"><span class="card-title">Web server</span>
-              <span class="card-actions"><span class="tag tag-teal">active: ${esc(ws.active || "—")}</span></span></div>
+              <span class="card-actions"><span class="tag tag-teal">active: ${esc(ws.active || "—")}</span>${ws.active === "go" ? `<span class="tag ${ws.http3 ? "tag-lime" : ""}" title="HTTP/3 needs UDP port 443 reachable">HTTP/3 ${ws.http3 ? "on" : "off"}</span>` : ""}</span></div>
             <p class="small muted">The active server generates vhosts for every new domain. Native Go and the classic servers are all supported.</p>
             <div class="pill-group" id="ws-picker">
               ${["go", "nginx", "apache", "caddy"].map((s) => {

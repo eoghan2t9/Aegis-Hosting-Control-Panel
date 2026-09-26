@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 // GoAccessLogDir is where the native Go web server writes per-domain access
@@ -176,17 +178,34 @@ func (w *WebServer) StartGo(panelHandler http.Handler, errCh chan<- error) error
 		}
 	}()
 
+	// HTTP/3 shares the certificates and the handler with HTTPS. Advertising it
+	// (Alt-Svc) only starts once the UDP listener is really up.
+	tlsConf := &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return w.GoTLSCert(hello.ServerName)
+		},
+		MinVersion: tls.VersionTLS12,
+	}
+	httpsHandler := site
+	var h3 *http3.Server
+	if http3Enabled() {
+		if altSvc, err := altSvcValue(httpsAddr); err != nil {
+			slog.Warn("go http/3 disabled", "err", err)
+		} else if h3, err = startHTTP3(httpsAddr, tlsConf, site); err != nil {
+			slog.Warn("go http/3 disabled: could not listen on UDP", "addr", httpsAddr, "err", err)
+			h3 = nil
+		} else {
+			httpsHandler = withAltSvc(site, altSvc)
+			slog.Info("go web server listening (http/3, quic)", "addr", httpsAddr)
+		}
+	}
+
 	httpsSrv := &http.Server{
 		Addr:              httpsAddr,
-		Handler:           site,
+		Handler:           httpsHandler,
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       2 * time.Minute,
-		TLSConfig: &tls.Config{
-			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				return w.GoTLSCert(hello.ServerName)
-			},
-			MinVersion: tls.VersionTLS12,
-		},
+		TLSConfig:         tlsConf,
 	}
 	slog.Info("go web server listening (https, sni)", "addr", httpsAddr)
 	go func() {
@@ -195,7 +214,7 @@ func (w *WebServer) StartGo(panelHandler http.Handler, errCh chan<- error) error
 		}
 	}()
 
-	w.goHTTP, w.goHTTPS = httpSrv, httpsSrv
+	w.goHTTP, w.goHTTPS, w.goH3 = httpSrv, httpsSrv, h3
 	return nil
 }
 
@@ -216,8 +235,8 @@ func trySend(errCh chan<- error, err error) {
 // they aren't running.
 func (w *WebServer) StopGo() {
 	w.mu.Lock()
-	httpSrv, httpsSrv := w.goHTTP, w.goHTTPS
-	w.goHTTP, w.goHTTPS = nil, nil
+	httpSrv, httpsSrv, h3 := w.goHTTP, w.goHTTPS, w.goH3
+	w.goHTTP, w.goHTTPS, w.goH3 = nil, nil, nil
 	w.mu.Unlock()
 	if httpSrv == nil {
 		return
@@ -228,6 +247,16 @@ func (w *WebServer) StopGo() {
 	if httpsSrv != nil {
 		_ = httpsSrv.Shutdown(ctx)
 	}
+	if h3 != nil {
+		_ = h3.Shutdown(ctx)
+	}
+}
+
+// HTTP3Active reports whether the native server is currently serving HTTP/3.
+func (w *WebServer) HTTP3Active() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.goH3 != nil
 }
 
 // ServePreviewRoute serves one domain's docroot through the panel (static

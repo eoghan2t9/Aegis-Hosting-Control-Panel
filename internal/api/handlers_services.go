@@ -141,6 +141,7 @@ func (s *Server) handleWebServerStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"active":    s.Web.Active(),
 		"available": s.Web.Available(),
+		"http3":     s.Web.HTTP3Active(),
 		"tuning":    s.tuningSummary(),
 	})
 }
