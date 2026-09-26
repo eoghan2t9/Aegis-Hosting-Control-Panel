@@ -61,7 +61,6 @@ internal/store ──SQL──▶ SQLite (WAL)
 
 Migrations are additive (`CREATE TABLE IF NOT EXISTS`, plus
 `addColumnIfMissing` for columns added later); schema lives in `store.migrate`.
-`docs/CODEMAP.md` maps each table to the file that queries it.
 
 ## Authentication & authorization
 

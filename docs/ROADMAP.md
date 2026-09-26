@@ -7,8 +7,8 @@ the current foundation, in rough priority order.
 > cron jobs, the web-application manager, fail2ban/security centre, backup
 > scheduling with remote targets, per-account quotas and API tokens as
 > missing. All of those are **implemented** now (see the feature map in
-> `README.md`; the knowledge graph in `AGENTS.md` maps each one to its
-> service, store and handler files). The list below reflects verified gaps —
+> `README.md`, and each has its service, store and handler files under
+> `internal/`). The list below reflects verified gaps —
 > nothing here exists in `internal/` today.
 
 ## High priority
@@ -52,8 +52,8 @@ the current foundation, in rough priority order.
 ## Notes for implementers
 
 - New large domains (e.g. multi-server mode) must be added as first-class
-  sections (store tables + svc + view) following `docs/AI_INSTRUCTIONS.md`,
-  not as ad-hoc scripts.
+  sections (store tables + svc + view) following the layering in
+  `docs/ARCHITECTURE.md`, not as ad-hoc scripts.
 - Anything that enforces quotas must fail closed (refuse the operation) and
   log to the audit trail.
 - Keep the dev container the source of truth for testing new integrations

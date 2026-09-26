@@ -26,3 +26,10 @@ data/
 
 # Graphify knowledge-graph output (generated, regenerated locally on demand)
 graphify-out/
+
+# AI-agent docs: kept on disk for local sessions, never pushed to GitHub
+/CLAUDE.md
+/AGENTS.md
+/docs/AI_INSTRUCTIONS.md
+/docs/CODEMAP.md
+/docs/OPERATIONS.md
