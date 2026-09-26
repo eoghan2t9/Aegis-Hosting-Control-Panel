@@ -171,11 +171,18 @@ func (c *EditorConn) Close() error {
 // Open connects to dbRow as its own database user. It fails fast, without
 // waiting, if the panel user already has editorMaxConcurrent requests running.
 func (e *DBEditor) Open(ctx context.Context, dbRow *store.Database) (*EditorConn, error) {
+	return e.OpenWithLimit(ctx, dbRow, editorStatementTimeout)
+}
+
+// OpenWithLimit is Open with a longer per-statement limit, for imports and
+// exports whose statements (a big INSERT, an index build) legitimately outrun
+// an interactive query. The connection's read timeout follows it.
+func (e *DBEditor) OpenWithLimit(ctx context.Context, dbRow *store.Database, limit time.Duration) (*EditorConn, error) {
 	release, err := e.acquire(ctx, dbRow.UserID)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := e.connect(ctx, dbRow)
+	conn, err := e.connect(ctx, dbRow, limit)
 	if err != nil {
 		release()
 		return nil, err
@@ -202,7 +209,7 @@ func (e *DBEditor) acquire(ctx context.Context, userID int64) (func(), error) {
 	}
 }
 
-func (e *DBEditor) connect(ctx context.Context, row *store.Database) (*EditorConn, error) {
+func (e *DBEditor) connect(ctx context.Context, row *store.Database, limit time.Duration) (*EditorConn, error) {
 	switch row.Server {
 	case "mariadb":
 		mc := mysql.NewConfig()
@@ -214,7 +221,7 @@ func (e *DBEditor) connect(ctx context.Context, row *store.Database) (*EditorCon
 		mc.AllowNativePasswords = true
 		mc.ClientFoundRows = true // UPDATE reports matched rows, so "no change" is not "not found"
 		mc.Timeout = 5 * time.Second
-		mc.ReadTimeout = editorStatementTimeout + 5*time.Second
+		mc.ReadTimeout = limit + 5*time.Second
 		mc.WriteTimeout = 15 * time.Second
 		mc.Params = map[string]string{"charset": "utf8mb4"}
 		db, err := sql.Open("mysql", mc.FormatDSN())
@@ -227,12 +234,12 @@ func (e *DBEditor) connect(ctx context.Context, row *store.Database) (*EditorCon
 			return nil, fmt.Errorf("could not connect to the database: %w", err)
 		}
 		// MariaDB's server-side limit; MySQL ignores/rejects it, which is fine.
-		_, _ = db.ExecContext(ctx, fmt.Sprintf("SET SESSION max_statement_time = %d", int(editorStatementTimeout.Seconds())))
+		_, _ = db.ExecContext(ctx, fmt.Sprintf("SET SESSION max_statement_time = %d", int(limit.Seconds())))
 		return &EditorConn{db: db, d: mysqlDialect}, nil
 	case "postgres":
 		dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable&connect_timeout=5&statement_timeout=%d",
 			url.QueryEscape(row.DBUser), url.QueryEscape(row.DBPassword),
-			e.Cfg.PostgreSQL.Host, e.Cfg.PostgreSQL.Port, url.PathEscape(row.Name), editorStatementTimeout.Milliseconds())
+			e.Cfg.PostgreSQL.Host, e.Cfg.PostgreSQL.Port, url.PathEscape(row.Name), limit.Milliseconds())
 		db, err := sql.Open("pgx", dsn)
 		if err != nil {
 			return nil, err

@@ -518,7 +518,7 @@ export function drawIO(x) {
       <section class="dbe-panel">
         <h3>${icon("upload")} Import</h3>
         <label class="field"><span class="field-label">Format</span><select id="im-fmt"><option value="sql">SQL script</option><option value="csv">CSV into a table</option></select></label>
-        <label class="field"><span class="field-label">File <span class="dim">(up to 64 MiB, UTF-8)</span></span><input type="file" id="im-file" accept=".sql,.csv,.txt,.tsv,text/*"></label>
+        <label class="field"><span class="field-label">File <span class="dim">(up to 4 GiB, UTF-8; .gz is fine)</span></span><input type="file" id="im-file" accept=".sql,.csv,.txt,.tsv,.gz,text/*,application/gzip"></label>
         <div id="im-csv" style="display:none">
           <label class="field"><span class="field-label">Into table</span><select id="im-table">${real.map((t) => `<option value="${esc(t.name)}" ${t.name === x.st.table ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>
           <div class="dbe-row2">
@@ -574,7 +574,7 @@ export function drawIO(x) {
   $("#im-go").onclick = async () => {
     const file = $("#im-file").files[0];
     if (!file) { toast("Choose a file first", "warn"); return; }
-    if (file.size > 64 * 1024 * 1024) { toast("That file is larger than 64 MiB", "err"); return; }
+    if (file.size > 4 * 1024 * 1024 * 1024) { toast("That file is larger than 4 GiB", "err"); return; }
     const csv = $("#im-fmt").value === "csv";
     if (csv && !$("#im-table").value) { toast("Choose a table", "warn"); return; }
     if (!csv && !await confirmDialog(`Run the SQL in ${file.name}? It can change or delete data in this database.`, { danger: true, title: "Import SQL", okText: "Run it" })) return;
@@ -586,7 +586,8 @@ export function drawIO(x) {
     }
     fd.append("file", file);
     const out = $("#im-out"), b = $("#im-go");
-    b.disabled = true; out.innerHTML = loading();
+    b.disabled = true;
+    out.innerHTML = `${loading()}<p class="small dim">${file.size > 50 * 1024 * 1024 ? `Importing ${(file.size / 1048576).toFixed(0)} MB — this can take several minutes. Keep this page open until it finishes.` : "Importing…"}</p>`;
     try {
       const res = await api.request("POST", `${x.base}/import`, fd, true);
       let data = null;

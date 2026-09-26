@@ -2,7 +2,9 @@ package svc
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +60,7 @@ func runEditorIOIT(t *testing.T, c *EditorConn) {
 			t.Fatal(err)
 		}
 	}
-	res, err := c.ImportSQL(ctx, text)
+	res, err := c.ImportSQL(ctx, strings.NewReader(text))
 	if err != nil {
 		t.Fatalf("import: %v\nresult: %+v\n%s", err, res, text)
 	}
@@ -82,15 +84,45 @@ func runEditorIOIT(t *testing.T, c *EditorConn) {
 
 	// --- a failing import: PostgreSQL rolls everything back ---
 	before := csvOf(t, c, "ed_items")
-	res, err = c.ImportSQL(ctx, "INSERT INTO ed_items (name) VALUES ('zzz-one'); INSERT INTO ed_items (name) VALUES (NULL); INSERT INTO ed_items (name) VALUES ('zzz-two')")
+	res, err = c.ImportSQL(ctx, strings.NewReader("INSERT INTO ed_items (name) VALUES ('zzz-one'); INSERT INTO ed_items (name) VALUES (NULL); INSERT INTO ed_items (name) VALUES ('zzz-two')"))
 	if err == nil || res.FailedAt != 2 {
 		t.Fatalf("expected statement 2 to fail, got %+v %v", res, err)
 	}
 	if c.d.kind == "postgres" && csvOf(t, c, "ed_items") != before {
 		t.Error("a failed PostgreSQL import must roll back")
 	}
-	if _, err := c.ImportSQL(ctx, "  -- nothing here\n "); err == nil {
+	if _, err := c.ImportSQL(ctx, strings.NewReader("  -- nothing here\n ")); err == nil {
 		t.Error("an empty script must be refused")
+	}
+
+	// --- a large gzip-compressed script streams through ---
+	var big strings.Builder
+	const bigRows = 40000
+	for i := 0; i < bigRows; i += 500 {
+		big.WriteString("INSERT INTO ed_items (name, note) VALUES ")
+		for j := 0; j < 500; j++ {
+			if j > 0 {
+				big.WriteString(",")
+			}
+			fmt.Fprintf(&big, "('bulk-%d', 'row %d; with ''quotes''')", i+j, i+j)
+		}
+		big.WriteString(";\n")
+	}
+	var gzb bytes.Buffer
+	zw := gzip.NewWriter(&gzb)
+	zw.Write([]byte("\xef\xbb\xbf" + big.String()))
+	zw.Close()
+	if res, err = c.ImportSQL(ctx, &gzb); err != nil || res.Statements != bigRows/500 {
+		t.Fatalf("gzip import: %+v %v", res, err)
+	}
+	if q, err := c.Exec(ctx, "SELECT COUNT(*) FROM ed_items WHERE name LIKE 'bulk-%'", 0); err != nil || fmt.Sprint(q.Rows[0][0]) != fmt.Sprint(bigRows) {
+		t.Fatalf("bulk rows: %+v %v", q, err)
+	}
+	if q, err := c.Exec(ctx, "SELECT note FROM ed_items WHERE name = 'bulk-7'", 0); err != nil || q.Rows[0][0] != "row 7; with 'quotes'" {
+		t.Errorf("bulk row content: %+v %v", q, err)
+	}
+	if _, err := c.Exec(ctx, "DELETE FROM ed_items WHERE name LIKE 'bulk-%'", 0); err != nil {
+		t.Fatal(err)
 	}
 
 	// --- CSV export -> truncate -> import ---
