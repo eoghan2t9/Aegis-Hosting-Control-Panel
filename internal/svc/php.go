@@ -244,6 +244,14 @@ php_admin_value[open_basedir] = %s:%s/tmp
 		tuning.PM, tuning.MaxChildren, tuning.StartServers, tuning.MinSpare, tuning.MaxSpare,
 		p.Cfg.HomeRoot, p.Cfg.HomeRoot, sanitizedPHPIniLines(iniSettings))
 
+	// A site has exactly one pool. When it moves to another PHP version the old
+	// version's pool file must go first, and that FPM must let go of the socket:
+	// otherwise the new version fails to bind it, refuses to start, and every
+	// other site on that version goes down with it.
+	for _, old := range removeStalePools("/etc/php", domain, version) {
+		_ = p.Reload(old)
+	}
+
 	poolDir := filepath.Join("/etc/php", version, "fpm/pool.d")
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return fmt.Errorf("php: mkdir pool dir: %w", err)
@@ -252,6 +260,23 @@ php_admin_value[open_basedir] = %s:%s/tmp
 		return fmt.Errorf("php: write pool: %w", err)
 	}
 	return p.Reload(version)
+}
+
+// removeStalePools deletes the domain's pool file from every PHP version under
+// etcPHP except keep, and returns the versions it changed (which need a reload).
+func removeStalePools(etcPHP, domain, keep string) []string {
+	files, _ := filepath.Glob(filepath.Join(etcPHP, "*", "fpm", "pool.d", "aegis-"+domain+".conf"))
+	var changed []string
+	for _, f := range files {
+		ver := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(f))))
+		if ver == keep {
+			continue
+		}
+		if os.Remove(f) == nil {
+			changed = append(changed, ver)
+		}
+	}
+	return changed
 }
 
 // RemovePool deletes the pool config for a domain and reloads fpm.
