@@ -300,3 +300,31 @@ func hasIndex(st *EditorStructure, name string) bool {
 	}
 	return false
 }
+
+// An unchanged PostgreSQL column must plan nothing, even though the catalog
+// reports its default with a cast suffix and its type in a longer form.
+func TestPlanPGModifyIsQuietWhenUnchanged(t *testing.T) {
+	c := &EditorConn{d: pgDialect}
+	def := "'untitled'::character varying"
+	ts := "CURRENT_TIMESTAMP"
+	st := &EditorStructure{Table: "t", Columns: []EditorColumn{
+		{Name: "title", Type: "character varying(40)", Default: &def},
+		{Name: "made", Type: "timestamp(3) without time zone", Nullable: true, Default: &ts},
+	}}
+	same := SchemaRequest{Action: "modify_column", Table: "t", Name: "title",
+		Column: &SchemaColumn{Name: "title", Type: "character varying", Length: "40", Default: "value", DefaultValue: "untitled"}}
+	if out, err := c.planPGModify(st, same); err == nil {
+		t.Errorf("expected nothing to change, got %q", out)
+	}
+	stamp := SchemaRequest{Action: "modify_column", Table: "t", Name: "made",
+		Column: &SchemaColumn{Name: "made", Type: "timestamp without time zone", Nullable: true, Default: "current_timestamp"}}
+	if out, err := c.planPGModify(st, stamp); err == nil {
+		t.Errorf("timestamp precision must not trigger a change, got %q", out)
+	}
+	widen := same
+	widen.Column = &SchemaColumn{Name: "title", Type: "character varying", Length: "80", Default: "value", DefaultValue: "untitled"}
+	out, err := c.planPGModify(st, widen)
+	if err != nil || len(out) != 1 || !strings.Contains(out[0], "TYPE character varying(80)") {
+		t.Errorf("widening: %q %v", out, err)
+	}
+}
