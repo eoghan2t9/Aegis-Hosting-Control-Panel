@@ -1,6 +1,8 @@
 package svc
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -19,12 +21,11 @@ import (
 // (no external dump tools, no admin credentials).
 
 const (
-	editorMaxScriptStatements = 100     // statements one console run may contain
-	editorMaxImportStatements = 500_000 // statements one SQL import may contain
-	editorExportBatchRows     = 100     // rows per INSERT in an SQL export
+	editorMaxScriptStatements = 100 // statements one console run may contain
+	editorExportBatchRows     = 100 // rows per INSERT in an SQL export
 	editorExportBatchBytes    = 512 << 10
 	editorCSVBatchParams      = 60_000 // bind parameters per CSV-import INSERT (servers allow 65,535)
-	editorExportMaxBytes      = 1 << 30
+	editorExportMaxBytes      = 4 << 30
 )
 
 // ---------------------------------------------------------------- statement splitting
@@ -37,115 +38,219 @@ func isIdentByte(b byte) bool {
 	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
-// splitStatements splits a SQL script into single statements the way a client
-// (mysql, psql, phpMyAdmin) would: semicolons inside quotes, comments and
-// PostgreSQL $$ bodies do not end a statement; MySQL's DELIMITER command is
-// honoured; comments are dropped; empty statements are skipped.
-func splitStatements(src, kind string) []string {
-	mysqlKind := kind != "postgres"
-	var out []string
-	var cur strings.Builder
-	delim := ";"
-	n := len(src)
-	i := 0
-	flush := func() {
-		if s := strings.TrimSpace(cur.String()); s != "" {
-			out = append(out, s)
-		}
-		cur.Reset()
+// stmtScanner reads SQL statements one at a time from a stream, the way a client
+// (mysql, psql, phpMyAdmin) splits a script: semicolons inside quotes, comments
+// and PostgreSQL $$ bodies do not end a statement; MySQL's DELIMITER command is
+// honoured; comments are dropped; empty statements are skipped. It holds only
+// the statement being read, so a multi-gigabyte dump costs one statement of memory.
+type stmtScanner struct {
+	r       *bufio.Reader
+	mysql   bool
+	delim   string
+	last    byte  // the byte read before the current one (0 at the start)
+	max     int   // longest statement accepted
+	content bool  // the statement so far holds something other than whitespace
+	rerr    error // a read error other than end of input: never mistaken for the end
+}
+
+func newStmtScanner(r io.Reader, kind string, maxStmt int) *stmtScanner {
+	return &stmtScanner{r: bufio.NewReaderSize(r, 256<<10), mysql: kind != "postgres", delim: ";", max: maxStmt}
+}
+
+func (s *stmtScanner) read() (byte, error) {
+	b, err := s.r.ReadByte()
+	if err == nil {
+		s.last = b
+	} else if err != io.EOF && s.rerr == nil {
+		s.rerr = err
 	}
-	// copyQuoted copies a quoted run starting at i (src[i] is the quote) and
-	// returns the index after the closing quote. Doubled quotes are an escaped
-	// quote; in MySQL a backslash also escapes the next character.
-	copyQuoted := func(q byte, backslash bool) int {
-		cur.WriteByte(q)
-		j := i + 1
-		for j < n {
-			ch := src[j]
-			if backslash && ch == '\\' && j+1 < n {
-				cur.WriteByte(ch)
-				cur.WriteByte(src[j+1])
-				j += 2
+	return b, err
+}
+
+func (s *stmtScanner) peek(n int) []byte {
+	b, _ := s.r.Peek(n)
+	return b
+}
+
+var errStmtTooLong = errors.New("a single statement is larger than the 64 MiB limit")
+
+// Next returns the next statement, or io.EOF when the stream is exhausted.
+func (s *stmtScanner) Next() (string, error) {
+	var buf []byte
+	s.content = false
+	put := func(b ...byte) {
+		buf = append(buf, b...)
+		for _, x := range b {
+			if x != ' ' && x != '\t' && x != '\n' && x != '\r' {
+				s.content = true
+			}
+		}
+	}
+	emit := func() (string, bool) {
+		if t := strings.TrimSpace(string(buf)); t != "" {
+			return t, true
+		}
+		buf, s.content = buf[:0], false
+		return "", false
+	}
+	quoted := func(q byte, backslash bool) {
+		put(q)
+		for {
+			c, err := s.read()
+			if err != nil || len(buf) > s.max {
+				return
+			}
+			if backslash && c == '\\' {
+				put(c)
+				if n, err := s.read(); err == nil {
+					put(n)
+				}
 				continue
 			}
-			cur.WriteByte(ch)
-			j++
-			if ch == q {
-				if j < n && src[j] == q {
-					cur.WriteByte(q)
-					j++
+			put(c)
+			if c == q {
+				if nx := s.peek(1); len(nx) == 1 && nx[0] == q {
+					s.read()
+					put(q)
 					continue
 				}
-				break
+				return
 			}
 		}
-		return j
 	}
-	for i < n {
-		c := src[i]
-		lineStart := i == 0 || src[i-1] == '\n'
+	for {
+		if s.rerr != nil {
+			return "", s.rerr // a broken stream is not a finished one: never run the partial statement
+		}
+		if len(buf) > s.max {
+			return "", errStmtTooLong
+		}
+		lineStart := s.last == 0 || s.last == '\n'
+		c, err := s.read()
+		if err != nil { // end of input: whatever is left is the last statement
+			if s.rerr != nil {
+				return "", s.rerr
+			}
+			if t, ok := emit(); ok {
+				return t, nil
+			}
+			return "", io.EOF
+		}
 		switch {
-		case mysqlKind && lineStart && strings.TrimSpace(cur.String()) == "" && hasPrefixFold(src[i:], "DELIMITER "):
-			eol := strings.IndexByte(src[i:], '\n')
-			line := src[i:]
-			if eol >= 0 {
-				line = src[i : i+eol]
+		case s.mysql && lineStart && !s.content && len(s.peek(9)) == 9 && strings.EqualFold(string(append([]byte{c}, s.peek(9)...)), "DELIMITER "):
+			line, _ := s.r.ReadString('\n')
+			if len(line) > 0 && line[len(line)-1] == '\n' {
+				s.r.UnreadByte()
+				s.last = 0
+				line = line[:len(line)-1]
 			}
-			if d := strings.TrimSpace(line[len("DELIMITER "):]); d != "" {
-				delim = d
+			if d := strings.TrimSpace(line[9:]); d != "" {
+				s.delim = d
 			}
-			i += len(line)
 		case c == '\'':
-			i = copyQuoted('\'', mysqlKind)
+			quoted('\'', s.mysql)
 		case c == '"':
-			i = copyQuoted('"', mysqlKind)
-		case c == '`' && mysqlKind:
-			i = copyQuoted('`', false)
-		case c == '-' && i+1 < n && src[i+1] == '-' && (!mysqlKind || i+2 >= n || src[i+2] == ' ' || src[i+2] == '\t' || src[i+2] == '\n' || src[i+2] == '\r'),
-			c == '#' && mysqlKind:
-			for i < n && src[i] != '\n' { // a line comment: dropped, its newline kept
-				i++
-			}
-		case c == '/' && i+1 < n && src[i+1] == '*':
-			end := strings.Index(src[i+2:], "*/")
-			stop := n
-			if end >= 0 {
-				stop = i + 2 + end + 2
-			}
-			if mysqlKind && i+2 < n && src[i+2] == '!' { // /*! ... */ is executed by MySQL: keep it
-				cur.WriteString(src[i:stop])
-			} else {
-				cur.WriteByte(' ')
-			}
-			i = stop
-		case c == '$' && !mysqlKind:
-			j := i + 1
-			for j < n && isIdentByte(src[j]) {
-				j++
-			}
-			if j < n && src[j] == '$' && (j == i+1 || !(src[i+1] >= '0' && src[i+1] <= '9')) {
-				tag := src[i : j+1]
-				end := strings.Index(src[j+1:], tag)
-				stop := n
-				if end >= 0 {
-					stop = j + 1 + end + len(tag)
+			quoted('"', s.mysql)
+		case c == '`' && s.mysql:
+			quoted('`', false)
+		case (c == '-' && s.dashComment()) || (c == '#' && s.mysql):
+			for { // a line comment is dropped; its newline is kept
+				nx := s.peek(1)
+				if len(nx) == 0 || nx[0] == '\n' {
+					break
 				}
-				cur.WriteString(src[i:stop])
-				i = stop
-			} else {
-				cur.WriteByte(c)
-				i++
+				s.read()
 			}
-		case strings.HasPrefix(src[i:], delim):
-			flush()
-			i += len(delim)
+		case c == '/' && len(s.peek(1)) == 1 && s.peek(1)[0] == '*':
+			s.read()
+			keep := s.mysql && len(s.peek(1)) == 1 && s.peek(1)[0] == '!' // /*! ... */ is executed by MySQL
+			if keep {
+				put('/', '*')
+			}
+			var prev byte
+			for {
+				b, err := s.read()
+				if err != nil {
+					break
+				}
+				if keep {
+					put(b)
+				}
+				if prev == '*' && b == '/' {
+					break
+				}
+				prev = b
+			}
+			if !keep {
+				buf = append(buf, ' ')
+			}
+		case c == '$' && !s.mysql && s.dollarTag(&buf, put):
+			// the whole $tag$ ... $tag$ body was copied
+		case string(append([]byte{c}, s.peek(len(s.delim)-1)...)) == s.delim:
+			if len(s.delim) > 1 {
+				s.r.Discard(len(s.delim) - 1)
+			}
+			if t, ok := emit(); ok {
+				return t, nil
+			}
 		default:
-			cur.WriteByte(c)
-			i++
+			put(c)
 		}
 	}
-	flush()
-	return out
+}
+
+// dashComment reports whether the "-" just read starts a line comment. MySQL
+// requires whitespace (or the end of input) after "--"; PostgreSQL does not.
+func (s *stmtScanner) dashComment() bool {
+	pk := s.peek(2)
+	if len(pk) == 0 || pk[0] != '-' {
+		return false
+	}
+	return !s.mysql || len(pk) < 2 || pk[1] == ' ' || pk[1] == '\t' || pk[1] == '\n' || pk[1] == '\r'
+}
+
+// dollarTag copies a PostgreSQL dollar-quoted body when the "$" just read opens
+// one, and reports whether it did. A "$1" parameter is not a quote.
+func (s *stmtScanner) dollarTag(buf *[]byte, put func(...byte)) bool {
+	pk := s.peek(66)
+	k := 0
+	for k < len(pk) && isIdentByte(pk[k]) {
+		k++
+	}
+	if k >= len(pk) || pk[k] != '$' || (k > 0 && pk[0] >= '0' && pk[0] <= '9') {
+		return false
+	}
+	tag := "$" + string(pk[:k]) + "$"
+	s.r.Discard(k + 1)
+	put([]byte(tag)...)
+	start := len(*buf)
+	for {
+		b, err := s.read()
+		if err != nil {
+			return true
+		}
+		put(b)
+		if b == '$' && len(*buf)-start >= len(tag) && string((*buf)[len(*buf)-len(tag):]) == tag {
+			return true
+		}
+		if len(*buf) > s.max {
+			return true // Next reports errStmtTooLong
+		}
+	}
+}
+
+// splitStatements splits an in-memory script (the console's multi-statement
+// runs and the tests). Imports stream through stmtScanner instead.
+func splitStatements(src, kind string) []string {
+	sc := newStmtScanner(strings.NewReader(src), kind, len(src)+1)
+	var out []string
+	for {
+		st, err := sc.Next()
+		if err != nil {
+			return out
+		}
+		out = append(out, st)
+	}
 }
 
 // ---------------------------------------------------------------- literals
@@ -359,7 +464,7 @@ type limitedWriter struct {
 
 func (l *limitedWriter) Write(p []byte) (int, error) {
 	if int64(len(p)) > l.left {
-		return 0, errors.New("the export is larger than the 1 GiB limit")
+		return 0, errors.New("the export is larger than the 4 GiB limit")
 	}
 	l.left -= int64(len(p))
 	return l.w.Write(p)
@@ -628,26 +733,76 @@ func snippet(s string) string {
 	return s
 }
 
-// ImportSQL runs a SQL script (a dump, or hand-written statements). On
-// PostgreSQL it is all-or-nothing (one transaction). MySQL cannot roll back DDL,
-// so statements before a failure stay applied; foreign key checks are switched
-// off for the run so a dump's table order does not matter.
-func (c *EditorConn) ImportSQL(ctx context.Context, script string) (*ImportResult, error) {
-	stmts := splitStatements(script, c.d.kind)
+// EditorMaxImportBytes is the most an import may read (after decompressing a
+// .gz upload). Imports stream, so this bounds time and disk on the client's
+// side, not the panel's memory.
+const EditorMaxImportBytes = 4 << 30
+
+// editorMaxStatement bounds one SQL statement held in memory while streaming.
+const editorMaxStatement = 64 << 20
+
+// strictLimit reads at most left bytes and then fails, instead of silently
+// truncating: a cut-off dump must never be imported as if it were complete.
+type strictLimit struct {
+	r    io.Reader
+	left int64
+}
+
+func (l *strictLimit) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		var one [1]byte
+		if n, _ := l.r.Read(one[:]); n > 0 {
+			return 0, fmt.Errorf("the file is larger than the %d GiB import limit", EditorMaxImportBytes>>30)
+		}
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.r.Read(p)
+	l.left -= int64(n)
+	return n, err
+}
+
+// ImportStream prepares an uploaded file for import: a gzip file (.sql.gz, the
+// usual form of a large dump) is decompressed as it is read, a UTF-8 byte-order
+// mark is dropped, and the total is capped.
+func ImportStream(in io.Reader) (io.Reader, error) {
+	br := bufio.NewReaderSize(in, 64<<10)
+	var src io.Reader = br
+	if magic, _ := br.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		gz, err := gzip.NewReader(br)
+		if err != nil {
+			return nil, fmt.Errorf("the file looks compressed but is not a valid gzip file: %w", err)
+		}
+		src = gz
+	}
+	out := bufio.NewReaderSize(&strictLimit{r: src, left: EditorMaxImportBytes}, 64<<10)
+	if bom, _ := out.Peek(3); len(bom) == 3 && bom[0] == 0xef && bom[1] == 0xbb && bom[2] == 0xbf {
+		out.Discard(3)
+	}
+	return out, nil
+}
+
+// ImportSQL runs a SQL script (a dump, or hand-written statements) read from a
+// stream, one statement at a time, so a dump of any size costs one statement of
+// memory. On PostgreSQL it is all-or-nothing (one transaction). MySQL cannot roll
+// back DDL, so statements before a failure stay applied; foreign key checks are
+// switched off for the run so a dump's table order does not matter. A stream that
+// breaks part-way is an error, never a shorter script.
+func (c *EditorConn) ImportSQL(ctx context.Context, in io.Reader) (*ImportResult, error) {
 	res := &ImportResult{}
-	if len(stmts) == 0 {
-		return res, errors.New("the file contains no SQL statements")
+	src, err := ImportStream(in)
+	if err != nil {
+		return res, err
 	}
-	if len(stmts) > editorMaxImportStatements {
-		return res, fmt.Errorf("too many statements (%d); the limit is %d", len(stmts), editorMaxImportStatements)
-	}
+	sc := newStmtScanner(src, c.d.kind, editorMaxStatement)
 	type execer interface {
 		ExecContext(context.Context, string, ...any) (sql.Result, error)
 	}
 	var ex execer = c.db
 	var tx *sql.Tx
 	if c.d.kind == "postgres" {
-		var err error
 		if tx, err = c.db.BeginTx(ctx, nil); err != nil {
 			return res, err
 		}
@@ -657,19 +812,38 @@ func (c *EditorConn) ImportSQL(ctx context.Context, script string) (*ImportResul
 		_, _ = c.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=0")
 		defer func() { _, _ = c.db.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS=1") }()
 	}
-	for i, s := range stmts {
-		r, err := ex.ExecContext(ctx, s)
+	fail := func(n int, sqlText string, err error) (*ImportResult, error) {
+		res.FailedAt, res.FailedSQL, res.Error = n, snippet(sqlText), err.Error()
+		if tx != nil {
+			res.Statements, res.Affected = 0, 0 // rolled back
+		}
+		return res, err
+	}
+	for n := 1; ; n++ {
+		stmt, err := sc.Next()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
-			res.FailedAt, res.FailedSQL, res.Error = i+1, snippet(s), err.Error()
-			if tx != nil {
-				res.Statements, res.Affected = 0, 0 // rolled back
-			}
-			return res, fmt.Errorf("statement %d failed: %w", i+1, err)
+			return fail(n, "", fmt.Errorf("reading the file failed at statement %d: %w", n, err))
+		}
+		if !utf8.ValidString(stmt) {
+			return fail(n, stmt, fmt.Errorf("statement %d is not valid UTF-8 text", n))
+		}
+		if err := ctx.Err(); err != nil {
+			return fail(n, "", err)
+		}
+		r, err := ex.ExecContext(ctx, stmt)
+		if err != nil {
+			return fail(n, stmt, fmt.Errorf("statement %d failed: %w", n, err))
 		}
 		res.Statements++
-		if n, err := r.RowsAffected(); err == nil && n > 0 {
-			res.Affected += n
+		if k, err := r.RowsAffected(); err == nil && k > 0 {
+			res.Affected += k
 		}
+	}
+	if res.Statements == 0 {
+		return res, errors.New("the file contains no SQL statements")
 	}
 	if tx != nil {
 		if err := tx.Commit(); err != nil {
@@ -697,7 +871,11 @@ func (c *EditorConn) ImportCSV(ctx context.Context, in io.Reader, table string, 
 	if o.NullToken == "" {
 		o.NullToken = `\N`
 	}
-	r := csv.NewReader(in)
+	src, err := ImportStream(in)
+	if err != nil {
+		return res, err
+	}
+	r := csv.NewReader(src)
 	r.FieldsPerRecord = -1
 	r.LazyQuotes = true
 	if o.Delimiter != 0 {
@@ -787,6 +965,11 @@ func (c *EditorConn) ImportCSV(ctx context.Context, in io.Reader, table string, 
 		}
 		if len(rec) > len(cols) || (o.Header && len(rec) != len(cols)) {
 			return fail(fmt.Errorf("has %d fields, expected %d", len(rec), len(cols)))
+		}
+		for _, f := range rec {
+			if !utf8.ValidString(f) {
+				return fail(errors.New("the row is not valid UTF-8 text"))
+			}
 		}
 		vals := make([]any, len(cols))
 		for i := range vals {

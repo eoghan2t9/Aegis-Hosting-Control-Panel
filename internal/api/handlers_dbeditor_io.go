@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"aegis/internal/store"
 	"aegis/internal/svc"
@@ -19,8 +18,7 @@ import (
 // and audited.
 
 const (
-	editorLongTimeout = 15 * time.Minute
-	editorMaxUpload   = 64 << 20 // bytes accepted by one import
+	editorLongTimeout = 6 * time.Hour // a multi-gigabyte import or export legitimately takes a while
 )
 
 var unsafeFilename = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -136,64 +134,63 @@ func (s *Server) handleEditorExport(w http.ResponseWriter, r *http.Request, row 
 	}
 }
 
-// uploadedFile reads the "file" part of a multipart import into memory, bounded.
-func uploadedFile(w http.ResponseWriter, r *http.Request) (string, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, editorMaxUpload+(1<<20))
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		writeErr(w, http.StatusBadRequest, "the upload is invalid or larger than 64 MiB")
-		return "", false
-	}
-	f, _, err := r.FormFile("file")
+// openUpload returns the "file" part of a multipart import as a stream, plus the
+// small form fields that came before it (the page sends the file last). The file
+// is never buffered: a large dump costs the panel no memory or disk.
+func openUpload(w http.ResponseWriter, r *http.Request) (map[string]string, io.Reader, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, svc.EditorMaxImportBytes+(1<<20))
+	mr, err := r.MultipartReader()
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "choose a file to import")
-		return "", false
+		writeErr(w, http.StatusBadRequest, "expected a file upload")
+		return nil, nil, false
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, editorMaxUpload+1))
-	if err != nil || int64(len(data)) > editorMaxUpload {
-		writeErr(w, http.StatusBadRequest, "the file is larger than 64 MiB")
-		return "", false
+	fields := map[string]string{}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "choose a file to import")
+			return nil, nil, false
+		}
+		if part.FormName() == "file" {
+			return fields, part, true
+		}
+		v, _ := io.ReadAll(io.LimitReader(part, 4096))
+		fields[part.FormName()] = string(v)
 	}
-	text := strings.TrimPrefix(string(data), "\xef\xbb\xbf")
-	if !utf8.ValidString(text) {
-		writeErr(w, http.StatusBadRequest, "the file is not valid UTF-8 text")
-		return "", false
-	}
-	return text, true
 }
 
 func (s *Server) handleEditorImport(w http.ResponseWriter, r *http.Request, row *store.Database, c *svc.EditorConn) {
-	text, ok := uploadedFile(w, r)
+	fields, file, ok := openUpload(w, r)
 	if !ok {
 		return
 	}
-	defer r.MultipartForm.RemoveAll()
-	format := r.FormValue("format")
 	var res *svc.ImportResult
 	var err error
-	switch format {
+	switch fields["format"] {
 	case "sql":
-		s.editorAudit(r, "dbeditor.import", row, fmt.Sprintf("sql %d bytes", len(text)))
-		res, err = c.ImportSQL(r.Context(), text)
+		s.editorAudit(r, "dbeditor.import", row, "sql (streamed)")
+		res, err = c.ImportSQL(r.Context(), file)
 	case "csv":
-		table := r.FormValue("table")
-		opts := svc.CSVImportOptions{Header: r.FormValue("header") != "0", NullToken: r.FormValue("null")}
-		if d := r.FormValue("delimiter"); d != "" {
-			switch d {
-			case "tab":
-				opts.Delimiter = '\t'
-			case ",", ";", "|":
-				opts.Delimiter = rune(d[0])
-			default:
-				writeErr(w, http.StatusBadRequest, "delimiter must be a comma, semicolon, pipe or tab")
-				return
-			}
+		table := fields["table"]
+		opts := svc.CSVImportOptions{Header: fields["header"] != "0", NullToken: fields["null"]}
+		switch d := fields["delimiter"]; d {
+		case "":
+		case "tab":
+			opts.Delimiter = '\t'
+		case ",", ";", "|":
+			opts.Delimiter = rune(d[0])
+		default:
+			writeErr(w, http.StatusBadRequest, "delimiter must be a comma, semicolon, pipe or tab")
+			return
 		}
-		s.editorAudit(r, "dbeditor.import", row, fmt.Sprintf("csv into %s, %d bytes", table, len(text)))
-		res, err = c.ImportCSV(r.Context(), strings.NewReader(text), table, opts)
+		s.editorAudit(r, "dbeditor.import", row, "csv into "+table+" (streamed)")
+		res, err = c.ImportCSV(r.Context(), file, table, opts)
 	default:
 		writeErr(w, http.StatusBadRequest, "format must be sql or csv")
 		return
+	}
+	if res != nil {
+		s.editorAudit(r, "dbeditor.import.done", row, fmt.Sprintf("%d statements, %d rows, ok=%t", res.Statements, res.Rows, err == nil))
 	}
 	if err != nil {
 		// 422 with the structured result, so the page can say which statement or row failed.

@@ -1,9 +1,14 @@
 package svc
 
 import (
+	"bytes"
+	"compress/gzip"
+	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -133,5 +138,80 @@ func TestCSVValue(t *testing.T) {
 	}
 	if got := csvValue([]byte{1, 2}, "BLOB", `\N`); got != "0x0102" {
 		t.Errorf("binary = %q", got)
+	}
+}
+
+// Imports read in whatever chunks the network delivers: the scanner must give
+// the same statements however the bytes are split.
+func TestScannerIsChunkIndependent(t *testing.T) {
+	scripts := map[string]string{
+		"mariadb":  "DELIMITER $$\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END$$\nDELIMITER ;\n-- c;\nINSERT INTO t VALUES ('a;b', \"c;d\", `e;f`, 'it''s\\'x'); /* x; */ SELECT 5--3; # y;\nSELECT /*!40101 1 */; DELIMITER //\nSELECT 1//\nSELECT 2;//\n",
+		"postgres": "CREATE FUNCTION f() RETURNS int AS $body$ BEGIN RETURN 1; END; $body$ LANGUAGE plpgsql; SELECT $1; SELECT 'a;b', \"c;d\"; --x;\nSELECT $$;$$; /* ; */ SELECT 1",
+	}
+	for kind, src := range scripts {
+		want := splitStatements(src, kind)
+		if len(want) < 4 {
+			t.Fatalf("%s: expected several statements, got %q", kind, want)
+		}
+		for name, rd := range map[string]io.Reader{"one byte": iotest.OneByteReader(strings.NewReader(src)), "half": iotest.HalfReader(strings.NewReader(src))} {
+			sc := newStmtScanner(rd, kind, 1<<20)
+			var got []string
+			for {
+				st, err := sc.Next()
+				if err != nil {
+					break
+				}
+				got = append(got, st)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s/%s: chunked %q != whole %q", kind, name, got, want)
+			}
+		}
+	}
+}
+
+// A stream that breaks part-way must be an error: running the partial last
+// statement, or treating the break as the end, would import a truncated dump.
+func TestScannerBrokenStreamIsAnError(t *testing.T) {
+	boom := errors.New("connection reset")
+	rd := io.MultiReader(strings.NewReader("INSERT INTO t VALUES (1); INSERT INTO t VALU"), iotest.ErrReader(boom))
+	sc := newStmtScanner(rd, "mariadb", 1<<20)
+	if st, err := sc.Next(); err != nil || st != "INSERT INTO t VALUES (1)" {
+		t.Fatalf("first statement: %q %v", st, err)
+	}
+	if st, err := sc.Next(); !errors.Is(err, boom) || st != "" {
+		t.Errorf("a broken stream must surface its error, got %q %v", st, err)
+	}
+}
+
+func TestScannerStatementLimit(t *testing.T) {
+	sc := newStmtScanner(strings.NewReader("INSERT INTO t VALUES ('"+strings.Repeat("x", 5000)+"')"), "mariadb", 1000)
+	if _, err := sc.Next(); err == nil {
+		t.Error("a statement over the limit must be refused, not buffered")
+	}
+}
+
+func TestImportStream(t *testing.T) {
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	zw.Write([]byte("\xef\xbb\xbfSELECT 1;"))
+	zw.Close()
+	for name, in := range map[string]io.Reader{"gzip+BOM": &gz, "plain": strings.NewReader("SELECT 1;"), "plain BOM": strings.NewReader("\xef\xbb\xbfSELECT 1;")} {
+		r, err := ImportStream(in)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		b, _ := io.ReadAll(r)
+		if string(b) != "SELECT 1;" {
+			t.Errorf("%s: got %q", name, b)
+		}
+	}
+	if _, err := ImportStream(bytes.NewReader([]byte{0x1f, 0x8b, 0, 0})); err == nil {
+		t.Error("a corrupt gzip header must be refused")
+	}
+	// The cap fails loudly rather than cutting the file short.
+	lr := &strictLimit{r: strings.NewReader("abcdefgh"), left: 4}
+	if b, err := io.ReadAll(lr); err == nil || string(b) != "abcd" {
+		t.Errorf("limit: %q %v", b, err)
 	}
 }

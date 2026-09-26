@@ -69,7 +69,11 @@ func (s *Server) withEditorFor(timeout time.Duration, next editorHandler) http.H
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-		conn, err := s.Editor.Open(ctx, row)
+		limit := 30 * time.Second // the interactive per-statement limit
+		if timeout > time.Minute {
+			limit = timeout // imports and exports: the database link must outlive a long statement too
+		}
+		conn, err := s.Editor.OpenWithLimit(ctx, row, limit)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return
