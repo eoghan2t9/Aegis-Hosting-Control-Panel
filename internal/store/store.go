@@ -24,7 +24,8 @@ var ErrConflict = errors.New("conflict")
 
 // Store wraps the SQLite database handle.
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	box SecretBox // seals secret columns at rest; see SetSecretBox
 }
 
 // New opens (creating if needed) the SQLite database at path and applies the

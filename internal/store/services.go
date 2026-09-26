@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -184,20 +185,31 @@ func (s *Store) DeleteFTPAccount(ctx context.Context, id int64) error {
 
 const dbCols = `id, user_id, server, name, db_user, db_password, created_at`
 
-func scanDatabase(row interface{ Scan(...any) error }) (*Database, error) {
+// scanDatabase decrypts db_password (see SetSecretBox) so callers always see
+// the plaintext password; it is only ever stored encrypted.
+func (s *Store) scanDatabase(row interface{ Scan(...any) error }) (*Database, error) {
 	var d Database
 	var created interface{}
 	if err := row.Scan(&d.ID, &d.UserID, &d.Server, &d.Name, &d.DBUser, &d.DBPassword, &created); err != nil {
 		return nil, wrapErr(err)
 	}
+	plain, err := s.openSecret(d.DBPassword)
+	if err != nil {
+		return nil, fmt.Errorf("database %s: %w", d.Name, err)
+	}
+	d.DBPassword = plain
 	d.CreatedAt = parseTime(created)
 	return &d, nil
 }
 
 func (s *Store) CreateDatabase(ctx context.Context, d *Database) error {
 	ts := now()
+	sealed, err := s.sealSecret(d.DBPassword)
+	if err != nil {
+		return err
+	}
 	res, err := s.db.ExecContext(ctx, "INSERT INTO databases (user_id, server, name, db_user, db_password, created_at) VALUES (?,?,?,?,?,?)",
-		d.UserID, d.Server, d.Name, d.DBUser, d.DBPassword, ts)
+		d.UserID, d.Server, d.Name, d.DBUser, sealed, ts)
 	if err != nil {
 		return wrapErr(err)
 	}
@@ -225,7 +237,7 @@ func (s *Store) ListDatabases(ctx context.Context, userID int64) ([]*Database, e
 	defer rows.Close()
 	out := []*Database{}
 	for rows.Next() {
-		d, err := scanDatabase(rows)
+		d, err := s.scanDatabase(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +248,7 @@ func (s *Store) ListDatabases(ctx context.Context, userID int64) ([]*Database, e
 
 func (s *Store) GetDatabase(ctx context.Context, id int64) (*Database, error) {
 	row := s.db.QueryRowContext(ctx, "SELECT "+dbCols+" FROM databases WHERE id = ?", id)
-	return scanDatabase(row)
+	return s.scanDatabase(row)
 }
 
 func (s *Store) DeleteDatabaseRow(ctx context.Context, id int64) error {
