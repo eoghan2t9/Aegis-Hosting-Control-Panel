@@ -35,8 +35,49 @@ type HtConfig struct {
 	Redirects      []HtRedirect
 	DirectoryIndex []string
 	ErrorDocuments map[int]string
-	DenyAll        bool // "Require all denied" / "Deny from all"
-	Skipped        []string
+	DenyAll        bool // "Require all denied" / "Deny from all" (bare, not inside <Files>/<FilesMatch>)
+	// FileDenies are "Deny from all"/"Require all denied" directives found
+	// *inside* a <Files>/<FilesMatch> block — these must only 403 requests
+	// whose filename matches the block's own pattern, not every request
+	// under the directory (see htParseFile: a container tag like <Files>
+	// isn't otherwise recognized, so a scoped deny meant for one filename,
+	// e.g. a sensitive .db file, would silently apply to every file in the
+	// directory instead).
+	FileDenies []HtFileDeny
+	Skipped    []string
+}
+
+// HtFileDeny is one <Files pattern> or <FilesMatch pattern> block's "Deny
+// from all"/"Require all denied" — Regex true for FilesMatch (Pattern is a
+// regex tested against the request's basename), false for Files (Pattern is
+// an Apache-style fnmatch glob, e.g. "*.log" or a literal filename).
+type HtFileDeny struct {
+	Pattern string
+	Regex   bool
+}
+
+// htDenyAll records a "Deny from all"/"Require all denied" directive found
+// while parsing — scoped to the innermost open <Files>/<FilesMatch> block
+// when there is one, else a bare global deny (matching real Apache: outside
+// any container, these directives really do apply to the whole directory).
+func htDenyAll(cfg *HtConfig, filesStack []HtFileDeny) {
+	if len(filesStack) > 0 {
+		cfg.FileDenies = append(cfg.FileDenies, filesStack[len(filesStack)-1])
+		return
+	}
+	cfg.DenyAll = true
+}
+
+// htFileDenyMatches reports whether urlPath's basename matches a <Files>/
+// <FilesMatch> deny pattern.
+func htFileDenyMatches(fd HtFileDeny, urlPath string) bool {
+	base := path.Base(urlPath)
+	if fd.Regex {
+		re := htCompile(fd.Pattern, true)
+		return re != nil && re.MatchString(base)
+	}
+	ok, err := path.Match(fd.Pattern, base)
+	return err == nil && ok
 }
 
 // HtRule is one RewriteRule with its preceding RewriteCond chain.
@@ -237,6 +278,7 @@ func htParseDir(root, dir string) *HtConfig {
 		if sub.DenyAll {
 			cfg.DenyAll = true
 		}
+		cfg.FileDenies = append(cfg.FileDenies, sub.FileDenies...)
 		cfg.Skipped = append(cfg.Skipped, sub.Skipped...)
 	}
 	return cfg
@@ -252,6 +294,10 @@ func htParseFile(file string, cfg *HtConfig) {
 	defer fh.Close()
 
 	var pendingRule *HtRule
+	// filesStack tracks nested <Files pattern>/<FilesMatch pattern> blocks —
+	// a bare "Deny from all" only applies globally outside of one; inside
+	// one, it's scoped to the innermost block's pattern (see FileDenies).
+	var filesStack []HtFileDeny
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -321,16 +367,26 @@ func htParseFile(file string, cfg *HtConfig) {
 		case "require":
 			// 2.4 authz: only the blanket deny is meaningful here.
 			if len(args) >= 2 && strings.EqualFold(args[0], "all") && strings.EqualFold(args[1], "denied") {
-				cfg.DenyAll = true
+				htDenyAll(cfg, filesStack)
 			}
 		case "deny":
 			// 2.2 authz: "Deny from all".
 			if len(args) >= 2 && strings.EqualFold(args[0], "from") && strings.EqualFold(args[1], "all") {
-				cfg.DenyAll = true
+				htDenyAll(cfg, filesStack)
 			}
 		case "options":
 			// Only -Indexes matters conceptually; the Go server never lists
 			// directories, and Caddy's file_server has browse off by default.
+		case "<files", "<filesmatch":
+			pattern := ""
+			if len(args) > 0 {
+				pattern = strings.TrimSuffix(args[0], ">")
+			}
+			filesStack = append(filesStack, HtFileDeny{Pattern: pattern, Regex: dir == "<filesmatch"})
+		case "</files>", "</filesmatch>":
+			if len(filesStack) > 0 {
+				filesStack = filesStack[:len(filesStack)-1]
+			}
 		default:
 			cfg.Skipped = append(cfg.Skipped, fields[0])
 		}
@@ -526,11 +582,16 @@ func htTrimSlashes(s string) string {
 // htEngine executes the merged config for a request. root is the docroot on
 // disk; urlPath the incoming (decoded) URL path; query the raw query string.
 func htEngine(cfg *HtConfig, r *http.Request, root, urlPath, query string) htOutcome {
-	if cfg == nil || (!cfg.RewriteEngine && len(cfg.Redirects) == 0) {
+	if cfg == nil || (!cfg.RewriteEngine && len(cfg.Redirects) == 0 && len(cfg.FileDenies) == 0 && !cfg.DenyAll) {
 		return htOutcome{}
 	}
 	if cfg.DenyAll {
 		return htOutcome{Status: 403} // "Require all denied" / "Deny from all"
+	}
+	for _, fd := range cfg.FileDenies {
+		if htFileDenyMatches(fd, urlPath) {
+			return htOutcome{Status: 403} // scoped <Files>/<FilesMatch> deny
+		}
 	}
 	ctx := &htCtx{
 		req:     r,
