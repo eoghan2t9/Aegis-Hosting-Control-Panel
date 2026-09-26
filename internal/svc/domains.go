@@ -766,6 +766,17 @@ func (d *Domains) Delete(ctx context.Context, domainID int64) error {
 	}
 	_ = d.Web.Remove(dom)
 	_ = d.PHP.RemovePool(dom.Domain, dom.PHPVersion)
+	// Config the domain generated must go with it, or it lingers on disk: the
+	// local DNS zone file and the issued certificates. (A zone hosted at an
+	// external provider is left alone, and so are the document root's files —
+	// the owner may still want those.) The name is checked so it can never
+	// carry a path separator into what we delete.
+	if safeHostname(dom.Domain) {
+		if zone, err := d.Store.GetZoneByDomain(ctx, dom.ID); err == nil && zone != nil && zone.Provider == "local" {
+			_ = os.Remove(filepath.Join(d.Cfg.DNSDir, dom.Domain+".zone"))
+		}
+		_ = os.RemoveAll(filepath.Join(d.Cfg.CertDir, dom.Domain))
+	}
 	if wf, err := d.Store.GetDomainByName(ctx, WebftpHostname(dom.Domain)); err == nil {
 		_ = d.Web.Remove(wf)
 		_ = d.Store.DeleteDomain(ctx, wf.ID)
