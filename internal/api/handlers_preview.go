@@ -149,9 +149,17 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	// resolves relative links against the /preview/{id}/ prefix, so the site's
 	// own relative URLs keep working inside the preview.
 	//	parts = [api, domains, {id}, preview, site-path...]
+	// parts was built from strings.Trim(r.URL.Path, "/"), which discards a
+	// trailing slash before we ever see it — restore it here, since
+	// serveGoRoute's own directory-redirect logic depends on knowing whether
+	// the original preview URL actually had one.
+	hadTrailingSlash := strings.HasSuffix(r.URL.Path, "/")
 	rest := ""
 	if len(parts) > 4 {
 		rest = strings.Join(parts[4:], "/")
+	}
+	if hadTrailingSlash && rest != "" {
+		rest += "/"
 	}
 	r.URL.Path = "/" + rest
 
