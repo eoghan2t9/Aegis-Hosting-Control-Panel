@@ -162,7 +162,7 @@ function buildShell() {
   nav.innerHTML = "";
   const groups = {};
   const entries = Object.entries(routes)
-    .filter(([, def]) => !(def.adminOnly && !isAdmin()) && !(def.resellerOnly && !isReseller())
+    .filter(([, def]) => !def.hidden && !(def.adminOnly && !isAdmin()) && !(def.resellerOnly && !isReseller())
       && !(def.feature && !can(def.feature)))
     .sort(([, a], [, b]) => {
       const ga = GROUP_ORDER.indexOf(a.group || ""), gb = GROUP_ORDER.indexOf(b.group || "");
@@ -224,7 +224,7 @@ async function navigate(hash) {
   if (def.feature && !can(def.feature)) return navigate("#/dashboard");
   // Highlight nav.
   document.querySelectorAll(".nav-link").forEach((a) => {
-    a.classList.toggle("active", a.dataset.route === path);
+    a.classList.toggle("active", a.dataset.route === (def.activeRoute || path));
   });
   document.getElementById("page-title").textContent = def.title;
   const view = document.getElementById("view");
@@ -332,6 +332,7 @@ Promise.all([
   import("./views/apps.js"),
   import("./views/webmail.js"),
   import("./views/databases.js"),
+  import("./views/dbeditor.js"),
   import("./views/files.js"),
   import("./views/accounts.js"),
   import("./views/backups.js"),
