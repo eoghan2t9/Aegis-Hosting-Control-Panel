@@ -312,7 +312,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	// actually navigated to, so it's correct in both live-domain and
 	// preview contexts without this function needing to know which one
 	// it's in.
-	if statErr == nil && info.IsDir() && !hadTrailingSlash {
+	if statErr == nil && info.IsDir() && !hadTrailingSlash && !w.htConfigFor(root, upath).DirectorySlashOff {
 		loc := path.Base(upath) + "/"
 		if r.URL.RawQuery != "" {
 			loc += "?" + r.URL.RawQuery

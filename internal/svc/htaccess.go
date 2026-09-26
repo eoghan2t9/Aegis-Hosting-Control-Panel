@@ -50,7 +50,11 @@ type HtConfig struct {
 	// Extensions already executed unconditionally (.php) don't need to be
 	// listed here.
 	PHPExtensions []string
-	Skipped       []string
+	// DirectorySlashOff is "DirectorySlash Off" — opts out of the
+	// missing-trailing-slash redirect goserver.go's serveGoRoute otherwise
+	// always applies to directory requests.
+	DirectorySlashOff bool
+	Skipped           []string
 }
 
 // HtFileDeny is one <Files pattern> or <FilesMatch pattern> block's "Deny
@@ -287,6 +291,9 @@ func htParseDir(root, dir string) *HtConfig {
 		}
 		cfg.FileDenies = append(cfg.FileDenies, sub.FileDenies...)
 		cfg.PHPExtensions = append(cfg.PHPExtensions, sub.PHPExtensions...)
+		if sub.DirectorySlashOff {
+			cfg.DirectorySlashOff = true
+		}
 		cfg.Skipped = append(cfg.Skipped, sub.Skipped...)
 	}
 	return cfg
@@ -385,6 +392,10 @@ func htParseFile(file string, cfg *HtConfig) {
 		case "options":
 			// Only -Indexes matters conceptually; the Go server never lists
 			// directories, and Caddy's file_server has browse off by default.
+		case "directoryslash":
+			if len(args) > 0 {
+				cfg.DirectorySlashOff = strings.EqualFold(args[0], "off")
+			}
 		case "addtype":
 			// "AddType application/x-httpd-php[74] .html .htm ..." — legacy
 			// sites use this to have a script literally named e.g. "x.html"
@@ -919,6 +930,12 @@ func htServerVar(ctx *htCtx, name string) string {
 		return "off"
 	case "REMOTE_ADDR":
 		return remoteIP(r)
+	case "HTTP_REFERER":
+		return r.Header.Get("Referer")
+	case "HTTP_USER_AGENT":
+		return r.Header.Get("User-Agent")
+	case "HTTP_COOKIE":
+		return r.Header.Get("Cookie")
 	case "THE_REQUEST":
 		return r.Method + " " + r.URL.RequestURI() + " " + r.Proto
 	case "SERVER_PROTOCOL":
