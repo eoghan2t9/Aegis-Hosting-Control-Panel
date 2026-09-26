@@ -275,6 +275,9 @@ func cmdUser(ctx context.Context, args []string) error {
 		if !svc.ValidUsername(*u) {
 			return fmt.Errorf("invalid username")
 		}
+		if svc.ReservedAccountName(*u) {
+			return fmt.Errorf("username %q is reserved", *u)
+		}
 		password := *p
 		if password == "" {
 			password, err = svc.RandomPassword()

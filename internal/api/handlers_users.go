@@ -54,6 +54,10 @@ func (s *Server) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid username (3-30 chars, lowercase letters/digits/underscore, must start with a letter)")
 		return
 	}
+	if svc.ReservedAccountName(req.Username) {
+		writeErr(w, http.StatusBadRequest, "that username is reserved; choose another")
+		return
+	}
 	if len(req.Password) < 8 {
 		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return

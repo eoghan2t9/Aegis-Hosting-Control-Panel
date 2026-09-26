@@ -22,6 +22,22 @@ import (
 // WriteUserConf). It's a variable so tests can point it at a temp dir.
 var vsftpdUserConfDir = "/etc/vsftpd_user_conf"
 
+// homeRoot is where panel accounts live. A service built without a config
+// yields "", which makes every guard refuse rather than panic.
+func (f *FTP) homeRoot() string {
+	if f.Cfg == nil {
+		return ""
+	}
+	return f.Cfg.HomeRoot
+}
+
+// Seams so tests can prove the guards work without ever really changing the
+// host's accounts.
+var (
+	ftpRun         = RunTimeout
+	ftpSetPassword = SetSystemPassword
+)
+
 // userConfMarker is the first line of every per-user file Aegis writes, so
 // PruneUserConfs only ever removes files it created itself.
 const userConfMarker = "# managed by Aegis - do not edit"
@@ -297,25 +313,30 @@ func (f *FTP) provision(ctx context.Context, owner *store.User, username, passwo
 		return nil, fmt.Errorf("ftp account %s already exists", username)
 	}
 
-	// Ensure the system user exists (idempotent).
-	uid, err := UIDFor(username)
-	if err != nil {
-		if _, err := RunTimeout(15*time.Second, "useradd", "-m", "-d", home, "-s", "/sbin/nologin", "-g", "www-data", username); err != nil {
-			return nil, fmt.Errorf("create system user: %w", err)
-		}
-		uid, _ = UIDFor(username)
+	if ReservedAccountName(username) && username != owner.Username {
+		return nil, errors.New("that name is reserved; choose another")
 	}
-	_ = uid
+	// The system account must be NEW, or a leftover of this very login. This
+	// used to be "already has a uid: fine, just set its password", so a customer
+	// could name an FTP account "root", another customer, or a service and take
+	// it over (and deleting the FTP account then ran userdel on it).
+	if uid, err := UIDFor(username); err == nil {
+		if err := checkLoginReuse(uid, loginHome(username), home); err != nil {
+			return nil, err
+		}
+	} else if err := ProvisionAccountIn(username, home, "/sbin/nologin", primaryGroup(owner.Username)); err != nil {
+		return nil, fmt.Errorf("create system user: %w", err)
+	}
 
 	// Set the password.
-	if err := SetSystemPassword(username, password); err != nil {
+	if err := ftpSetPassword(username, password); err != nil {
 		return nil, err
 	}
 	// Ensure home exists with the right ownership.
 	// The FTP session runs as the owning panel user (see WriteUserConf), so
 	// the tree belongs to the owner, not to the FTP login's own system user.
 	_ = os.MkdirAll(home, 0o755)
-	_, _ = RunTimeout(10*time.Second, "chown", "-R", owner.Username+":www-data", home)
+	_, _ = RunTimeout(10*time.Second, "chown", "-R", OwnerSpec(owner.Username), home)
 	_, _ = RunTimeout(10*time.Second, "chmod", dirMode, home)
 	if err := f.WriteUserConf(username, owner.Username, home); err != nil {
 		return nil, fmt.Errorf("ftp user config: %w", err)
@@ -344,7 +365,11 @@ func (f *FTP) ResetPassword(ctx context.Context, acct *store.FTPAccount, passwor
 	if len(password) < 8 {
 		return errors.New("password must be at least 8 characters")
 	}
-	if err := SetSystemPassword(acct.Username, password); err != nil {
+	// Only ever change the password of an account the panel created.
+	if err := managedLoginError(acct.Username, f.homeRoot()); err != nil {
+		return err
+	}
+	if err := ftpSetPassword(acct.Username, password); err != nil {
 		return err
 	}
 	hash, err := authHash(password)
@@ -363,7 +388,14 @@ func (f *FTP) Delete(ctx context.Context, acct *store.FTPAccount) error {
 		isPanelUser = true
 	}
 	if !isPanelUser {
-		_, _ = RunTimeout(15*time.Second, "userdel", acct.Username)
+		// Never delete a system account, another customer's account or a service
+		// user because an FTP row happens to carry its name: only the logins the
+		// panel itself created are removed.
+		if gerr := managedLoginError(acct.Username, f.homeRoot()); gerr != nil {
+			slog.Warn("ftp delete: leaving the system account in place", "login", acct.Username, "reason", gerr)
+		} else {
+			_, _ = ftpRun(15*time.Second, "userdel", acct.Username)
+		}
 	}
 	f.removeUserConf(acct.Username)
 	return f.Store.DeleteFTPAccount(ctx, acct.ID)
@@ -389,6 +421,9 @@ func authHash(password string) (string, error) {
 
 // ToggleEnabled suspends/unsuspends an FTP account by locking the system user.
 func (f *FTP) ToggleEnabled(ctx context.Context, acct *store.FTPAccount, enabled bool) error {
+	if err := managedLoginError(acct.Username, f.homeRoot()); err != nil {
+		return err
+	}
 	acct.Enabled = enabled
 	if enabled {
 		_, _ = RunTimeout(10*time.Second, "usermod", "-U", acct.Username)
