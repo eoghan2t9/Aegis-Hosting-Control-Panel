@@ -35,6 +35,7 @@ type Server struct {
 	WebFTP   *svc.WebFTP    // browser file manager; set after New (nil disables the panel's "open in Web FTP" button)
 	Purge    *svc.Purger    // deletes a user together with everything they own; set after New
 	Suspend  *svc.Suspender // suspends/unsuspends accounts across every service; set after New
+	Editor   *svc.DBEditor  // browse/edit/SQL editor for a user's databases; set after New
 	DB       *svc.Databases
 	Files    *svc.Files
 	Thumbs   *svc.Thumbs
@@ -235,6 +236,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/databases", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBList)))
 	mux.HandleFunc("POST /api/databases", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBCreate)))
 	mux.HandleFunc("DELETE /api/databases/{id}", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDelete)))
+	// Database editor (browse/edit/SQL as the database's own user).
+	feat := func(h editorHandler) http.HandlerFunc {
+		return s.withAuth(s.withFeature(FeatureDatabases, s.withEditor(h)))
+	}
+	mux.HandleFunc("GET /api/dbeditor/{id}/tables", feat(s.handleEditorTables))
+	mux.HandleFunc("GET /api/dbeditor/{id}/tables/{table}", feat(s.handleEditorStructure))
+	mux.HandleFunc("GET /api/dbeditor/{id}/tables/{table}/rows", feat(s.handleEditorRows))
+	mux.HandleFunc("GET /api/dbeditor/{id}/tables/{table}/row", feat(s.handleEditorRowGet))
+	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/rows", feat(s.handleEditorRowInsert))
+	mux.HandleFunc("PUT /api/dbeditor/{id}/tables/{table}/rows", feat(s.handleEditorRowUpdate))
+	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/rows/delete", feat(s.handleEditorRowDelete))
+	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/truncate", feat(s.handleEditorDestroy(false)))
+	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/drop", feat(s.handleEditorDestroy(true)))
+	mux.HandleFunc("POST /api/dbeditor/{id}/query", feat(s.handleEditorQuery))
 	mux.HandleFunc("GET /api/databases/{id}/credentials", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBCredentials)))
 	mux.HandleFunc("GET /api/databases/{id}/dump", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDump)))
 
