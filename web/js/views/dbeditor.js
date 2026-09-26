@@ -1,17 +1,24 @@
 import { addRoute } from "../app.js";
 import { api } from "../api.js";
 import { icon, esc, toast, confirmDialog, promptDialog, modal, loading, fmtBytes } from "../ui.js";
+import * as tools from "./dbeditor_tools.js";
 
-// Database editor: a phpMyAdmin-style browser, row editor and SQL console for
-// one of the user's MariaDB/MySQL or PostgreSQL databases. The server connects
-// as the database's own user, so this page can only ever touch what that user
-// can. All values travel as text (NULL as null), so nothing is rounded.
+// Database editor: a phpMyAdmin-style browser, row editor, schema editor, SQL
+// console, import/export and search for one of the user's MariaDB/MySQL or
+// PostgreSQL databases. The server connects as the database's own user, so this
+// page can only ever touch what that user can. All values travel as text (NULL
+// as null), so nothing is rounded. Schema changes are structured requests: the
+// server writes the DDL, this page never does.
 
 const OPS = [
   { v: "CONTAINS", label: "contains" }, { v: "=", label: "=" }, { v: "!=", label: "≠" },
   { v: "<", label: "<" }, { v: ">", label: ">" }, { v: "<=", label: "≤" }, { v: ">=", label: "≥" },
   { v: "LIKE", label: "LIKE" }, { v: "NOT LIKE", label: "NOT LIKE" },
   { v: "IS NULL", label: "is NULL" }, { v: "IS NOT NULL", label: "is not NULL" },
+];
+const TABS = [
+  { id: "browse", label: "Browse", table: true }, { id: "structure", label: "Structure", table: true },
+  { id: "sql", label: "SQL" }, { id: "search", label: "Search" }, { id: "io", label: "Import / Export" }, { id: "objects", label: "Routines" },
 ];
 const HISTORY_KEY = "aegis.dbeditor.history";
 
@@ -28,6 +35,7 @@ addRoute("/dbeditor", {
 
 const isBinaryType = (t) => /blob|binary|bytea/i.test(t || "");
 const isLongType = (t) => /text|json|xml|blob|clob/i.test(t || "");
+const isExpandable = (v) => v !== null && v !== undefined && typeof v !== "boolean" && (String(v).length > 60 || /[\n\r]/.test(String(v)) || /^\s*[[{]/.test(String(v)));
 
 function fmtCell(v) {
   if (v === null || v === undefined) return `<span class="dbe-null">NULL</span>`;
@@ -60,6 +68,13 @@ async function renderEditor(view) {
     tables: [], table: null, structure: null, tab: "browse",
     page: 1, size: 50, sort: "", desc: false, filters: [], result: null,
   };
+  let info;
+  try { info = await api.get(`${base}/info`); }
+  catch (ex) {
+    view.innerHTML = `<div class="card empty-state"><span class="glyph">▤</span><p class="dbe-err">${esc(ex.message)}</p>
+      <a class="btn" href="#/databases">${icon("database")} Back to databases</a></div>`;
+    return;
+  }
 
   view.innerHTML = `
     <div class="page-head">
@@ -71,20 +86,25 @@ async function renderEditor(view) {
       <aside class="card dbe-side">
         <div class="dbe-side-head">
           <input type="search" id="dbe-find" placeholder="Filter tables…" class="mono" aria-label="Filter tables">
+          <button class="btn btn-ghost btn-sm" id="dbe-new" title="New table" aria-label="New table">${icon("plus")}</button>
           <button class="btn btn-ghost btn-sm" id="dbe-refresh" title="Refresh table list" aria-label="Refresh">${icon("refresh")}</button>
         </div>
         <div id="dbe-tables" class="dbe-tables">${loading()}</div>
       </aside>
       <section class="card dbe-main">
-        <div class="tab-row" id="dbe-tabs">
-          <button class="tab-btn active" data-tab="browse">Browse</button>
-          <button class="tab-btn" data-tab="structure">Structure</button>
-          <button class="tab-btn" data-tab="sql">SQL</button>
-        </div>
+        <div class="tab-row" id="dbe-tabs">${TABS.map((t, i) => `<button class="tab-btn${i === 0 ? " active" : ""}" data-tab="${t.id}">${t.label}</button>`).join("")}</div>
         <div id="dbe-body"></div>
       </section>
     </div>`;
   const $ = (sel) => view.querySelector(sel);
+
+  // Grids hand their result to click handlers through this registry (a table
+  // element cannot carry an object), so a cell can be expanded or followed.
+  const grids = new Map();
+  let gridSeq = 0;
+  // Bumped each time the workspace is redrawn, so a slow response for a tab or
+  // table the user has already left cannot overwrite what they moved to.
+  let renderSeq = 0;
 
   // ---------------------------------------------------------------- tables
   async function loadTables(keep) {
@@ -92,6 +112,7 @@ async function renderEditor(view) {
     catch (ex) { $("#dbe-tables").innerHTML = `<p class="small dbe-err">${esc(ex.message)}</p>`; return; }
     if (!keep || !st.tables.some((t) => t.name === st.table)) {
       st.table = null; st.structure = null;
+      if (TABS.find((t) => t.id === st.tab)?.table) st.tab = "browse";
     }
     drawTables();
     drawBody();
@@ -104,12 +125,12 @@ async function renderEditor(view) {
         <span class="dbe-table-name mono">${icon(t.type === "view" ? "eye" : "database")} ${esc(t.name)}</span>
         <span class="dbe-table-meta small dim">${t.type === "view" ? "view" : "~" + Number(t.rows).toLocaleString() + " rows"} · ${fmtBytes(t.size_bytes)}</span>
       </button>`).join("")
-      : `<p class="small dim" style="padding:10px">${st.tables.length ? "No matching tables." : "This database has no tables yet. Use the SQL tab to create one."}</p>`;
+      : `<p class="small dim" style="padding:10px">${st.tables.length ? "No matching tables." : "This database has no tables yet. Use the + button to create one."}</p>`;
     $("#dbe-tables").querySelectorAll(".dbe-table").forEach((b) => b.onclick = () => selectTable(b.dataset.t));
   }
-  async function selectTable(name) {
-    st.table = name; st.page = 1; st.sort = ""; st.desc = false; st.filters = []; st.result = null;
-    if (st.tab === "sql") st.tab = "browse";
+  async function selectTable(name, filters) {
+    st.table = name; st.page = 1; st.sort = ""; st.desc = false; st.filters = filters || []; st.result = null;
+    if (!TABS.find((t) => t.id === st.tab)?.table) st.tab = "browse";
     setTabs();
     drawTables();
     $("#dbe-body").innerHTML = loading();
@@ -119,17 +140,37 @@ async function renderEditor(view) {
     // On a phone the table list sits above the workspace; bring the workspace into view.
     if (window.matchMedia("(max-width: 860px)").matches) $(".dbe-main").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  async function refreshStructure() {
+    if (!st.table) return;
+    try { st.structure = await api.get(`${base}/tables/${encodeURIComponent(st.table)}`); }
+    catch (ex) { toast(ex.message, "err"); }
+    await loadTables(true);
+  }
   function setTabs() {
     view.querySelectorAll("#dbe-tabs .tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === st.tab));
   }
-  view.querySelectorAll("#dbe-tabs .tab-btn").forEach((b) => b.onclick = () => { st.tab = b.dataset.tab; setTabs(); drawBody(); });
+  function setTab(id) { st.tab = id; setTabs(); drawBody(); }
+  view.querySelectorAll("#dbe-tabs .tab-btn").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
   $("#dbe-find").oninput = drawTables;
   $("#dbe-refresh").onclick = () => loadTables(true);
 
+  // The context the heavier tools work through.
+  const x = {
+    base, st, info, $, setTab, selectTable, refreshStructure, reloadTables: loadTables, refreshList: () => loadTablesQuiet(),
+    gridHTML: (res, opts) => gridHTML(res, opts),
+    seq: () => renderSeq,
+  };
+  $("#dbe-new").onclick = () => tools.newTable(x);
+
   function drawBody() {
+    grids.clear();
+    renderSeq++;
     if (st.tab === "sql") return drawSQL();
+    if (st.tab === "search") return tools.drawSearch(x);
+    if (st.tab === "io") return tools.drawIO(x);
+    if (st.tab === "objects") return tools.drawObjects(x);
     if (!st.table || !st.structure) {
-      $("#dbe-body").innerHTML = `<div class="empty-state"><span class="glyph">▤</span><p>Select a table to browse it${st.tables.length ? "" : ", or use the SQL tab to create one"}.</p></div>`;
+      $("#dbe-body").innerHTML = `<div class="empty-state"><span class="glyph">▤</span><p>Select a table to ${st.tab === "structure" ? "see its structure" : "browse it"}${st.tables.length ? "" : ", or use + to create one"}.</p></div>`;
       return;
     }
     if (st.tab === "structure") return drawStructure();
@@ -140,33 +181,66 @@ async function renderEditor(view) {
   function gridHTML(res, opts = {}) {
     const cols = res.columns || [];
     if (!cols.length) return "";
+    const gid = "g" + (++gridSeq);
+    grids.set(gid, res);
+    const fks = opts.fks || {};
     const head = cols.map((c) => {
       const active = opts.sortable && st.sort === c.name;
       return `<th class="${opts.sortable ? "dbe-sortable" : ""}" data-col="${esc(c.name)}" title="${esc(c.type)}">${esc(c.name)}${active ? (st.desc ? " ▼" : " ▲") : ""}</th>`;
     }).join("");
-    const body = (res.rows || []).map((r, i) => `<tr data-i="${i}">${r.map((v) =>
-      `<td class="mono" title="${esc(cellTitle(v))}">${fmtCell(v)}</td>`).join("")}${opts.actions ? `<td class="dbe-actions">
+    const body = (res.rows || []).map((r, i) => `<tr data-i="${i}">${r.map((v, ci) => {
+      const fk = fks[cols[ci].name];
+      return `<td class="mono${isExpandable(v) ? " dbe-expand" : ""}" data-c="${ci}" title="${esc(cellTitle(v))}">${fmtCell(v)}${fk && v !== null && v !== undefined
+        ? ` <a class="dbe-fk" href="#" data-ref="${esc(fk.table)}" data-refcol="${esc(fk.column)}" data-val="${esc(String(v))}" title="Open ${esc(fk.table)} where ${esc(fk.column)} = ${esc(String(v).slice(0, 60))}">↗</a>` : ""}</td>`;
+    }).join("")}${opts.actions ? `<td class="dbe-actions">
         <button class="btn btn-ghost btn-xs dbe-edit" title="Edit row" aria-label="Edit row">${icon("edit")}</button>
+        <button class="btn btn-ghost btn-xs dbe-dup" title="Duplicate row" aria-label="Duplicate row">${icon("copy")}</button>
         <button class="btn btn-ghost btn-xs dbe-del" title="Delete row" aria-label="Delete row">${icon("trash")}</button></td>` : ""}</tr>`).join("");
-    return `<div class="dbe-gridwrap"><table class="dbe-grid"><thead><tr>${head}${opts.actions ? "<th></th>" : ""}</tr></thead><tbody>${body}</tbody></table></div>`;
+    return `<div class="dbe-gridwrap"><table class="dbe-grid" data-g="${gid}"><thead><tr>${head}${opts.actions ? "<th></th>" : ""}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
+  // One delegated handler for every grid: expand a long cell, or follow a foreign key.
+  // Attached to this render's own element: #view outlives the page, so a listener
+  // there would pile up on every visit.
+  $(".dbe").addEventListener("click", (e) => {
+    const fk = e.target.closest?.("a.dbe-fk");
+    if (fk) {
+      e.preventDefault();
+      selectTable(fk.dataset.ref, [{ column: fk.dataset.refcol, op: "=", value: fk.dataset.val }]);
+      return;
+    }
+    const td = e.target.closest?.("td.dbe-expand");
+    if (!td) return;
+    const res = grids.get(td.closest("table")?.dataset.g);
+    if (!res) return;
+    const c = +td.dataset.c, r = +td.parentElement.dataset.i;
+    tools.cellViewer(res.columns[c].name, res.columns[c].type, res.rows[r][c]);
+  });
 
   // ---------------------------------------------------------------- browse
+  const fkMap = () => {
+    const m = {};
+    for (const f of st.structure.foreign_keys || []) if (f.columns.length === 1) m[f.columns[0]] = { table: f.ref_table, column: f.ref_columns[0] };
+    return m;
+  };
   async function loadRows() {
     const box = $("#dbe-body");
     box.innerHTML = loading();
     const qs = new URLSearchParams({ page: st.page, page_size: st.size });
     if (st.sort) { qs.set("sort", st.sort); qs.set("dir", st.desc ? "desc" : "asc"); }
     if (st.filters.length) qs.set("filters", JSON.stringify(st.filters));
+    const seq = renderSeq;
     let res;
     try { res = await api.get(`${base}/tables/${encodeURIComponent(st.table)}/rows?${qs}`); }
-    catch (ex) { box.innerHTML = `${toolbarHTML()}<p class="dbe-err">${esc(ex.message)}</p>`; bindToolbar(); return; }
+    catch (ex) {
+      if (seq !== renderSeq) return; box.innerHTML = `${toolbarHTML()}<p class="dbe-err">${esc(ex.message)}</p>`; bindToolbar(); return; }
+    if (seq !== renderSeq) return;
     st.result = res;
+    grids.clear();
     const editable = st.structure.type !== "view" && st.structure.primary_key.length > 0;
     const pages = res.total >= 0 ? Math.max(1, Math.ceil(res.total / st.size)) : null;
     box.innerHTML = `${toolbarHTML()}
       ${filterChips()}
-      ${res.rows.length ? gridHTML(res, { sortable: true, actions: editable }) : `<div class="empty-state"><p>${st.filters.length ? "No rows match these filters." : "This table is empty."}</p></div>`}
+      ${res.rows.length ? gridHTML(res, { sortable: true, actions: editable, fks: fkMap() }) : `<div class="empty-state"><p>${st.filters.length ? "No rows match these filters." : "This table is empty."}</p></div>`}
       ${!editable && st.structure.type !== "view" ? `<p class="small dim">Rows can't be edited here because this table has no primary key. Use the SQL tab.</p>` : ""}
       <div class="dbe-pager">
         <button class="btn btn-sm" id="dbe-prev" ${st.page <= 1 ? "disabled" : ""}>‹ Prev</button>
@@ -184,6 +258,7 @@ async function renderEditor(view) {
     box.querySelectorAll("tbody tr").forEach((tr) => {
       const row = res.rows[+tr.dataset.i];
       tr.querySelector(".dbe-edit")?.addEventListener("click", () => openRowForm("edit", res, row));
+      tr.querySelector(".dbe-dup")?.addEventListener("click", () => openRowForm("insert", res, row, true));
       tr.querySelector(".dbe-del")?.addEventListener("click", () => deleteRow(res, row));
     });
   }
@@ -199,6 +274,7 @@ async function renderEditor(view) {
       </div>
       <div class="dbe-toolbar-right">
         <select id="dbe-size" aria-label="Rows per page">${[25, 50, 100, 200].map((n) => `<option value="${n}" ${n === st.size ? "selected" : ""}>${n} / page</option>`).join("")}</select>
+        <button class="btn btn-sm" id="dbe-csv" title="Download the whole table as CSV">${icon("download")} CSV</button>
         ${canWrite ? `<button class="btn btn-sm btn-primary" id="dbe-insert">${icon("plus")} Insert row</button>` : ""}
       </div></div>`;
   }
@@ -220,6 +296,12 @@ async function renderEditor(view) {
     val.onkeydown = (e) => { if (e.key === "Enter") add(); };
     $("#dbe-size").onchange = (e) => { st.size = +e.target.value; st.page = 1; loadRows(); };
     $("#dbe-insert")?.addEventListener("click", () => openRowForm("insert"));
+    $("#dbe-csv")?.addEventListener("click", async (e) => {
+      const b = e.currentTarget;
+      b.disabled = true;
+      await tools.download(`${base}/export?${new URLSearchParams({ format: "csv", table: st.table, header: "1" })}`, st.table + ".csv");
+      b.disabled = false;
+    });
     view.querySelectorAll(".dbe-chip-x").forEach((b) => b.onclick = () => { st.filters.splice(+b.dataset.i, 1); st.page = 1; loadRows(); });
   }
 
@@ -237,34 +319,38 @@ async function renderEditor(view) {
     } catch (ex) { toast(ex.message, "err"); }
   }
 
-  async function openRowForm(mode, res, row) {
+  // openRowForm edits a row, inserts a new one, or (dup) inserts a copy of an
+  // existing one: the copy starts from that row's values, with generated keys
+  // left to the database so the copy gets its own.
+  async function openRowForm(mode, res, row, dup) {
     const t = st.structure;
     let orig = {};
-    if (mode === "edit") {
+    const prefill = mode === "edit" || !!dup;
+    if (prefill) {
       try { orig = await api.get(`${base}/tables/${encodeURIComponent(st.table)}/row?key=${encodeURIComponent(JSON.stringify(keyOf(res, row)))}`); }
       catch (ex) { toast(ex.message, "err"); return; }
     }
     const fields = t.columns.map((c, i) => {
       const bin = isBinaryType(c.type);
-      const isNull = mode === "edit" ? orig[c.name] === null : false;
-      const useDefault = mode === "insert" && (c.default !== null || c.extra !== "");
-      const cur = mode === "edit" && !isNull ? String(orig[c.name] ?? "") : "";
-      const disabled = bin || isNull || useDefault;
+      const isNull = prefill ? orig[c.name] === null : false;
+      const useDefault = mode === "insert" && (dup ? c.extra === "auto_increment" : (c.default !== null || c.extra !== ""));
+      const cur = prefill && !isNull && !useDefault ? String(orig[c.name] ?? "") : "";
+      const disabled = bin || (isNull && !useDefault) || useDefault;
       const input = isLongType(c.type)
         ? `<textarea class="dbe-in mono" rows="3" ${disabled ? "disabled" : ""} spellcheck="false" autocapitalize="off">${esc(cur)}</textarea>`
         : `<input type="text" class="dbe-in mono" ${disabled ? "disabled" : ""} value="${esc(cur)}" spellcheck="false" autocapitalize="off" autocomplete="off">`;
       return `<div class="dbe-field" data-i="${i}">
         <div class="dbe-field-head"><b class="mono">${esc(c.name)}</b> <span class="small dim">${esc(c.type)}</span>
           ${c.key === "PRI" ? `<span class="tag tag-lime">PK</span>` : ""}${c.extra ? `<span class="tag">${esc(c.extra)}</span>` : ""}${c.nullable ? "" : `<span class="tag">required</span>`}</div>
-        ${bin ? `<p class="small dim">Binary data is shown as hex and can't be edited here — use the SQL tab.</p>` : input}
+        ${bin ? `<p class="small dim">Binary data is shown as hex and can't be edited${dup ? " or copied" : ""} here — use the SQL tab.</p>` : input}
         ${bin ? "" : `<div class="dbe-field-opts">
-          ${c.nullable ? `<label class="checkline"><input type="checkbox" class="dbe-null" ${isNull ? "checked" : ""}> NULL</label>` : ""}
+          ${c.nullable ? `<label class="checkline"><input type="checkbox" class="dbe-null" ${isNull && !useDefault ? "checked" : ""}> NULL</label>` : ""}
           ${mode === "insert" ? `<label class="checkline"><input type="checkbox" class="dbe-def" ${useDefault ? "checked" : ""}> use default</label>` : ""}
         </div>`}</div>`;
     }).join("");
     const cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "Cancel";
     const save = document.createElement("button"); save.className = "btn btn-primary"; save.textContent = mode === "edit" ? "Save changes" : "Insert row";
-    const m = modal({ title: `${mode === "edit" ? "Edit row" : "Insert row"} — ${st.table}`, wide: true, body: `<div class="dbe-form">${fields}</div>`, actions: [cancel, save] });
+    const m = modal({ title: `${mode === "edit" ? "Edit row" : dup ? "Duplicate row" : "Insert row"} — ${st.table}`, wide: true, body: `<div class="dbe-form">${fields}</div>`, actions: [cancel, save] });
     cancel.onclick = () => m.close();
 
     const box = document.querySelector(".dbe-form");
@@ -297,7 +383,7 @@ async function renderEditor(view) {
           toast("Row updated");
         } else {
           await api.post(`${base}/tables/${encodeURIComponent(st.table)}/rows`, { values });
-          toast("Row inserted");
+          toast(dup ? "Row duplicated" : "Row inserted");
         }
         m.close();
         loadRows();
@@ -308,29 +394,58 @@ async function renderEditor(view) {
   // ---------------------------------------------------------------- structure
   function drawStructure() {
     const t = st.structure;
-    const cols = t.columns.map((c) => `<tr>
+    const isView = t.type === "view";
+    const cols = t.columns.map((c, i) => `<tr>
       <td class="mono"><b>${esc(c.name)}</b></td><td class="mono small">${esc(c.type)}</td>
       <td>${c.nullable ? "yes" : "no"}</td>
       <td>${c.key ? `<span class="tag ${c.key === "PRI" ? "tag-lime" : ""}">${esc(c.key)}</span>` : ""}</td>
       <td class="mono small">${c.default === null ? '<span class="dim">—</span>' : esc(c.default)}</td>
-      <td class="small">${esc(c.extra || "")}</td><td class="small dim">${esc(c.comment || "")}</td></tr>`).join("");
-    const idx = t.indexes.map((i) => `<tr><td class="mono"><b>${esc(i.name)}</b></td><td class="mono small">${esc(i.columns.join(", "))}</td>
-      <td>${i.primary ? '<span class="tag tag-lime">primary</span>' : i.unique ? '<span class="tag tag-teal">unique</span>' : ""}</td><td class="small dim">${esc(i.method || "")}</td></tr>`).join("");
-    const fks = t.foreign_keys.map((f) => `<tr><td class="mono"><b>${esc(f.name)}</b></td><td class="mono small">${esc(f.columns.join(", "))}</td>
-      <td class="mono small">${esc(f.ref_table)} (${esc(f.ref_columns.join(", "))})</td></tr>`).join("");
+      <td class="small">${esc(c.extra || "")}</td><td class="small dim">${esc(c.comment || "")}</td>
+      ${isView ? "" : `<td><div class="row-actions">
+        <button class="btn btn-ghost btn-xs col-edit" data-i="${i}" title="Edit column" aria-label="Edit column ${esc(c.name)}">${icon("edit")}</button>
+        <button class="btn btn-ghost btn-xs col-drop" data-i="${i}" title="Drop column" aria-label="Drop column ${esc(c.name)}">${icon("trash")}</button></div></td>`}</tr>`).join("");
+    const idx = t.indexes.map((i, n) => `<tr><td class="mono"><b>${esc(i.name)}</b></td><td class="mono small">${esc(i.columns.join(", "))}</td>
+      <td>${i.primary ? '<span class="tag tag-lime">primary</span>' : i.unique ? '<span class="tag tag-teal">unique</span>' : ""}</td><td class="small dim">${esc(i.method || "")}</td>
+      ${isView ? "" : `<td>${i.primary ? "" : `<div class="row-actions"><button class="btn btn-ghost btn-xs ix-drop" data-i="${n}" title="Drop index" aria-label="Drop index ${esc(i.name)}">${icon("trash")}</button></div>`}</td>`}</tr>`).join("");
+    const fks = t.foreign_keys.map((f, n) => `<tr><td class="mono"><b>${esc(f.name)}</b></td><td class="mono small">${esc(f.columns.join(", "))}</td>
+      <td class="mono small"><a href="#" class="fk-open" data-t="${esc(f.ref_table)}">${esc(f.ref_table)}</a> (${esc(f.ref_columns.join(", "))})</td>
+      ${isView ? "" : `<td><div class="row-actions"><button class="btn btn-ghost btn-xs fk-drop" data-i="${n}" title="Drop foreign key" aria-label="Drop foreign key ${esc(f.name)}">${icon("trash")}</button></div></td>`}</tr>`).join("");
+    const maint = info.engine === "postgres" ? ["analyze", "vacuum", "reindex"] : ["analyze", "optimize", "check", "repair"];
+    const sec = (title, addId, addLabel) => `<div class="dbe-sec-head"><h4 class="dbe-h">${title}</h4>${isView ? "" : `<button class="btn btn-sm" id="${addId}">${icon("plus")} ${addLabel}</button>`}</div>`;
     $("#dbe-body").innerHTML = `
-      <div class="dbe-struct-head"><h3 class="mono">${esc(t.table)} ${t.type === "view" ? '<span class="tag">view</span>' : ""}</h3>
+      <div class="dbe-struct-head"><h3 class="mono">${esc(t.table)} ${isView ? '<span class="tag">view</span>' : ""}</h3>
         <div class="dbe-struct-actions">
           <button class="btn btn-sm" id="dbe-browse">${icon("list")} Browse</button>
-          ${t.type === "view" ? "" : `<button class="btn btn-sm btn-warn" id="dbe-trunc">${icon("trash")} Empty table</button>`}
-          <button class="btn btn-sm btn-danger" id="dbe-drop">${icon("x")} Drop ${t.type === "view" ? "view" : "table"}</button>
+          <button class="btn btn-sm" id="dbe-create">${icon("file")} CREATE</button>
+          ${isView ? "" : `<button class="btn btn-sm" id="dbe-rename">${icon("edit")} Rename</button>
+            <button class="btn btn-sm" id="dbe-copy">${icon("copy")} Copy</button>
+            <select id="dbe-maint" class="dbe-maint" aria-label="Table maintenance"><option value="">Maintenance…</option>${maint.map((o) => `<option value="${o}">${o[0].toUpperCase() + o.slice(1)}</option>`).join("")}</select>
+            <button class="btn btn-sm btn-warn" id="dbe-trunc">${icon("trash")} Empty table</button>`}
+          <button class="btn btn-sm btn-danger" id="dbe-drop">${icon("x")} Drop ${isView ? "view" : "table"}</button>
         </div></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Column</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>Comment</th></tr></thead><tbody>${cols}</tbody></table></div>
-      <h4 class="dbe-h">Indexes</h4>
-      ${idx ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Columns</th><th>Type</th><th>Method</th></tr></thead><tbody>${idx}</tbody></table></div>` : `<p class="small dim">No indexes.</p>`}
-      <h4 class="dbe-h">Foreign keys</h4>
-      ${fks ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Columns</th><th>References</th></tr></thead><tbody>${fks}</tbody></table></div>` : `<p class="small dim">No foreign keys.</p>`}`;
-    $("#dbe-browse").onclick = () => { st.tab = "browse"; setTabs(); drawBody(); };
+      ${sec("Columns", "dbe-addcol", "Add column")}
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Column</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>Comment</th>${isView ? "" : "<th></th>"}</tr></thead><tbody>${cols}</tbody></table></div>
+      ${sec("Indexes", "dbe-addidx", "Add index")}
+      ${idx ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Columns</th><th>Type</th><th>Method</th>${isView ? "" : "<th></th>"}</tr></thead><tbody>${idx}</tbody></table></div>` : `<p class="small dim">No indexes.</p>`}
+      ${sec("Foreign keys", "dbe-addfk", "Add foreign key")}
+      ${fks ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Columns</th><th>References</th>${isView ? "" : "<th></th>"}</tr></thead><tbody>${fks}</tbody></table></div>` : `<p class="small dim">No foreign keys.</p>`}`;
+    const b = $("#dbe-body");
+    b.querySelector("#dbe-browse").onclick = () => setTab("browse");
+    b.querySelector("#dbe-create").onclick = () => tools.showCreate(x);
+    b.querySelector("#dbe-rename")?.addEventListener("click", () => tools.renameTable(x));
+    b.querySelector("#dbe-copy")?.addEventListener("click", () => tools.copyTable(x));
+    b.querySelector("#dbe-maint")?.addEventListener("change", async (e) => {
+      const op = e.target.value; e.target.value = "";
+      if (op) await tools.maintain(x, op);
+    });
+    b.querySelector("#dbe-addcol")?.addEventListener("click", () => tools.addColumn(x));
+    b.querySelector("#dbe-addidx")?.addEventListener("click", () => tools.addIndex(x));
+    b.querySelector("#dbe-addfk")?.addEventListener("click", () => tools.addForeignKey(x));
+    b.querySelectorAll(".col-edit").forEach((el) => el.onclick = () => tools.editColumn(x, t.columns[+el.dataset.i]));
+    b.querySelectorAll(".col-drop").forEach((el) => el.onclick = () => tools.dropColumn(x, t.columns[+el.dataset.i]));
+    b.querySelectorAll(".ix-drop").forEach((el) => el.onclick = () => tools.dropIndex(x, t.indexes[+el.dataset.i]));
+    b.querySelectorAll(".fk-drop").forEach((el) => el.onclick = () => tools.dropForeignKey(x, t.foreign_keys[+el.dataset.i]));
+    b.querySelectorAll(".fk-open").forEach((el) => el.onclick = (e) => { e.preventDefault(); setTab("browse"); selectTable(el.dataset.t); });
     const destroy = async (kind) => {
       const vals = await promptDialog(kind === "drop" ? `Drop ${t.type} ${t.table}` : `Empty table ${t.table}`, [
         { name: "confirm", label: `Type the name to confirm: ${t.table}`, mono: true, required: true,
@@ -343,8 +458,8 @@ async function renderEditor(view) {
         if (kind === "drop") { st.table = null; st.structure = null; await loadTables(false); } else { drawTables(); }
       } catch (ex) { toast(ex.message, "err"); }
     };
-    $("#dbe-trunc")?.addEventListener("click", () => destroy("truncate"));
-    $("#dbe-drop").onclick = () => destroy("drop");
+    b.querySelector("#dbe-trunc")?.addEventListener("click", () => destroy("truncate"));
+    b.querySelector("#dbe-drop").onclick = () => destroy("drop");
   }
 
   // ---------------------------------------------------------------- SQL
@@ -353,8 +468,8 @@ async function renderEditor(view) {
     const hist = readHistory();
     $("#dbe-body").innerHTML = `
       <div class="dbe-sql">
-        <textarea id="sql-in" class="mono" rows="7" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="SQL statement"
-          placeholder="One statement at a time — Ctrl/⌘ + Enter to run">${esc(lastSQL)}</textarea>
+        <textarea id="sql-in" class="mono" rows="7" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="SQL statements"
+          placeholder="Separate several statements with semicolons — Ctrl/⌘ + Enter to run">${esc(lastSQL)}</textarea>
         <div class="dbe-sql-bar">
           <button class="btn btn-primary" id="sql-run">${icon("play")} Run</button>
           <select id="sql-limit" aria-label="Row limit">${[100, 500, 1000].map((n) => `<option value="${n}" ${n === 1000 ? "selected" : ""}>max ${n} rows</option>`).join("")}</select>
@@ -377,19 +492,31 @@ async function renderEditor(view) {
     const btn = $("#sql-run");
     btn.disabled = true;
     out.innerHTML = loading();
+    grids.clear();
     try {
-      const res = await api.post(`${base}/query`, { sql, limit: +$("#sql-limit").value });
+      const res = await api.post(`${base}/script`, { sql, limit: +$("#sql-limit").value });
       pushHistory(sql);
-      if (res.columns.length) {
-        out.innerHTML = `<p class="small dim dbe-meta">${res.rows.length} row${res.rows.length === 1 ? "" : "s"} · ${res.elapsed_ms} ms${res.truncated ? " · <b>result truncated</b> (raise the row limit or add LIMIT)" : ""}</p>
-          ${res.rows.length ? gridHTML(res) : `<div class="empty-state"><p>No rows returned.</p></div>`}`;
-      } else {
-        out.innerHTML = `<p class="dbe-ok">${icon("check")} Statement executed · ${Number(res.affected).toLocaleString()} row${res.affected === 1 ? "" : "s"} affected · ${res.elapsed_ms} ms</p>`;
-        if (/^\s*(create|alter|drop|rename|truncate)\b/i.test(sql)) loadTables(true);
-      }
+      const many = res.results.length > 1;
+      out.innerHTML = res.results.map((r, i) => {
+        const head = many ? `<p class="small mono dbe-stmt">${i + 1}. ${esc(r.sql)}</p>` : "";
+        if (r.error) return `${head}<p class="dbe-err">${esc(r.error)}</p>`;
+        const q = r.result;
+        if (q.columns.length) {
+          return `${head}<div class="dbe-meta-row"><p class="small dim dbe-meta">${q.rows.length} row${q.rows.length === 1 ? "" : "s"} · ${q.elapsed_ms} ms${q.truncated ? " · <b>result truncated</b> (raise the row limit or add LIMIT)" : ""}</p>
+            ${q.rows.length ? `<button class="btn btn-ghost btn-xs sql-csv" data-i="${i}">${icon("download")} CSV</button>` : ""}</div>
+            ${q.rows.length ? gridHTML(q) : `<div class="empty-state"><p>No rows returned.</p></div>`}`;
+        }
+        return `${head}<p class="dbe-ok">${icon("check")} Statement executed · ${Number(q.affected).toLocaleString()} row${q.affected === 1 ? "" : "s"} affected · ${q.elapsed_ms} ms</p>`;
+      }).join("") + (res.error ? `<p class="small dim">The script stopped at the first error; later statements did not run.</p>` : "");
+      out.querySelectorAll(".sql-csv").forEach((b) => b.onclick = () => tools.downloadResultCSV(res.results[+b.dataset.i].result, "query-" + (+b.dataset.i + 1)));
+      if (res.results.some((r) => /^\s*(create|alter|drop|rename|truncate)\b/i.test(r.sql))) loadTablesQuiet();
     } catch (ex) {
       out.innerHTML = `<p class="dbe-err">${esc(ex.message)}</p>`;
     } finally { btn.disabled = false; }
+  }
+  // After DDL from the console, refresh the sidebar without redrawing (and losing) the results.
+  async function loadTablesQuiet() {
+    try { st.tables = await api.get(`${base}/tables`); drawTables(); } catch { /* the list refreshes on the next action */ }
   }
 
   await loadTables(false);
