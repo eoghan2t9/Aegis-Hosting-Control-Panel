@@ -323,7 +323,11 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	}
 
 	if statErr == nil && !info.IsDir() && !isPHP {
-		// Serve static files directly.
+		// Serve static files directly. Header ops apply before ServeFile
+		// runs — safe because ServeFile only ever Set()s a small fixed set
+		// of headers it manages itself (Content-Type/ETag/Last-Modified),
+		// never the custom ones "Header set/add" is actually used for.
+		htApplyHeaders(rw.Header(), w.htConfigFor(root, upath).Headers)
 		http.ServeFile(rw, r, fsPath)
 		return
 	}
@@ -364,6 +368,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 					fsPath, info = ip, st
 					break
 				}
+				htApplyHeaders(rw.Header(), dirCfg.Headers)
 				http.ServeFile(rw, r, ip)
 				return
 			}
@@ -374,6 +379,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	if route.Socket == "" {
 		// No PHP configured: if a static file exists serve it, else 404.
 		if statErr == nil && !info.IsDir() {
+			htApplyHeaders(rw.Header(), w.htConfigFor(root, upath).Headers)
 			http.ServeFile(rw, r, fsPath)
 		} else {
 			http.NotFound(rw, r)
@@ -391,6 +397,12 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		scriptName = "/" + filepath.ToSlash(rel2)
 	}
 
+	htCfg := w.htConfigFor(root, upath)
+	if len(htCfg.RequestHeaders) > 0 {
+		// fcgiExec turns every r.Header entry into an HTTP_* CGI param
+		// (see below), so mutating it here is enough for PHP to see it.
+		htApplyHeaders(r.Header, htCfg.RequestHeaders)
+	}
 	status, headers, body, stderr, err := w.fcgiExec(route.Socket, r, scriptFile, scriptName)
 	if err != nil {
 		if stderr != "" {
@@ -408,6 +420,11 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	if stderr != "" {
 		rw.Header().Set("X-Aegis-Php-Error", truncate(stderr, 500))
 	}
+	// Header ops apply last, after PHP's own response headers are already
+	// copied in — matching Apache, where mod_headers runs on the generated
+	// response rather than before it, so "Header set" can override
+	// something the script itself sent and "Header unset" can remove it.
+	htApplyHeaders(rw.Header(), htCfg.Headers)
 	rw.WriteHeader(status)
 	_, _ = rw.Write(body)
 }

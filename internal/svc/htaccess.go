@@ -54,7 +54,77 @@ type HtConfig struct {
 	// missing-trailing-slash redirect goserver.go's serveGoRoute otherwise
 	// always applies to directory requests.
 	DirectorySlashOff bool
-	Skipped           []string
+	// Headers are "Header ..." ops (mod_headers), applied to the response
+	// after content is generated. RequestHeaders are "RequestHeader ..."
+	// ops, applied to the request before it reaches PHP-FPM.
+	Headers        []HtHeaderOp
+	RequestHeaders []HtHeaderOp
+	Skipped        []string
+}
+
+// HtHeaderOp is one "Header"/"RequestHeader" directive. Kind is
+// set/add/append/merge/unset/edit (lowercased); a leading "always"/
+// "onsuccess" condition token is accepted but not distinguished — this
+// server doesn't track per-response error state at the point these apply.
+type HtHeaderOp struct {
+	Kind    string
+	Name    string
+	Value   string
+	Pattern string // "edit"/"edit*" only: the match regex: Value holds the replacement
+}
+
+// htParseHeaderOp parses a Header/RequestHeader directive's arguments
+// (everything after the directive name).
+func htParseHeaderOp(args []string) (HtHeaderOp, bool) {
+	if len(args) > 0 && (strings.EqualFold(args[0], "always") || strings.EqualFold(args[0], "onsuccess")) {
+		args = args[1:]
+	}
+	if len(args) < 2 {
+		return HtHeaderOp{}, false
+	}
+	op := HtHeaderOp{Kind: strings.ToLower(args[0]), Name: args[1]}
+	rest := args[2:]
+	switch op.Kind {
+	case "unset":
+		// no value
+	case "edit", "edit*":
+		if len(rest) < 2 {
+			return HtHeaderOp{}, false
+		}
+		op.Pattern, op.Value = rest[0], rest[1]
+	default: // set, add, append, merge
+		op.Value = strings.Join(rest, " ")
+	}
+	return op, true
+}
+
+// htApplyHeaders runs a directory's Header/RequestHeader ops against h, in
+// declaration order.
+func htApplyHeaders(h http.Header, ops []HtHeaderOp) {
+	for _, op := range ops {
+		switch op.Kind {
+		case "set":
+			h.Set(op.Name, op.Value)
+		case "add", "append", "merge":
+			h.Add(op.Name, op.Value)
+		case "unset":
+			h.Del(op.Name)
+		case "edit", "edit*":
+			re := htCompile(op.Pattern, false)
+			if re == nil {
+				continue
+			}
+			vals := h.Values(op.Name)
+			for i, v := range vals {
+				nv := re.ReplaceAllString(v, op.Value)
+				if i == 0 {
+					h.Set(op.Name, nv)
+				} else {
+					h.Add(op.Name, nv)
+				}
+			}
+		}
+	}
 }
 
 // HtFileDeny is one <Files pattern> or <FilesMatch pattern> block's "Deny
@@ -294,6 +364,8 @@ func htParseDir(root, dir string) *HtConfig {
 		if sub.DirectorySlashOff {
 			cfg.DirectorySlashOff = true
 		}
+		cfg.Headers = append(cfg.Headers, sub.Headers...)
+		cfg.RequestHeaders = append(cfg.RequestHeaders, sub.RequestHeaders...)
 		cfg.Skipped = append(cfg.Skipped, sub.Skipped...)
 	}
 	return cfg
@@ -395,6 +467,14 @@ func htParseFile(file string, cfg *HtConfig) {
 		case "directoryslash":
 			if len(args) > 0 {
 				cfg.DirectorySlashOff = strings.EqualFold(args[0], "off")
+			}
+		case "header":
+			if op, ok := htParseHeaderOp(args); ok {
+				cfg.Headers = append(cfg.Headers, op)
+			}
+		case "requestheader":
+			if op, ok := htParseHeaderOp(args); ok {
+				cfg.RequestHeaders = append(cfg.RequestHeaders, op)
 			}
 		case "addtype":
 			// "AddType application/x-httpd-php[74] .html .htm ..." — legacy
