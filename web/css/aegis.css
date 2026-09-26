@@ -851,3 +851,71 @@ input, select, textarea { min-width: 0; }
   .tbl:not(.tbl-accounts) td[colspan] { display: block; text-align: center; }
   .tbl:not(.tbl-accounts) td[colspan]::before { content: none; }
 }
+
+/* ==========================================================================
+   Database editor (web/js/views/dbeditor.js)
+   ========================================================================== */
+.dbe { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
+.dbe-side { padding: 0; position: sticky; top: 72px; max-height: calc(100vh - 100px); display: flex; flex-direction: column; overflow: hidden; }
+.dbe-side-head { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
+.dbe-tables { overflow-y: auto; padding: 6px; }
+.dbe-table {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  padding: 8px 10px; color: var(--text-1); font: inherit; cursor: pointer;
+}
+.dbe-table:hover { background: var(--bg2); }
+.dbe-table.active { background: var(--accent-dim); border-color: rgba(198,241,78,.22); color: var(--accent); }
+.dbe-table-name { display: flex; align-items: center; gap: 7px; font-size: 13px; overflow-wrap: anywhere; }
+.dbe-table-meta { padding-left: 22px; }
+.dbe-main { min-width: 0; }
+.dbe-toolbar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 12px; }
+.dbe-filter, .dbe-toolbar-right { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.dbe-filter select, .dbe-filter input, .dbe-toolbar-right select { width: auto; min-width: 110px; }
+.dbe-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.dbe-chip-x { background: none; border: none; color: inherit; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
+.dbe-gridwrap { overflow: auto; max-height: 68vh; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg1); }
+table.dbe-grid { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+.dbe-grid th {
+  position: sticky; top: 0; z-index: 1; background: var(--bg2); text-align: left; padding: 8px 12px;
+  font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3);
+  white-space: nowrap; border-bottom: 1px solid var(--line);
+}
+.dbe-sortable { cursor: pointer; }
+.dbe-sortable:hover { color: var(--accent); }
+.dbe-grid td { padding: 6px 12px; border-bottom: 1px solid var(--line); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbe-grid tbody tr:hover td { background: rgba(255,255,255,.02); }
+.dbe-grid td.dbe-actions { white-space: nowrap; text-align: right; width: 1%; max-width: none; }
+.dbe-null { color: var(--text-3); font-style: italic; }
+.dbe-pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.dbe-err { color: var(--danger); font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dbe-ok { color: var(--accent); display: flex; align-items: center; gap: 7px; }
+.dbe-meta { margin: 10px 0 6px; }
+.dbe-struct-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.dbe-struct-head h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.dbe-struct-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.dbe-h { margin: 18px 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); }
+.dbe-sql textarea { width: 100%; min-height: 140px; resize: vertical; background: #080b0f; line-height: 1.6; }
+.dbe-sql-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+.dbe-sql-bar select { width: auto; max-width: 260px; }
+.dbe-form { display: grid; gap: 14px; max-height: 60vh; overflow: auto; padding-right: 4px; }
+.dbe-field-head { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 6px; }
+.dbe-field .dbe-in { width: 100%; }
+.dbe-field textarea.dbe-in { min-height: 70px; resize: vertical; }
+.dbe-field-opts { display: flex; gap: 16px; margin-top: 6px; }
+.dbe-field-opts .checkline { margin: 0; }
+@media (max-width: 860px) {
+  .dbe { grid-template-columns: 1fr; }
+  .dbe-side { position: static; max-height: 260px; }
+}
+@media (max-width: 600px) {
+  .dbe-filter select, .dbe-filter input, .dbe-filter .btn { flex: 1 1 100%; width: 100%; }
+  .dbe-toolbar-right { width: 100%; }
+  .dbe-toolbar-right > * { flex: 1 1 auto; }
+  .dbe-gridwrap { max-height: 60vh; }
+  .dbe-pager { justify-content: center; }
+  .dbe-pager .btn { flex: 1 1 40%; min-height: 40px; }
+  .dbe-form { max-height: 62vh; }
+  .dbe-sql-bar > * { flex: 1 1 auto; }
+  .dbe-sql-bar select { max-width: none; }
+}

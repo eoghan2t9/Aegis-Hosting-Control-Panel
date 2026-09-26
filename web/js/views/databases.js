@@ -37,6 +37,7 @@ addRoute("/databases", {
             <td class="mono small">${esc(d.db_user)}</td>
             <td class="small dim">${fmtAgo(d.created_at)}</td>
             <td><div class="row-actions">
+              <button class="btn btn-ghost act-open" title="Open in the database editor">${icon("database")}</button>
               <button class="btn btn-ghost act-cred" title="Credentials">${icon("key")}</button>
               <button class="btn btn-ghost act-dump" title="Download SQL dump">${icon("download")}</button>
               <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
@@ -48,6 +49,7 @@ addRoute("/databases", {
       const row = dbs.find((d) => d.id === +tr.dataset.id);
       if (!row) return;
       // The list never carries passwords; fetch this one on demand (audited server-side).
+      tr.querySelector(".act-open")?.addEventListener("click", () => { location.hash = "#/dbeditor?db=" + row.id; });
       tr.querySelector(".act-cred")?.addEventListener("click", async () => {
         try { credsModal(await api.get("/databases/" + row.id + "/credentials")); }
         catch (ex) { toast(ex.message, "err"); }
