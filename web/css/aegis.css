@@ -118,6 +118,7 @@ body {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   white-space: nowrap;
   transition: border-color .15s, background .15s, color .15s, transform .05s;
@@ -519,9 +520,22 @@ tr:hover .row-actions, .row-actions:hover { opacity: 1; }
   padding: 14px 20px; border-top: 1px solid var(--line);
 }
 .modal-foot .btn { justify-content: center; }
+.modal-title { min-width: 0; overflow-wrap: anywhere; }
+.php-ini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
 @media (max-width: 600px) {
+  /* dialogs: use the screen instead of a desktop-sized frame */
+  .modal-backdrop { padding: 12px; }
+  .modal-head { padding: 12px 14px; }
+  .modal-body { padding: 16px 14px; }
   .modal-foot { padding: 12px 14px; }
   .modal-foot .btn { flex: 1 1 calc(50% - 8px); min-height: 40px; }
+  /* label/value rows stack instead of squeezing values into a narrow column */
+  .kv { grid-template-columns: 1fr; gap: 2px 0; }
+  .kv dd { margin-bottom: 8px; }
+  .php-ini-grid { grid-template-columns: 1fr; }
+  .ssl-btns .btn, #dd-apps .btn { flex: 1 1 100%; min-height: 40px; }
+  /* 16px inputs stop iOS zooming the page when a field is focused */
+  input[type=text], input[type=password], input[type=email], input[type=number], input[type=search], select, textarea, .dd-btn { font-size: 16px; }
 }
 .modal-head .btn { margin-left: auto; }
 .m-close { border: none; background: none; color: var(--text-3); font-size: 20px; cursor: pointer; line-height: 1; padding: 4px 6px; }

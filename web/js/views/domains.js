@@ -270,7 +270,7 @@ function openDetail(id, onChanged) {
         </div>
         <div style="height:16px"></div>
         <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Web app installer</b>
-        <div id="dd-apps" style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <div id="dd-apps" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-sm" id="dd-install">${icon("plus")} Install an app…</button>
           <button class="btn btn-sm" id="dd-wpcli">Run WP-CLI command</button>
         </div>
@@ -365,7 +365,7 @@ function phpIniBlock(dom) {
   const settings = dom.php_settings || {};
   const de = settings.display_errors || "";
   return `<b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP settings (php.ini)</b>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+    <div class="php-ini-grid">
       ${PHP_INI_FIELDS.map((f) => `<label class="field" style="margin:0">
         <span class="field-label small dim">${esc(f.label)}</span>
         <input type="text" class="mono php-ini-input" data-key="${esc(f.key)}" placeholder="${esc(f.placeholder)}" value="${esc(settings[f.key] || "")}">
@@ -448,7 +448,7 @@ function sslBlock(dom, id, hasWebftp, webftpCovered) {
     : "";
   return `<div style="border-top:1px solid var(--line);padding-top:14px">
     <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">TLS certificate</b>
-    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    <div class="ssl-btns" style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
       <button class="btn" id="ssl-http">${icon("ssl")} Issue Let's Encrypt (HTTP)</button>
       <button class="btn" id="ssl-dns">Issue Let's Encrypt (DNS-01)</button>
       <button class="btn btn-ghost" id="ssl-self">Self-signed</button>
