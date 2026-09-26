@@ -65,7 +65,109 @@ Backups
   backup create [--user NAME]               (full backup by default)
   backup list
   backup restore FILE
+
+Security
+  isolate [--dry-run] [USER...]             move accounts off the shared www-data group onto
+                                            private groups (customers can no longer read each
+                                            other's files); idempotent, safe to re-run
+  isolate --rollback [USER...]              put accounts back on www-data
 `)
+}
+
+// cmdIsolate migrates accounts created before private groups existed. For each
+// panel account still in the shared www-data group it: gives the account its own
+// group, re-groups only the files that are currently www-data-grouped, grants the
+// web server read access to each site with an ACL, regenerates the php-fpm pools
+// (which name the group), and moves the account's FTP logins to the same group.
+func cmdIsolate(ctx context.Context, args []string) error {
+	dry := flagSet(args, "dry-run")
+	rollback := flagSet(args, "rollback")
+	var only []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			only = append(only, a)
+		}
+	}
+	_, st, ss, err := wire()
+	if err != nil {
+		return err
+	}
+	users, err := st.ListUsers(ctx, 0)
+	if err != nil {
+		return err
+	}
+	want := func(name string) bool {
+		if len(only) == 0 {
+			return true
+		}
+		for _, n := range only {
+			if n == name {
+				return true
+			}
+		}
+		return false
+	}
+	var failures int
+	for _, u := range users {
+		if !want(u.Username) || u.HomeDir == "" {
+			continue
+		}
+		if _, err := svc.UIDFor(u.Username); err != nil {
+			fmt.Printf("%-24s skipped (no system account)\n", u.Username)
+			continue
+		}
+		doms, _ := st.ListDomains(ctx, u.ID)
+		var roots []string
+		for _, d := range doms {
+			roots = append(roots, d.DocumentRoot)
+		}
+		if rollback {
+			if err := svc.RollbackIsolation(u.Username, u.HomeDir); err != nil {
+				fmt.Printf("%-24s rollback FAILED: %v\n", u.Username, err)
+				failures++
+				continue
+			}
+			fmt.Printf("%-24s back on the shared group\n", u.Username)
+		} else {
+			rep, err := svc.IsolateAccount(u.Username, u.HomeDir, roots, dry)
+			switch {
+			case err != nil:
+				fmt.Printf("%-24s FAILED: %v\n", u.Username, err)
+				failures++
+				continue
+			case dry:
+				fmt.Printf("%-24s would regroup %d entries (private group already: %v)\n", u.Username, rep.Files, rep.AlreadyPrivate)
+				continue
+			default:
+				fmt.Printf("%-24s isolated: %d entries regrouped\n", u.Username, rep.Files)
+				for _, w := range rep.Warnings {
+					fmt.Printf("%-24s   warning: %s\n", "", w)
+				}
+			}
+			// The account's FTP logins sit in the same private group.
+			accts, _ := st.ListFTPAccounts(ctx, u.ID)
+			for _, a := range accts {
+				if a.Username != u.Username {
+					if err := svc.IsolateLogin(a.Username, u.Username); err != nil {
+						fmt.Printf("%-24s   warning: ftp login: %v\n", "", err)
+					}
+				}
+			}
+		}
+		// php-fpm pools name the account's group, so regenerate them.
+		for _, d := range doms {
+			if d.PHPVersion == "" {
+				continue
+			}
+			if err := ss.php.EnsurePool(d.Domain, u.Username, d.PHPVersion, nil, d.PHPSettings); err != nil {
+				fmt.Printf("%-24s   warning: php pool for a site: %v\n", "", err)
+			}
+		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("%d account(s) failed", failures)
+	}
+	return nil
 }
 
 // -- context & wiring ---------------------------------------------------------
@@ -174,6 +276,8 @@ func dispatch(cmd string, args []string) error {
 		return cmdDB(ctx, args)
 	case "backup":
 		return cmdBackup(ctx, args)
+	case "isolate":
+		return cmdIsolate(ctx, args)
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -308,7 +412,7 @@ func cmdUser(ctx context.Context, args []string) error {
 			PackageID: pkgID, Status: store.StatusActive,
 			HomeDir: ss.cfg.HomeRoot + "/" + *u,
 		}
-		if _, err := svc.RunTimeout(15*time.Second, "useradd", "-m", "-d", user.HomeDir, "-s", "/sbin/nologin", "-g", "www-data", *u); err != nil {
+		if err := svc.ProvisionAccount(*u, user.HomeDir, "/sbin/nologin"); err != nil {
 			return fmt.Errorf("system account: %w", err)
 		}
 		if err := svc.SetSystemPassword(*u, password); err != nil {

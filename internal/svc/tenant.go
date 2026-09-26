@@ -136,6 +136,14 @@ func GrantWebAccess(owner, home, docroot string) error {
 	return first
 }
 
+// regroupArgs returns the chown arguments that move every entry under dir whose
+// group is `from` to group `to`, leaving the owner and every entry in any other
+// group alone. -h means a symlink is changed itself and never followed out of the
+// tree.
+func regroupArgs(from, to, dir string) []string {
+	return []string{"-R", "-h", "--from=:" + from, ":" + to, dir}
+}
+
 // countGroupOwned counts entries under dir whose group is gid.
 func countGroupOwned(dir string, gid int) int {
 	n := 0
@@ -193,9 +201,10 @@ func IsolateAccount(username, home string, docroots []string, dryRun bool) (Isol
 			return rep, err
 		}
 	}
-	// Only entries that are currently www-data-grouped change; -h never follows
-	// a symlink out of the tree.
-	if _, err := runCmd(30*time.Minute, "chgrp", "-R", "-h", "--from=:"+sharedWebGroup, username, home); err != nil {
+	// Only entries that are currently www-data-grouped change (chown, unlike
+	// chgrp, can filter on the current group); -h never follows a symlink out of
+	// the tree, and ":group" leaves the owner alone.
+	if _, err := runCmd(30*time.Minute, "chown", regroupArgs(sharedWebGroup, username, home)...); err != nil {
 		return rep, err
 	}
 	_ = os.Chmod(home, 0o750)
@@ -222,6 +231,6 @@ func RollbackIsolation(username, home string) error {
 	if _, err := runCmd(15*time.Second, "usermod", "-g", sharedWebGroup, username); err != nil {
 		return err
 	}
-	_, err := runCmd(30*time.Minute, "chgrp", "-R", "-h", "--from=:"+username, sharedWebGroup, home)
+	_, err := runCmd(30*time.Minute, "chown", regroupArgs(username, sharedWebGroup, home)...)
 	return err
 }

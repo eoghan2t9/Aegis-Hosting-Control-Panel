@@ -272,7 +272,7 @@ func (b *Backup) restoreUser(ctx context.Context, staging string, m *Manifest, m
 		if err := b.Store.CreateUser(ctx, u); err != nil {
 			return err
 		}
-		if _, err := RunTimeout(15*time.Second, "useradd", "-m", "-d", home, "-s", "/sbin/nologin", "-g", "www-data", mu.Username); err != nil {
+		if err := ProvisionAccount(mu.Username, home, "/sbin/nologin"); err != nil {
 			return fmt.Errorf("system user: %w", err)
 		}
 	} else {
@@ -291,7 +291,7 @@ func (b *Backup) restoreUser(ctx context.Context, staging string, m *Manifest, m
 		if _, err := RunTimeout(15*time.Minute, "tar", "xzf", homeTar, "-C", filepath.Dir(home)); err != nil {
 			return fmt.Errorf("home restore: %w", err)
 		}
-		_, _ = RunTimeout(15*time.Second, "chown", "-R", mu.Username+":www-data", home)
+		_, _ = RunTimeout(15*time.Second, "chown", "-R", OwnerSpec(mu.Username), home)
 	}
 
 	// Databases: recreate + restore dumps.

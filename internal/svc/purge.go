@@ -331,6 +331,12 @@ func (p *Purger) DeleteUser(ctx context.Context, u *store.User) (*PurgeReport, e
 		if _, still := p.lookupUser(ctx, u.Username); still {
 			return rep, fmt.Errorf("could not remove system account %s: %v", u.Username, uerr)
 		}
+		// userdel drops the private group with its user, unless one of the
+		// customer's FTP logins still lists it as its primary group. Never touch
+		// the shared web group or a group that is not the account's own.
+		if u.Username != sharedWebGroup && groupExists(u.Username) {
+			_, _ = RunTimeout(15*time.Second, "groupdel", u.Username)
+		}
 	}
 	if fi, err := os.Lstat(home); err == nil {
 		switch {

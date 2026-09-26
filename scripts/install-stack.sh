@@ -94,6 +94,9 @@ apt_get() { apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--f
 log "installing PHP-FPM: $PHP_VERSIONS"
 apt_get update
 apt_get install -y ca-certificates curl gnupg lsb-release
+# acl: each customer has a private group, so the web server is granted read access
+# to a site with a POSIX ACL (setfacl) instead of through a shared group.
+apt_get install -y acl
 if ! grep -rq "packages.sury.org" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
   curl -fsSL "$SURY_REPO/apt.gpg" -o /etc/apt/trusted.gpg.d/php.gpg
   echo "deb $SURY_REPO/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list

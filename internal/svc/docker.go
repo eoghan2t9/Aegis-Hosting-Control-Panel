@@ -342,7 +342,7 @@ func (dk *Docker) Create(ctx context.Context, user *store.User, req CreateContai
 	for _, v := range c.Volumes {
 		if abs, err := dk.Files.Resolve(user, v.HostPath); err == nil {
 			_ = os.MkdirAll(abs, 0o755)
-			_, _ = RunTimeout(10*time.Second, "chown", "-R", user.Username+":www-data", abs)
+			_, _ = RunTimeout(10*time.Second, "chown", "-R", OwnerSpec(user.Username), abs)
 		}
 	}
 	if err := dk.dockerRun(ctx, user, c); err != nil {

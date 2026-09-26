@@ -160,7 +160,7 @@ func (c *Cron) writeCrontab(ctx context.Context, user *store.User) error {
 	if err := os.MkdirAll(logDir, 0o755); err == nil {
 		// The panel runs as root; the job itself runs as the user via cron,
 		// so the log directory must be writable by them or output is lost.
-		_, _ = RunTimeout(10*time.Second, "chown", "-R", user.Username+":www-data", logDir)
+		_, _ = RunTimeout(10*time.Second, "chown", "-R", OwnerSpec(user.Username), logDir)
 	}
 
 	var sb strings.Builder

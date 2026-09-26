@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"aegis/internal/auth"
 	"aegis/internal/store"
@@ -403,8 +402,9 @@ func (s *Server) handleUsersSuspend(w http.ResponseWriter, r *http.Request) {
 
 // createSystemUser adds the system account with a home directory.
 func createSystemUser(r *http.Request, u *store.User, password string) error {
-	_, err := svc.RunTimeout(15*time.Second, "useradd", "-m", "-d", u.HomeDir, "-s", "/sbin/nologin", "-g", "www-data", u.Username)
-	if err != nil {
+	// A private primary group per account (not the shared www-data): customers
+	// must not be able to read each other's files. Fails if the account exists.
+	if err := svc.ProvisionAccount(u.Username, u.HomeDir, "/sbin/nologin"); err != nil {
 		return err
 	}
 	return svc.SetSystemPassword(u.Username, password)

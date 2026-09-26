@@ -154,9 +154,9 @@ func (w *WebApps) InstallApp(ctx context.Context, appID string, dom *store.Domai
 		if err := os.Symlink(target, dom.DocumentRoot); err != nil {
 			return fmt.Errorf("link public dir: %w", err)
 		}
-		_, _ = RunTimeout(30*time.Second, "chown", "-h", owner.Username+":www-data", dom.DocumentRoot)
+		_, _ = RunTimeout(30*time.Second, "chown", "-h", OwnerSpec(owner.Username), dom.DocumentRoot)
 	}
-	_, _ = RunTimeout(60*time.Second, "chown", "-R", owner.Username+":www-data", appDir)
+	_, _ = RunTimeout(60*time.Second, "chown", "-R", OwnerSpec(owner.Username), appDir)
 	return nil
 }
 

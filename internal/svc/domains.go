@@ -204,13 +204,19 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 	// still root-owned directory that nothing else ever touches; chown that
 	// too, non-recursively, so the domain's own folder — the first thing a
 	// file manager shows — isn't left owned by root.
-	if out, cerr := RunTimeout(15*time.Second, "chown", "-R", user.Username+":www-data", root); cerr != nil {
+	if out, cerr := RunTimeout(15*time.Second, "chown", "-R", OwnerSpec(user.Username), root); cerr != nil {
 		slog.Warn("domain docroot chown failed", "root", root, "user", user.Username, "err", cerr, "out", out)
 	}
 	if parent := filepath.Dir(root); parent != d.UserHome(user) {
-		if out, cerr := RunTimeout(15*time.Second, "chown", user.Username+":www-data", parent); cerr != nil {
+		if out, cerr := RunTimeout(15*time.Second, "chown", OwnerSpec(user.Username), parent); cerr != nil {
 			slog.Warn("domain folder chown failed", "parent", parent, "user", user.Username, "err", cerr, "out", out)
 		}
+	}
+	// The customer's group is private, so the external web servers (nginx,
+	// Apache, Caddy) are granted read access to this site with an ACL instead of
+	// through a shared group. The native Go server does not need it.
+	if gerr := GrantWebAccess(user.Username, d.UserHome(user), root); gerr != nil {
+		slog.Warn("domain docroot: web server access", "root", root, "user", user.Username, "err", gerr)
 	}
 
 	dom := &store.Domain{

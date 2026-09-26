@@ -329,7 +329,7 @@ func createAdmin(ctx context.Context, st *store.Store, homeRoot, username, passw
 	if err := st.CreateUser(ctx, u); err != nil {
 		return err
 	}
-	_, _ = svc.RunTimeout(15*time.Second, "useradd", "-m", "-d", home, "-s", "/bin/bash", "-g", "www-data", username)
+	_ = svc.ProvisionAccount(username, home, "/bin/bash")
 	_ = svc.SetSystemPassword(username, password)
 	return nil
 }
