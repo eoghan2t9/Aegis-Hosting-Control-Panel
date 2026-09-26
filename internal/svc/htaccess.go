@@ -114,6 +114,7 @@ type HtCond struct {
 	NoCase   bool   // NC
 	OrNext   bool   // OR
 	Lex      byte   // 0 = regex; '<', '>', '=' lexicographic compare
+	LexNeg   bool   // true for "!<"/"!>"/"!=" — negates the Lex comparison
 	FileTest string // "" or "-f","-d","-e","-s","-x" ("!"+op when negated)
 }
 
@@ -443,6 +444,7 @@ func htParseCond(args []string) (HtCond, bool) {
 		c.Pattern = ""
 	case len(p) > 0 && (p[0] == '<' || p[0] == '>' || p[0] == '='):
 		c.Lex = p[0]
+		c.LexNeg = neg
 		c.Pattern = p[1:]
 	}
 	return c, true
@@ -966,22 +968,34 @@ func htEvalCond(ctx *htCtx, c *HtCond) bool {
 		return pass
 	case c.Lex == '<':
 		other := htExpand(ctx, c.Pattern)
+		pass := test < other
 		if c.NoCase {
-			return strings.ToLower(test) < strings.ToLower(other)
+			pass = strings.ToLower(test) < strings.ToLower(other)
 		}
-		return test < other
+		if c.LexNeg {
+			pass = !pass
+		}
+		return pass
 	case c.Lex == '>':
 		other := htExpand(ctx, c.Pattern)
+		pass := test > other
 		if c.NoCase {
-			return strings.ToLower(test) > strings.ToLower(other)
+			pass = strings.ToLower(test) > strings.ToLower(other)
 		}
-		return test > other
+		if c.LexNeg {
+			pass = !pass
+		}
+		return pass
 	case c.Lex == '=':
 		other := htExpand(ctx, c.Pattern)
+		pass := test == other
 		if c.NoCase {
-			return strings.EqualFold(test, other)
+			pass = strings.EqualFold(test, other)
 		}
-		return test == other
+		if c.LexNeg {
+			pass = !pass
+		}
+		return pass
 	case c.Pattern == "":
 		return test == ""
 	default:
