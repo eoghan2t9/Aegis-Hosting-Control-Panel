@@ -95,13 +95,23 @@ var pgTypes = map[string]typeSpec{
 	"boolean":   {cat: catBool},
 	"character": {cat: catStr, length: "len"}, "character varying": {cat: catStr, length: "len"}, "text": {cat: catStr},
 	"bytea": {cat: catBin},
-	"date":  {cat: catTime}, "time without time zone": {cat: catTime, length: "fsp"}, "timestamp without time zone": {cat: catTime, length: "fsp"},
-	"timestamp with time zone": {cat: catTime, length: "fsp"}, "time with time zone": {cat: catTime, length: "fsp"},
+	"date":  {cat: catTime}, "time without time zone": {cat: catTime}, "timestamp without time zone": {cat: catTime},
+	"timestamp with time zone": {cat: catTime}, "time with time zone": {cat: catTime},
 	"uuid": {cat: catStr}, "json": {cat: catJSON}, "jsonb": {cat: catJSON},
 }
 
+// SchemaTypeInfo describes one column type the schema editor offers.
+type SchemaTypeInfo struct {
+	Name   string `json:"name"`
+	Length string `json:"length,omitempty"` // "", "len", "prec" or "fsp"
+	Must   bool   `json:"must,omitempty"`   // the length is required
+	Cat    string `json:"cat"`              // int, num, str, bin, time, bool, json or enum
+}
+
+var catNames = map[int]string{catInt: "int", catNum: "num", catStr: "str", catBin: "bin", catTime: "time", catBool: "bool", catJSON: "json", catEnum: "enum"}
+
 // SchemaTypes lists the base types the schema editor offers for a dialect.
-func SchemaTypes(kind string) []string {
+func SchemaTypes(kind string) []SchemaTypeInfo {
 	src := mysqlTypes
 	order := []string{"tinyint", "smallint", "mediumint", "int", "bigint", "decimal", "float", "double", "boolean", "bit",
 		"char", "varchar", "tinytext", "text", "mediumtext", "longtext", "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob",
@@ -112,10 +122,10 @@ func SchemaTypes(kind string) []string {
 			"character varying", "character", "text", "uuid", "bytea", "date", "time without time zone", "timestamp without time zone",
 			"timestamp with time zone", "time with time zone", "json", "jsonb"}
 	}
-	out := make([]string, 0, len(order))
+	out := make([]SchemaTypeInfo, 0, len(order))
 	for _, n := range order {
-		if _, ok := src[n]; ok {
-			out = append(out, n)
+		if sp, ok := src[n]; ok {
+			out = append(out, SchemaTypeInfo{Name: n, Length: sp.length, Must: sp.must, Cat: catNames[sp.cat]})
 		}
 	}
 	return out
@@ -599,6 +609,29 @@ func (c *EditorConn) planAddFK(ctx context.Context, st *EditorStructure, req Sch
 	return []string{stmt}, nil
 }
 
+var (
+	rePGTimePrec = regexp.MustCompile(`^(time|timestamp)\(\d\)`)
+	rePGCast     = regexp.MustCompile(`(::[a-z_ ]+(\([0-9, ]*\))?)+$`)
+)
+
+// pgSameType reports whether a catalog type (format_type output) is the type we
+// would render, ignoring a fractional-seconds precision we do not manage.
+func pgSameType(current, rendered string) bool {
+	return strings.EqualFold(rePGTimePrec.ReplaceAllString(current, "$1"), rendered)
+}
+
+// pgNormDefault reduces a default expression to a comparable form: no cast
+// suffix, and now() the same as CURRENT_TIMESTAMP.
+func pgNormDefault(d string) string {
+	d = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(d), "DEFAULT"))
+	d = strings.TrimSpace(rePGCast.ReplaceAllString(d, ""))
+	switch strings.ToLower(d) {
+	case "now()", "current_timestamp", "current_timestamp()", "localtimestamp":
+		return "current_timestamp"
+	}
+	return strings.ToLower(d)
+}
+
 // planPGModify builds the several ALTERs PostgreSQL needs to change one column.
 func (c *EditorConn) planPGModify(st *EditorStructure, req SchemaRequest) ([]string, error) {
 	q := c.d.quote
@@ -626,7 +659,7 @@ func (c *EditorConn) planPGModify(st *EditorStructure, req SchemaRequest) ([]str
 	}
 	qc := q(name)
 	if !col.AutoIncrement {
-		if !strings.EqualFold(typ, cur.Type) {
+		if !pgSameType(cur.Type, typ) {
 			out = append(out, "ALTER TABLE "+tbl+" ALTER COLUMN "+qc+" TYPE "+typ+" USING "+qc+"::"+typ)
 		}
 		if col.Nullable != cur.Nullable {
@@ -642,9 +675,9 @@ func (c *EditorConn) planPGModify(st *EditorStructure, req SchemaRequest) ([]str
 		}
 		curDef := ""
 		if cur.Default != nil {
-			curDef = " DEFAULT " + *cur.Default
+			curDef = *cur.Default
 		}
-		if strings.TrimSpace(def) != strings.TrimSpace(curDef) {
+		if pgNormDefault(def) != pgNormDefault(curDef) {
 			if def == "" {
 				out = append(out, "ALTER TABLE "+tbl+" ALTER COLUMN "+qc+" DROP DEFAULT")
 			} else {
