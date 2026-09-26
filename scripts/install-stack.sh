@@ -288,6 +288,21 @@ if [ "$WITH_FTP" = 1 ]; then
   if [ -f /etc/vsftpd.conf ]; then
     sed -i 's/^#write_enable=YES/write_enable=YES/' /etc/vsftpd.conf
   fi
+  # chroot_local_user is commented out by default, which means an FTP
+  # account is NOT actually jailed to its home directory despite every
+  # comment/UI string in this codebase saying otherwise ("chrooted to its
+  # document root" — see svc/ftp.go, handlers_domains.go, domains.js). A
+  # client that CDs to "/" lands in the real filesystem root instead of the
+  # account's home, and (once write_enable is on) can also fail to write
+  # there with "553 Could not create file" — confirmed live. Each Aegis FTP
+  # account's home is exclusively its own, so allow_writeable_chroot=YES is
+  # the correct pairing (vsftpd otherwise refuses to start a chroot whose
+  # root is writable, a protection against a multi-tenant symlink escape
+  # that doesn't apply here — every chroot root is private to one account).
+  if [ -f /etc/vsftpd.conf ]; then
+    sed -i '0,/^#chroot_local_user=YES/{s/^#chroot_local_user=YES/chroot_local_user=YES/}' /etc/vsftpd.conf
+    grep -q '^allow_writeable_chroot=YES' /etc/vsftpd.conf || echo "allow_writeable_chroot=YES" >> /etc/vsftpd.conf
+  fi
   # The stock config listens in dual-stack IPv6 mode (listen=NO,
   # listen_ipv6=YES). In that mode vsftpd's classic (non-EPSV) PASV reply
   # reports 0.0.0.0 instead of the real address — pasv_address is silently
