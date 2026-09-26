@@ -138,6 +138,8 @@ body {
 .btn-primary:hover { background: #d4f76b; border-color: #d4f76b; }
 .btn-danger { border-color: rgba(255,97,97,.5); color: var(--danger); }
 .btn-danger:hover { background: var(--danger-dim); border-color: var(--danger); }
+.btn-warn { border-color: rgba(242,182,75,.5); color: var(--warn); }
+.btn-warn:hover { background: var(--warn-dim); border-color: var(--warn); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
 .btn-ghost:hover { background: var(--bg2); color: var(--text-1); }
 .btn-block { width: 100%; justify-content: center; }
