@@ -10,6 +10,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +33,16 @@ type Store struct {
 // New opens (creating if needed) the SQLite database at path and applies the
 // schema migrations. The database file is created with mode 0600.
 func New(path string) (*Store, error) {
+	// SQLite creates the file with the process umask (typically 0644), which
+	// would leave every password hash and encrypted secret readable by any
+	// local user wherever the parent directory allows traversal. Create it
+	// 0600 up front (an empty file is a valid new database) so there is no
+	// window, and re-assert the mode below for databases that already exist.
+	if isFilePath(path) {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+			f.Close()
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db %s: %w", path, err)
@@ -42,7 +54,28 @@ func New(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	secureDBFiles(path)
 	return s, nil
+}
+
+// isFilePath reports whether path names an on-disk database file rather than
+// an in-memory database or a "file:" URI.
+func isFilePath(path string) bool {
+	return path != "" && path != ":memory:" && !strings.HasPrefix(path, "file:")
+}
+
+// secureDBFiles restricts the database file and its SQLite -wal/-shm sidecars
+// to the owner (0600). The sidecars inherit the main file's mode when SQLite
+// creates them, but any that already exist may not.
+func secureDBFiles(path string) {
+	if !isFilePath(path) {
+		return
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("could not restrict database file permissions", "path", p, "err", err)
+		}
+	}
 }
 
 func (s *Store) Close() error { return s.db.Close() }
