@@ -23,6 +23,38 @@ func (s *Store) CountRecentFailures(ctx context.Context, username, ip string, si
 	return n, err
 }
 
+// CountRecentFailuresForUser counts failed attempts against username from ANY
+// address. The per-address count above cannot see an attacker who spreads
+// guesses over many addresses.
+func (s *Store) CountRecentFailuresForUser(ctx context.Context, username string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM login_attempts WHERE username = ? AND success = 0 AND created_at > ?",
+		username, since.UTC().Format(time.RFC3339)).Scan(&n)
+	return n, err
+}
+
+// CountRecentFailuresFromIP counts failed attempts from one address across ALL
+// usernames — password spraying (one guess per account) never trips a
+// per-username count.
+func (s *Store) CountRecentFailuresFromIP(ctx context.Context, ip string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND success = 0 AND created_at > ?",
+		ip, since.UTC().Format(time.RFC3339)).Scan(&n)
+	return n, err
+}
+
+// HasRecentSuccess reports whether username has logged in successfully from ip
+// since the given time — i.e. whether this looks like the owner's usual address.
+func (s *Store) HasRecentSuccess(ctx context.Context, username, ip string, since time.Time) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM login_attempts WHERE username = ? AND ip = ? AND success = 1 AND created_at > ?",
+		username, ip, since.UTC().Format(time.RFC3339)).Scan(&n)
+	return n > 0, err
+}
+
 // ListRecentLoginAttempts returns the most recent attempts (any user), for
 // the admin security screen.
 func (s *Store) ListRecentLoginAttempts(ctx context.Context, limit int) ([]LoginAttempt, error) {

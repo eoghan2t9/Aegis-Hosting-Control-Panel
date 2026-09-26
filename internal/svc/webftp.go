@@ -3,7 +3,6 @@ package svc
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -256,19 +255,10 @@ func (w *WebFTP) audit(r *http.Request, sess webftpSession, action, target, deta
 	_ = w.Store.AppendAudit(r.Context(), sess.userID, sess.username, action, target, detail, webftpClientIP(r))
 }
 
-// webftpClientIP mirrors internal/api/server.go's clientIP — duplicated
-// rather than imported since svc is a lower-level package that api imports,
-// not the reverse.
-func webftpClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// webftpClientIP is the audited client address. It only honours
+// X-Forwarded-For from a loopback proxy, and then only the entry that proxy
+// added (see ClientIP), never a value the client sent itself.
+func webftpClientIP(r *http.Request) string { return ClientIP(r) }
 
 // requestHost returns the hostname a request arrived on (Host header, port
 // stripped, lowercased).

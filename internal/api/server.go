@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -64,6 +63,9 @@ type Server struct {
 
 	primaryIPv4 string
 
+	// tokenFails caps bad API-token attempts per client address (see resolveBearer).
+	tokenFails *failLimiter
+
 	// previewMu/previewSessions back handlePreview's own short-lived,
 	// per-domain session cookie (see handlers_preview.go) — lets links a
 	// previewed site renders keep working on click, without the panel's
@@ -82,6 +84,7 @@ func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
 		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics, Docker: docker, IPs: ips,
 		primaryIPv4:     svc.DetectPrimaryIP(),
+		tokenFails:      newFailLimiter(5*time.Minute, 20),
 		previewSessions: map[string]previewSession{},
 	}
 }
@@ -410,8 +413,17 @@ func (s *Server) resolveBearer(r *http.Request, token string) (*store.User, *aut
 	// instead of a signed session. A synthetic Claims value keeps
 	// userFrom/claimsFrom/withRole working identically either way.
 	if strings.HasPrefix(token, "aegis_") {
+		// Verifying a token is a bcrypt comparison against every active token, so
+		// bad tokens are capped per client address before any of that work.
+		ip := clientIP(r)
+		if s.tokenFails != nil && s.tokenFails.blocked(ip) {
+			return nil, nil, http.StatusTooManyRequests, "too many invalid api tokens — try again in a few minutes"
+		}
 		user, err := s.Tokens.Verify(r.Context(), token)
 		if err != nil {
+			if s.tokenFails != nil {
+				s.tokenFails.fail(ip)
+			}
 			return nil, nil, http.StatusUnauthorized, "invalid api token"
 		}
 		if user.Status == store.StatusSuspended {
@@ -537,16 +549,9 @@ func bearerToken(r *http.Request) string {
 	return r.URL.Query().Get("token")
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// clientIP is the address used for the login lockout and the audit log. It must
+// not trust a client-supplied X-Forwarded-For: see svc.ClientIP.
+func clientIP(r *http.Request) string { return svc.ClientIP(r) }
 
 // canManageUser reports whether the acting user may manage the target user
 // (admin: all; reseller: only accounts they created).

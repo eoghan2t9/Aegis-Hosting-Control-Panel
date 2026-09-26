@@ -136,6 +136,16 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := userFrom(r)
+	// Checked first, and counted toward the login lockout, so a stolen token
+	// cannot be used to guess the password.
+	if err := s.Auth.ConfirmPassword(r.Context(), user, req.Password, clientIP(r)); err != nil {
+		if errors.Is(err, auth.ErrLockedOut) {
+			writeErr(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		writeErr(w, http.StatusUnauthorized, "incorrect password")
+		return
+	}
 	if err := s.Auth.DisableTOTP(r.Context(), user.ID, req.Password); err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			writeErr(w, http.StatusUnauthorized, "incorrect password")

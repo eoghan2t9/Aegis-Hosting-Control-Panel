@@ -289,7 +289,7 @@ addRoute("/account", {
       try {
         // Verify current password via login, then reset.
         await loginMaybe2FA(u.username, oldPw);
-        await api.post(`/users/${u.id}/reset-password`, { password: newPw });
+        await api.post(`/users/${u.id}/reset-password`, { password: newPw, current_password: oldPw });
         // Session was revoked by the reset — sign back in with the new password.
         const data = await loginMaybe2FA(u.username, newPw);
         api.setToken(data.token);

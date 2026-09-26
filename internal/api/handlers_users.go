@@ -312,7 +312,8 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		Password string `json:"password"`
+		Password        string `json:"password"`
+		CurrentPassword string `json:"current_password"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -320,6 +321,20 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 	if len(req.Password) < 8 {
 		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
+	}
+	// Changing your OWN password requires the current one. A bearer token alone
+	// must not be enough: it may be stolen, and this password is also the
+	// account's FTP and system password. Someone managing another account
+	// (admin, or a reseller's client) is authorised by role instead.
+	if actor.ID == u.ID {
+		if err := s.Auth.ConfirmPassword(r.Context(), u, req.CurrentPassword, clientIP(r)); err != nil {
+			if errors.Is(err, auth.ErrLockedOut) {
+				writeErr(w, http.StatusTooManyRequests, err.Error())
+				return
+			}
+			writeErr(w, http.StatusForbidden, "your current password is required and must be correct")
+			return
+		}
 	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {

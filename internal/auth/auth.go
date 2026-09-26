@@ -43,8 +43,19 @@ var (
 )
 
 const (
+	// lockoutThreshold is failures per username *from one address*.
 	lockoutThreshold = 5
-	lockoutWindow    = 15 * time.Minute
+	// userLockoutThreshold is failures per username from ANY address in the
+	// window: the per-address count alone lets an attacker with many addresses
+	// (a botnet, or many local tenants) make 5 guesses from each.
+	userLockoutThreshold = 15
+	// ipLockoutThreshold is failures per address across ALL usernames: password
+	// spraying tries one guess on each account and never trips a per-user count.
+	ipLockoutThreshold = 30
+	// knownAddressWindow is how long a successful login marks an address as one
+	// the account's owner really uses (see lockedOut).
+	knownAddressWindow = 30 * 24 * time.Hour
+	lockoutWindow      = 15 * time.Minute
 	// totpChallengeTTL is deliberately short — this token only ever proves
 	// "the password just checked out", not "this person is logged in", so
 	// there's no reason for it to outlive the few seconds it takes to type
@@ -90,6 +101,57 @@ func CheckPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
+// dummyHash is compared against when the username does not exist, so that an
+// unknown account costs the same bcrypt time as a known one. Without it the
+// response time tells an attacker which usernames are real.
+var dummyHash = func() string {
+	h, _ := bcrypt.GenerateFromPassword([]byte("aegis-timing-equalizer"), bcrypt.DefaultCost)
+	return string(h)
+}()
+
+// lockedOut reports whether a login (or a 2FA code) for username from ip should
+// be refused because of recent failures. Three independent limits apply:
+//
+//   - username+address: the original limit,
+//   - address across all usernames: password spraying,
+//   - username across all addresses: distributed guessing. To stop an attacker
+//     from using this to lock the real owner out of their own panel, it does not
+//     apply to an address that has already logged in as this user successfully
+//     within knownAddressWindow (that address is still bound by the first limit).
+func (m *Manager) lockedOut(ctx context.Context, username, ip string) bool {
+	since := time.Now().Add(-lockoutWindow)
+	if n, err := m.store.CountRecentFailures(ctx, username, ip, since); err == nil && n >= lockoutThreshold {
+		return true
+	}
+	if n, err := m.store.CountRecentFailuresFromIP(ctx, ip, since); err == nil && n >= ipLockoutThreshold {
+		return true
+	}
+	if n, err := m.store.CountRecentFailuresForUser(ctx, username, since); err == nil && n >= userLockoutThreshold {
+		if known, err := m.store.HasRecentSuccess(ctx, username, ip, time.Now().Add(-knownAddressWindow)); err == nil && known {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// ConfirmPassword re-verifies the acting user's OWN password before a sensitive
+// action (changing the password, turning off 2FA). A bearer token alone is not
+// enough for those: it may have been stolen. Wrong answers count toward the same
+// lockout as failed logins, so a stolen token cannot be used to guess the
+// password without limit.
+func (m *Manager) ConfirmPassword(ctx context.Context, u *store.User, password, ip string) error {
+	if m.lockedOut(ctx, u.Username, ip) {
+		return ErrLockedOut
+	}
+	if password == "" || !CheckPassword(u.PasswordHash, password) {
+		_ = m.store.RecordLoginAttempt(ctx, u.Username, ip, false)
+		logFailedAttempt(u.Username, ip)
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
 // HashPassword implements the password setter interface used by the backup
 // service when recreating accounts.
 func (m *Manager) HashPassword(password string) (string, error) {
@@ -99,12 +161,13 @@ func (m *Manager) HashPassword(password string) (string, error) {
 // Login authenticates a username/password pair, creates a session and returns
 // the user plus a signed token.
 func (m *Manager) Login(ctx context.Context, username, password, ip string) (*store.User, string, error) {
-	if n, err := m.store.CountRecentFailures(ctx, username, ip, time.Now().Add(-lockoutWindow)); err == nil && n >= lockoutThreshold {
+	if m.lockedOut(ctx, username, ip) {
 		return nil, "", ErrLockedOut
 	}
 	u, err := m.store.GetUserByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
+			_ = CheckPassword(dummyHash, password) // same cost as a real account
 			_ = m.store.RecordLoginAttempt(ctx, username, ip, false)
 			logFailedAttempt(username, ip)
 			return nil, "", ErrInvalidCredentials
@@ -182,7 +245,7 @@ func (m *Manager) VerifyTOTPLogin(ctx context.Context, challenge, code, ip strin
 	if err != nil {
 		return nil, "", ErrInvalidToken
 	}
-	if n, err := m.store.CountRecentFailures(ctx, u.Username, ip, time.Now().Add(-lockoutWindow)); err == nil && n >= lockoutThreshold {
+	if m.lockedOut(ctx, u.Username, ip) {
 		return nil, "", ErrLockedOut
 	}
 	if u.Status == store.StatusSuspended {
