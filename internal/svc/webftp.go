@@ -1,6 +1,8 @@
 package svc
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -39,8 +41,23 @@ type WebFTP struct {
 	Files  *Files
 	Thumbs *Thumbs
 
-	mu       sync.Mutex
-	sessions map[string]webftpSession
+	mu        sync.Mutex
+	sessions  map[string]webftpSession
+	ssoTokens map[string]webftpSSO
+}
+
+// webftpSSOTTL is how long a panel-issued login token stays redeemable. It is
+// single-use as well, so this only bounds a token that is never redeemed.
+const webftpSSOTTL = 60 * time.Second
+
+// webftpSSO is a one-time token minted by the panel (MintSSO) that logs one FTP
+// account into one webftp.<domain> host without typing the password.
+type webftpSSO struct {
+	userID   int64
+	username string
+	homeDir  string // the domain's document root the session is jailed to
+	host     string // the "webftp.<domain>" host it may be redeemed on
+	expires  time.Time
 }
 
 type webftpSession struct {
@@ -52,7 +69,120 @@ type webftpSession struct {
 }
 
 func NewWebFTP(st *store.Store, files *Files, thumbs *Thumbs) *WebFTP {
-	return &WebFTP{Store: st, Files: files, Thumbs: thumbs, sessions: map[string]webftpSession{}}
+	return &WebFTP{Store: st, Files: files, Thumbs: thumbs, sessions: map[string]webftpSession{}, ssoTokens: map[string]webftpSSO{}}
+}
+
+// WebFTPTarget is one webftp.<domain> site an FTP account can open.
+type WebFTPTarget struct {
+	Domain string // the parent domain, e.g. "example.com"
+	Host   string // its Web FTP hostname, "webftp.example.com"
+	HTTPS  bool   // whether that hostname has SSL enabled
+}
+
+// Targets lists the Web FTP sites acct can open: its owner's domains whose
+// document root the account's home covers (the same rule handleLogin uses) and
+// that actually have a webftp.<domain> vhost.
+func (w *WebFTP) Targets(ctx context.Context, acct *store.FTPAccount) []WebFTPTarget {
+	doms, err := w.Store.ListDomains(ctx, acct.UserID)
+	if err != nil {
+		return nil
+	}
+	var out []WebFTPTarget
+	for _, d := range doms {
+		if strings.HasPrefix(d.Domain, "webftp.") || !acctCoversHome(acct.HomeDir, d.DocumentRoot) {
+			continue
+		}
+		wd, err := w.Store.GetDomainByName(ctx, WebftpHostname(d.Domain))
+		if err != nil {
+			continue
+		}
+		out = append(out, WebFTPTarget{Domain: d.Domain, Host: WebftpHostname(d.Domain), HTTPS: wd.SSLEnabled})
+	}
+	return out
+}
+
+// MintSSO issues a single-use token, valid for webftpSSOTTL, that logs acct
+// into t's Web FTP site. The caller must already have authorised the panel
+// user and picked t from Targets. Disabled accounts get no token.
+func (w *WebFTP) MintSSO(ctx context.Context, acct *store.FTPAccount, t WebFTPTarget) (string, error) {
+	if !acct.Enabled {
+		return "", errors.New("ftp account is disabled")
+	}
+	dom, err := w.Store.GetDomainByName(ctx, t.Domain)
+	if err != nil {
+		return "", err
+	}
+	tok, err := RandomString(40)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now()
+	w.mu.Lock()
+	for k, v := range w.ssoTokens { // drop tokens nobody redeemed
+		if now.After(v.expires) {
+			delete(w.ssoTokens, k)
+		}
+	}
+	w.ssoTokens[tok] = webftpSSO{userID: acct.UserID, username: acct.Username, homeDir: dom.DocumentRoot, host: t.Host, expires: now.Add(webftpSSOTTL)}
+	w.mu.Unlock()
+	return tok, nil
+}
+
+// redeemSSO consumes a token: it is removed on first use whether or not it is
+// still valid, and only works on the host it was minted for.
+func (w *WebFTP) redeemSSO(tok, host string) (webftpSSO, bool) {
+	w.mu.Lock()
+	sso, ok := w.ssoTokens[tok]
+	delete(w.ssoTokens, tok)
+	w.mu.Unlock()
+	if !ok || time.Now().After(sso.expires) || sso.host != host {
+		return webftpSSO{}, false
+	}
+	return sso, true
+}
+
+// handleSSO logs a browser in with a panel-issued token. It is a POST so the
+// token travels in the request body, never in a URL that would end up in
+// browser history or access logs.
+func (w *WebFTP) handleSSO(rw http.ResponseWriter, r *http.Request) {
+	host := requestHost(r)
+	if !strings.HasPrefix(host, "webftp.") {
+		http.NotFound(rw, r)
+		return
+	}
+	rw.Header().Set("Cache-Control", "no-store")
+	rw.Header().Set("Referrer-Policy", "no-referrer")
+	r.Body = http.MaxBytesReader(rw, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		writeWebFTPPage(rw, webftpLoginPage(host, "bad request"))
+		return
+	}
+	sso, ok := w.redeemSSO(r.PostFormValue("t"), host)
+	if !ok {
+		writeWebFTPPage(rw, webftpLoginPage(host, "that login link has expired — log in below"))
+		return
+	}
+	// The account may have been disabled or deleted since the token was minted.
+	acct, err := w.Store.GetFTPAccountByUsername(r.Context(), sso.username)
+	if err != nil || !acct.Enabled {
+		writeWebFTPPage(rw, webftpLoginPage(host, "this ftp account is disabled"))
+		return
+	}
+	tok, err := w.newSession(sso.userID, sso.username, sso.homeDir, host)
+	if err != nil {
+		writeWebFTPPage(rw, webftpLoginPage(host, "could not create session, try again"))
+		return
+	}
+	w.setSessionCookie(rw, r, tok)
+	_ = w.Store.AppendAudit(r.Context(), sso.userID, sso.username, "webftp.sso", host, "", webftpClientIP(r))
+	http.Redirect(rw, r, "/", http.StatusSeeOther)
+}
+
+func (w *WebFTP) setSessionCookie(rw http.ResponseWriter, r *http.Request, tok string) {
+	http.SetCookie(rw, &http.Cookie{
+		Name: webftpCookie, Value: tok, Path: "/", HttpOnly: true,
+		Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: int(webftpSessionTTL.Seconds()),
+	})
 }
 
 func (w *WebFTP) newSession(userID int64, username, homeDir, host string) (string, error) {
@@ -136,6 +266,7 @@ func (w *WebFTP) Handler() http.Handler {
 	mux.HandleFunc("GET /.well-known/acme-challenge/{token}", w.handleACMEChallenge)
 	mux.HandleFunc("GET /", w.handleIndex)
 	mux.HandleFunc("POST /login", w.handleLogin)
+	mux.HandleFunc("POST /sso", w.handleSSO)
 	mux.HandleFunc("POST /logout", w.handleLogout)
 	mux.HandleFunc("GET /api/list", w.withSession(w.apiList))
 	mux.HandleFunc("GET /api/download", w.withSession(w.apiDownload))
@@ -239,6 +370,12 @@ func (w *WebFTP) handleLogin(rw http.ResponseWriter, r *http.Request) {
 		writeWebFTPPage(rw, webftpLoginPage(host, "invalid username or password"))
 		return
 	}
+	if !acct.Enabled {
+		// A suspended FTP account must not be able to log in through the
+		// browser client either (only the system-user lock stopped FTP itself).
+		writeWebFTPPage(rw, webftpLoginPage(host, "this ftp account is disabled"))
+		return
+	}
 	if !acctCoversHome(acct.HomeDir, dom.DocumentRoot) {
 		writeWebFTPPage(rw, webftpLoginPage(host, "this ftp account cannot access this domain"))
 		return
@@ -253,10 +390,7 @@ func (w *WebFTP) handleLogin(rw http.ResponseWriter, r *http.Request) {
 		writeWebFTPPage(rw, webftpLoginPage(host, "could not create session, try again"))
 		return
 	}
-	http.SetCookie(rw, &http.Cookie{
-		Name: webftpCookie, Value: tok, Path: "/", HttpOnly: true,
-		Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: int(webftpSessionTTL.Seconds()),
-	})
+	w.setSessionCookie(rw, r, tok)
 	http.Redirect(rw, r, "/", http.StatusSeeOther)
 }
 
