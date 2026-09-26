@@ -48,7 +48,16 @@ func (w *WebServer) GoHandler() http.Handler {
 		}
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: rw, status: http.StatusOK}
-		w.serveGoRoute(rec, r, route)
+		var out http.ResponseWriter = rec
+		// Compress text responses for clients that accept it. Proxied apps and
+		// upgraded connections (websockets) are left alone: they manage their own
+		// encoding and streaming.
+		if route.ProxyTarget == "" && route.Perf.CompressOn() && acceptsGzip(r) && r.Header.Get("Upgrade") == "" {
+			gz := newGzipWriter(rec, r)
+			defer gz.Close()
+			out = gz
+		}
+		w.serveGoRoute(out, r, route)
 		logAccess(route.Domain, r, rec.status, rec.size, time.Since(start))
 		if phpErr := rec.Header().Get("X-Aegis-Php-Error"); rec.status >= 500 || phpErr != "" {
 			msg := phpErr
@@ -292,7 +301,21 @@ func (w *WebServer) serveDocFile(rw http.ResponseWriter, r *http.Request, route 
 		return
 	}
 	defer fh.Close()
+	if age := route.Perf.StaticMaxAge; age > 0 && rw.Header().Get("Cache-Control") == "" && staticCacheable(info.Name()) {
+		rw.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(age))
+	}
 	http.ServeContent(rw, r, info.Name(), info.ModTime(), fh)
+}
+
+// staticCacheable reports whether a file is an asset browsers should cache
+// (images, styles, scripts, fonts, media) as opposed to a document.
+func staticCacheable(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".css", ".js", ".mjs", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico",
+		".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp4", ".webm", ".mp3", ".ogg", ".wav", ".pdf":
+		return true
+	}
+	return false
 }
 
 func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route GoRoute) {
@@ -465,6 +488,31 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		// (see below), so mutating it here is enough for PHP to see it.
 		htApplyHeaders(r.Header, htCfg.RequestHeaders)
 	}
+	// Page cache: anonymous GETs only (see cacheableRequest). Sites that did not
+	// enable it never touch it, and never see the X-Aegis-Cache header.
+	cacheState := ""
+	var ckey string
+	if route.Perf.PageCache {
+		if cacheableRequest(r) {
+			ckey = cacheKey(r)
+			if e := w.pageCache().Get(route.Domain, ckey); e != nil {
+				h := rw.Header()
+				for k, vals := range e.header {
+					for _, v := range vals {
+						h.Add(k, v)
+					}
+				}
+				h.Set("X-Aegis-Cache", "HIT")
+				h.Set("Age", strconv.Itoa(int(time.Since(e.stored).Seconds())))
+				rw.WriteHeader(e.status)
+				_, _ = rw.Write(e.body)
+				return
+			}
+			cacheState = "MISS"
+		} else {
+			cacheState = "BYPASS"
+		}
+	}
 	status, headers, body, stderr, err := w.fcgiExec(route.Socket, r, scriptFile, scriptName)
 	if err != nil {
 		if stderr != "" {
@@ -487,6 +535,16 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	// response rather than before it, so "Header set" can override
 	// something the script itself sent and "Header unset" can remove it.
 	htApplyHeaders(rw.Header(), htCfg.Headers)
+	if ckey != "" && stderr == "" && cacheableResponse(status, rw.Header(), body) {
+		ttl := route.Perf.PageCacheTTL
+		if ttl <= 0 {
+			ttl = DefaultPageCacheTTL
+		}
+		w.pageCache().Put(route.Domain, ckey, status, rw.Header(), body, time.Duration(ttl)*time.Second)
+	}
+	if cacheState != "" {
+		rw.Header().Set("X-Aegis-Cache", cacheState)
+	}
 	rw.WriteHeader(status)
 	_, _ = rw.Write(body)
 }

@@ -32,6 +32,11 @@ type WebServer struct {
 	mu       sync.Mutex
 	goRoutes map[string]GoRoute
 
+	// pcache holds rendered pages for sites that enabled the page cache; it is
+	// created on first use so a bare &WebServer{} literal keeps working.
+	pcacheOnce sync.Once
+	pcache     *PageCache
+
 	// goProxies caches one *httputil.ReverseProxy per upstream target so
 	// proxyGoRoute (goserver.go) doesn't allocate a fresh one on every
 	// single request to a proxied (container/app) domain.
@@ -68,6 +73,9 @@ type GoRoute struct {
 	// Owner is the system account that owns Root. Static files are opened and
 	// stat'ed as this account (see openDocFile), never as the panel's root.
 	Owner string `json:"owner,omitempty"`
+	// Perf holds the domain's performance options (compression, static caching,
+	// page cache); the zero value is the default (compression on, nothing else).
+	Perf store.PerfSettings `json:"perf"`
 }
 
 func NewWebServer(cfg *config.Config, php *PHP) *WebServer {
@@ -859,6 +867,7 @@ func (w *WebServer) applyGo(d *store.Domain, aliases []string, systemUser string
 		Hostnames:   hostnames(d, aliases),
 		ProxyTarget: d.ProxyTarget,
 		Owner:       systemUser,
+		Perf:        d.Perf,
 	}
 	if d.PHPVersion != "" {
 		route.Socket = w.PHP.SocketPath(d.Domain)
@@ -866,6 +875,8 @@ func (w *WebServer) applyGo(d *store.Domain, aliases []string, systemUser string
 	w.mu.Lock()
 	w.goRoutes[d.Domain] = route
 	w.mu.Unlock()
+	// A settings change, PHP switch or redeploy can change what pages render.
+	w.PurgeCache(d.Domain)
 	return nil
 }
 
@@ -873,8 +884,20 @@ func (w *WebServer) removeGo(domain string) error {
 	w.mu.Lock()
 	delete(w.goRoutes, domain)
 	w.mu.Unlock()
+	w.PurgeCache(domain)
 	return nil
 }
+
+func (w *WebServer) pageCache() *PageCache {
+	w.pcacheOnce.Do(func() { w.pcache = newPageCache() })
+	return w.pcache
+}
+
+// PurgeCache drops every cached page of a domain and returns how many there were.
+func (w *WebServer) PurgeCache(domain string) int { return w.pageCache().Purge(domain) }
+
+// CacheStats returns the page-cache counters for a domain.
+func (w *WebServer) CacheStats(domain string) PageCacheStats { return w.pageCache().Stats(domain) }
 
 // GoRoutes returns a copy of the registered routes for the built-in server.
 func (w *WebServer) GoRoutes() map[string]GoRoute {

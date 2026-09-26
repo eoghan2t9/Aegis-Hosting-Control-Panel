@@ -395,6 +395,10 @@ CREATE TABLE IF NOT EXISTS ips (
 	if err := s.addColumnIfMissing(ctx, "domains", "php_settings", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		return fmt.Errorf("migrate domains.php_settings: %w", err)
 	}
+	// Per-domain performance options (compression, static caching, page cache).
+	if err := s.addColumnIfMissing(ctx, "domains", "perf_settings", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		return fmt.Errorf("migrate domains.perf_settings: %w", err)
+	}
 	// ip_id references ips(id); 0 means "unassigned" (vhost keeps listening
 	// on the wildcard address, the pre-existing behaviour).
 	if err := s.addColumnIfMissing(ctx, "domains", "ip_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {

@@ -189,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/domains/{id}", s.withAuth(s.handleDomainsUpdate))
 	mux.HandleFunc("DELETE /api/domains/{id}", s.withAuth(s.handleDomainsDelete))
 	mux.HandleFunc("POST /api/domains/{id}/apply", s.withAuth(s.handleDomainsApply))
+	mux.HandleFunc("GET /api/domains/{id}/cache", s.withAuth(s.handleDomainCacheGet))
+	mux.HandleFunc("POST /api/domains/{id}/cache/purge", s.withAuth(s.handleDomainCachePurge))
 	mux.HandleFunc("GET /api/webapps/catalog", s.withAuth(s.handleWebAppsCatalog))
 	mux.HandleFunc("POST /api/domains/{id}/install", s.withAuth(s.handleDomainInstall))
 	mux.HandleFunc("POST /api/domains/{id}/wp-cli", s.withAuth(s.handleDomainWPCLI))

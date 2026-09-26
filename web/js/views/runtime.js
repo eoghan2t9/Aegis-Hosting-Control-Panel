@@ -25,10 +25,11 @@ addRoute("/runtime", {
           <div class="card-head"><span class="card-title">Installed PHP</span>
             <span class="card-actions"><span class="tag tag-lime">latest: ${esc(php.latest || "—")}</span></span></div>
           ${versions.length ? `<div class="tbl-wrap"><table class="tbl">
-            <thead><tr><th>Version</th><th>CLI</th><th>php-fpm</th><th>Pool</th></tr></thead>
+            <thead><tr><th>Version</th><th>Security fixes</th><th>CLI</th><th>php-fpm</th><th>Pool</th></tr></thead>
             <tbody>${versions.map((v) => `
               <tr>
                 <td><b class="mono">${esc(v.version)}</b></td>
+                <td>${v.support === "eol" ? `<span class="tag tag-red" title="No longer receives security fixes">ended ${esc(v.support_until)}</span>` : v.support === "ending" ? `<span class="tag tag-amber">until ${esc(v.support_until)}</span>` : `<span class="tag tag-lime">${v.support_until ? "until " + esc(v.support_until) : "supported"}</span>`}</td>
                 <td class="mono small dim">${esc(v.cli || "—")}</td>
                 <td class="mono small dim">${esc(v.fpm || "—")}</td>
                 <td>${v.running ? statusTag("active") : statusTag("inactive")}</td>

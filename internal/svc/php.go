@@ -35,6 +35,37 @@ type Version struct {
 	FPM      string `json:"fpm"`     // path to php-fpm binary
 	Running  bool   `json:"running"`
 	PoolConf string `json:"pool_conf"` // pool.d directory
+	// Support is "eol" (no more security fixes), "ending" (fewer than six months
+	// of security fixes left) or "supported"; SupportUntil is that end date.
+	Support      string `json:"support"`
+	SupportUntil string `json:"support_until,omitempty"`
+}
+
+// phpSecurityEnd is when upstream stops releasing security fixes per branch.
+var phpSecurityEnd = map[string]string{
+	"5.6": "2018-12-31", "7.0": "2018-12-03", "7.1": "2019-12-01", "7.2": "2020-11-30", "7.3": "2021-12-06",
+	"7.4": "2022-11-28", "8.0": "2023-11-26", "8.1": "2025-12-31", "8.2": "2026-12-31",
+	"8.3": "2027-12-31", "8.4": "2028-12-31", "8.5": "2029-12-31",
+}
+
+// phpSupport classifies a PHP branch ("8.2") at time now. Unknown branches are
+// treated as supported: they are newer than this table, not older.
+func phpSupport(version string, now time.Time) (status, until string) {
+	end, ok := phpSecurityEnd[version]
+	if !ok {
+		return "supported", ""
+	}
+	t, err := time.Parse("2006-01-02", end)
+	if err != nil {
+		return "supported", ""
+	}
+	switch {
+	case now.After(t):
+		return "eol", end
+	case now.AddDate(0, 6, 0).After(t):
+		return "ending", end
+	}
+	return "supported", end
 }
 
 // Versions returns installed PHP versions sorted descending (newest first).
@@ -60,6 +91,7 @@ func (p *PHP) Versions() []Version {
 			Running:  fpmRunning(ver),
 			PoolConf: filepath.Join("/etc/php", ver, "fpm/pool.d"),
 		}
+		v.Support, v.SupportUntil = phpSupport(ver, time.Now())
 		if v.FPM == "" {
 			for _, cand := range []string{"/usr/sbin/php-fpm" + ver, "/usr/bin/php-fpm" + ver} {
 				if _, err := os.Stat(cand); err == nil {
@@ -132,6 +164,11 @@ var phpIniDirectives = map[string]phpIniDirective{
 	"session.gc_maxlifetime": {"value", regexp.MustCompile(`^[0-9]+$`)},
 	"date.timezone":          {"value", regexp.MustCompile(`^[A-Za-z_]+(/[A-Za-z_]+)*$`)},
 	"display_errors":         {"flag", regexp.MustCompile(`(?i)^(on|off)$`)},
+	// OPcache: only the INI_ALL directives can differ per pool; the rest
+	// (memory_consumption, max_accelerated_files, ...) are global to the master.
+	"opcache.enable":              {"flag", regexp.MustCompile(`(?i)^(on|off)$`)},
+	"opcache.validate_timestamps": {"flag", regexp.MustCompile(`(?i)^(on|off)$`)},
+	"opcache.revalidate_freq":     {"value", regexp.MustCompile(`^[0-9]{1,5}$`)},
 }
 
 // PHPIniDirectiveKeys lists the settings the panel exposes, in the fixed
@@ -140,6 +177,7 @@ var PHPIniDirectiveKeys = []string{
 	"memory_limit", "upload_max_filesize", "post_max_size",
 	"max_execution_time", "max_input_time", "max_input_vars",
 	"session.gc_maxlifetime", "date.timezone", "display_errors",
+	"opcache.enable", "opcache.validate_timestamps", "opcache.revalidate_freq",
 }
 
 // ValidatePHPIniSettings rejects any key outside PHPIniDirectiveKeys or any

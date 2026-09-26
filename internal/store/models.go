@@ -74,6 +74,25 @@ type Package struct {
 	CreatedAt           time.Time `json:"created_at"`
 }
 
+// PerfSettings are a domain's performance options. They apply to the built-in Go
+// web server (the nginx/Apache/Caddy backends have their own configuration).
+type PerfSettings struct {
+	// Compress turns gzip compression of text responses on or off. nil means
+	// "on": it is safe, and almost always a win.
+	Compress *bool `json:"compress,omitempty"`
+	// StaticMaxAge, in seconds, adds "Cache-Control: public, max-age=N" to static
+	// assets (images, fonts, CSS, JS, media) so browsers stop re-fetching them.
+	// 0 leaves the headers alone.
+	StaticMaxAge int `json:"static_max_age"`
+	// PageCache caches anonymous GET responses of dynamic (PHP) pages in memory for
+	// PageCacheTTL seconds (0 = the default of 300).
+	PageCache    bool `json:"page_cache"`
+	PageCacheTTL int  `json:"page_cache_ttl"`
+}
+
+// CompressOn reports whether gzip is enabled (the default when unset).
+func (p PerfSettings) CompressOn() bool { return p.Compress == nil || *p.Compress }
+
 // Domain is a website attached to a user.
 type Domain struct {
 	ID           int64  `json:"id"`
@@ -98,6 +117,10 @@ type Domain struct {
 	// svc.PHPIniDirectiveKeys and validated by svc.ValidatePHPIniSettings —
 	// see internal/svc/php.go.
 	PHPSettings map[string]string `json:"php_settings"`
+	// Perf holds per-domain performance options for the built-in Go web
+	// server (compression, static-asset caching, the page cache). Stored as
+	// JSON in domains.perf_settings; validated by svc.ValidatePerf.
+	Perf PerfSettings `json:"perf"`
 	// IPID references IP.ID (0 = unassigned: the vhost keeps listening on
 	// the wildcard address instead of a specific one). Set via svc.IPs so
 	// the "dedicated means exactly one domain" invariant is enforced;

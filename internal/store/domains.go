@@ -13,18 +13,19 @@ import (
 // its own join.
 const domainCols = `d.id, d.user_id, d.domain, d.document_root, d.php_version, d.webserver, d.ssl_enabled,
 	d.ssl_cert_path, d.ssl_key_path, d.ssl_provider, d.ssl_auto_renew, d.proxy_target, d.php_settings,
-	d.ip_id, COALESCE(ip.address, ''), COALESCE(u.username, ''), d.parent_domain_id, d.created_at`
+	d.ip_id, COALESCE(ip.address, ''), COALESCE(u.username, ''), d.parent_domain_id, d.created_at, d.perf_settings`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var d Domain
 	var enabled, autoRenew, created interface{}
-	var phpSettings string
+	var phpSettings, perfSettings string
 	if err := row.Scan(&d.ID, &d.UserID, &d.Domain, &d.DocumentRoot, &d.PHPVersion,
 		&d.WebServer, &enabled, &d.SSLCertPath, &d.SSLKeyPath, &d.SSLProvider,
 		&autoRenew, &d.ProxyTarget, &phpSettings, &d.IPID, &d.IPAddress, &d.Username,
-		&d.ParentDomainID, &created); err != nil {
+		&d.ParentDomainID, &created, &perfSettings); err != nil {
 		return nil, wrapErr(err)
 	}
+	_ = json.Unmarshal([]byte(perfSettings), &d.Perf)
 	d.SSLEnabled = getBool(enabled)
 	d.SSLAutoRenew = getBool(autoRenew)
 	d.PHPSettings = map[string]string{}
@@ -99,10 +100,14 @@ func (s *Store) UpdateDomain(ctx context.Context, d *Domain) error {
 	if err != nil {
 		return err
 	}
+	perf, err := json.Marshal(d.Perf)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, `UPDATE domains SET document_root=?, php_version=?, webserver=?,
-		ssl_enabled=?, ssl_cert_path=?, ssl_key_path=?, ssl_provider=?, ssl_auto_renew=?, php_settings=? WHERE id=?`,
+		ssl_enabled=?, ssl_cert_path=?, ssl_key_path=?, ssl_provider=?, ssl_auto_renew=?, php_settings=?, perf_settings=? WHERE id=?`,
 		d.DocumentRoot, d.PHPVersion, d.WebServer, d.SSLEnabled, d.SSLCertPath, d.SSLKeyPath,
-		d.SSLProvider, d.SSLAutoRenew, string(phpSettings), d.ID)
+		d.SSLProvider, d.SSLAutoRenew, string(phpSettings), string(perf), d.ID)
 	return wrapErr(err)
 }
 

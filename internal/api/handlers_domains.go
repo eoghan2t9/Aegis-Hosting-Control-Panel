@@ -193,11 +193,12 @@ func (s *Server) handleDomainsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateDomainReq struct {
-	PHPVersion   *string            `json:"php_version"`
-	WebServer    *string            `json:"webserver"`
-	DocumentRoot *string            `json:"document_root"`
-	SSLAutoRenew *bool              `json:"ssl_auto_renew"`
-	PHPSettings  *map[string]string `json:"php_settings"`
+	PHPVersion   *string             `json:"php_version"`
+	WebServer    *string             `json:"webserver"`
+	DocumentRoot *string             `json:"document_root"`
+	SSLAutoRenew *bool               `json:"ssl_auto_renew"`
+	PHPSettings  *map[string]string  `json:"php_settings"`
+	Perf         *store.PerfSettings `json:"perf"`
 }
 
 func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +243,14 @@ func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		dom.PHPSettings = *req.PHPSettings
 	}
+	if req.Perf != nil {
+		perf, err := svc.ValidatePerf(*req.Perf)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dom.Perf = perf
+	}
 	if err := s.Store.UpdateDomain(r.Context(), dom); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -252,6 +261,47 @@ func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "domain.update", dom.Domain, "")
 	writeJSON(w, http.StatusOK, dom)
+}
+
+// handleDomainCacheGet reports the page-cache counters for a domain.
+func (s *Server) handleDomainCacheGet(w http.ResponseWriter, r *http.Request) {
+	dom, ok := s.cacheDomain(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": dom.Perf.PageCache,
+		"stats":   s.Web.CacheStats(dom.Domain),
+	})
+}
+
+// handleDomainCachePurge drops every cached page of a domain.
+func (s *Server) handleDomainCachePurge(w http.ResponseWriter, r *http.Request) {
+	dom, ok := s.cacheDomain(w, r)
+	if !ok {
+		return
+	}
+	n := s.Web.PurgeCache(dom.Domain)
+	s.audit(r, "domain.cache_purge", dom.Domain, "")
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "purged": n})
+}
+
+func (s *Server) cacheDomain(w http.ResponseWriter, r *http.Request) (*store.Domain, bool) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	dom, _, err := s.Domains.DomainWithUser(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "domain not found")
+		return nil, false
+	}
+	if !s.ownsDomain(r, dom) {
+		writeErr(w, http.StatusForbidden, "cannot manage this domain")
+		return nil, false
+	}
+	return dom, true
 }
 
 func (s *Server) handleDomainsDelete(w http.ResponseWriter, r *http.Request) {

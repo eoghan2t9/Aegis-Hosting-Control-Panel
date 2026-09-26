@@ -223,6 +223,18 @@ function openDetail(id, onChanged) {
     const phpInfo = [];
     api.get("/php/versions").then((p) => {
       const opts = ["", ...(p.versions || []).map((v) => v.version)];
+      const supportOf = {};
+      (p.versions || []).forEach((v) => { supportOf[v.version] = v; });
+      const phpLabel = (v) => {
+        if (!v) return "No PHP (static)";
+        const sv = supportOf[v];
+        return "PHP " + v + (sv && sv.support === "eol" ? " (end of life)" : sv && sv.support === "ending" ? " (support ending)" : "");
+      };
+      const newer = (p.versions || []).find((v) => v.support === "supported");
+      const cur = supportOf[dom.php_version];
+      const phpWarning = cur && cur.support !== "supported"
+        ? `<p class="small" style="margin:8px 0 0;color:var(--${cur.support === "eol" ? "danger" : "warn"})">PHP ${esc(cur.version)} ${cur.support === "eol" ? "no longer receives security fixes (ended " + esc(cur.support_until) + ")" : "stops receiving security fixes on " + esc(cur.support_until)}.${newer ? " PHP " + esc(newer.version) + " is installed — test the site on it, then switch." : " Install a newer PHP to upgrade."}</p>`
+        : "";
       body.innerHTML = `
         <div class="split">
           <div>
@@ -237,11 +249,14 @@ function openDetail(id, onChanged) {
             <div style="height:14px"></div>
             <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP version</b>
             <div style="display:flex;gap:8px;margin-top:8px">
-              <select id="dd-php" style="flex:1">${opts.map((v) => `<option value="${esc(v)}" ${v === dom.php_version ? "selected" : ""}>${v ? "PHP " + v : "No PHP (static)"}</option>`).join("")}</select>
+              <select id="dd-php" style="flex:1">${opts.map((v) => `<option value="${esc(v)}" ${v === dom.php_version ? "selected" : ""}>${esc(phpLabel(v))}</option>`).join("")}</select>
               <button class="btn btn-primary" id="dd-apply-php">Apply</button>
             </div>
+            ${phpWarning}
             <div style="height:14px"></div>
             ${phpIniBlock(dom)}
+            <div style="height:14px"></div>
+            ${perfBlock(dom)}
           </div>
           <div>
             <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Aliases (additional domains)</b>
@@ -297,14 +312,16 @@ function openDetail(id, onChanged) {
           const v = inp.value.trim();
           if (v) settings[inp.dataset.key] = v;
         });
-        const de = document.getElementById("php-ini-display-errors").value;
-        if (de) settings.display_errors = de;
+        body.querySelectorAll(".php-ini-flag").forEach((sel) => {
+          if (sel.value) settings[sel.dataset.key] = sel.value;
+        });
         try {
           await api.patch("/domains/" + id, { php_settings: settings });
           toast("PHP settings saved and pool reloaded");
           m.close(); refresh();
         } catch (ex) { toast(ex.message, "err"); }
       });
+      wirePerf(body, dom, id, m, refresh);
       document.getElementById("alias-add").onclick = async () => {
         const a = document.getElementById("alias-new").value.trim();
         if (!a) return;
@@ -355,6 +372,14 @@ const PHP_INI_FIELDS = [
   { key: "max_input_vars", label: "Max input vars", placeholder: "e.g. 3000" },
   { key: "session.gc_maxlifetime", label: "Session lifetime (s)", placeholder: "e.g. 1440" },
   { key: "date.timezone", label: "Timezone", placeholder: "e.g. UTC" },
+  { key: "opcache.revalidate_freq", label: "OPcache recheck interval (s)", placeholder: "e.g. 60" },
+];
+
+// On/off settings: an empty choice leaves the server default in place.
+const PHP_INI_FLAGS = [
+  { key: "display_errors", label: "Display errors", off: "Default (off)" },
+  { key: "opcache.enable", label: "OPcache", off: "Default (on)" },
+  { key: "opcache.validate_timestamps", label: "OPcache: check files for changes", off: "Default (on)" },
 ];
 
 function phpIniBlock(dom) {
@@ -363,23 +388,96 @@ function phpIniBlock(dom) {
       <p class="small dim" style="margin:8px 0 0">Pick a PHP version above to enable per-site php.ini overrides.</p>`;
   }
   const settings = dom.php_settings || {};
-  const de = settings.display_errors || "";
   return `<b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP settings (php.ini)</b>
     <div class="php-ini-grid">
       ${PHP_INI_FIELDS.map((f) => `<label class="field" style="margin:0">
         <span class="field-label small dim">${esc(f.label)}</span>
         <input type="text" class="mono php-ini-input" data-key="${esc(f.key)}" placeholder="${esc(f.placeholder)}" value="${esc(settings[f.key] || "")}">
       </label>`).join("")}
-      <label class="field" style="margin:0">
-        <span class="field-label small dim">Display errors</span>
-        <select id="php-ini-display-errors">
-          <option value="" ${de === "" ? "selected" : ""}>Default (off)</option>
-          <option value="on" ${de === "on" ? "selected" : ""}>On</option>
-          <option value="off" ${de === "off" ? "selected" : ""}>Off</option>
+      ${PHP_INI_FLAGS.map((f) => {
+        const cur = settings[f.key] || "";
+        return `<label class="field" style="margin:0">
+        <span class="field-label small dim">${esc(f.label)}</span>
+        <select class="php-ini-flag" data-key="${esc(f.key)}">
+          <option value="" ${cur === "" ? "selected" : ""}>${esc(f.off)}</option>
+          <option value="on" ${cur === "on" ? "selected" : ""}>On</option>
+          <option value="off" ${cur === "off" ? "selected" : ""}>Off</option>
         </select>
-      </label>
+      </label>`;
+      }).join("")}
     </div>
     <button class="btn btn-sm" id="dd-save-php-ini" style="margin-top:10px">Save PHP settings</button>`;
+}
+
+// Performance options of the built-in Go web server (compression, browser
+// caching of static files, page cache). Mirrors store.PerfSettings.
+function perfBlock(dom) {
+  const p = dom.perf || {};
+  const compress = p.compress !== false;
+  const heading = `<b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">Performance</b>`;
+  if (dom.webserver !== "go") {
+    return `${heading}<p class="small dim" style="margin:8px 0 0">These options apply to the built-in Go web server. This site uses ${esc(dom.webserver)}.</p>`;
+  }
+  const ages = [[0, "Off"], [3600, "1 hour"], [86400, "1 day"], [604800, "1 week"], [2592000, "30 days"], [31536000, "1 year"]];
+  return `${heading}
+    <div class="php-ini-grid" style="margin-top:8px">
+      <label class="field" style="margin:0">
+        <span class="field-label small dim">Compress text (gzip)</span>
+        <select id="perf-compress"><option value="on" ${compress ? "selected" : ""}>On</option><option value="off" ${compress ? "" : "selected"}>Off</option></select>
+      </label>
+      <label class="field" style="margin:0">
+        <span class="field-label small dim">Browser cache for images, CSS, JS, fonts</span>
+        <select id="perf-static">${ages.map(([v, l]) => `<option value="${v}" ${(p.static_max_age || 0) === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+      </label>
+      <label class="field" style="margin:0">
+        <span class="field-label small dim">Page cache (PHP pages, visitors not logged in)</span>
+        <select id="perf-pagecache"><option value="off" ${p.page_cache ? "" : "selected"}>Off</option><option value="on" ${p.page_cache ? "selected" : ""}>On</option></select>
+      </label>
+      <label class="field" style="margin:0">
+        <span class="field-label small dim">Page cache lifetime (s)</span>
+        <input type="number" min="1" max="86400" id="perf-ttl" placeholder="300" value="${p.page_cache_ttl || ""}">
+      </label>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-sm" id="dd-save-perf">Save performance</button>
+      ${p.page_cache ? `<button class="btn btn-sm" id="dd-purge-cache">Purge page cache</button><span class="small dim" id="perf-stats"></span>` : ""}
+    </div>`;
+}
+
+function wirePerf(body, dom, id, m, refresh) {
+  const save = document.getElementById("dd-save-perf");
+  if (!save) return;
+  save.onclick = async () => {
+    const ttl = parseInt(document.getElementById("perf-ttl").value, 10) || 0;
+    const perf = {
+      compress: document.getElementById("perf-compress").value === "on",
+      static_max_age: parseInt(document.getElementById("perf-static").value, 10) || 0,
+      page_cache: document.getElementById("perf-pagecache").value === "on",
+      page_cache_ttl: ttl,
+    };
+    try {
+      await api.patch("/domains/" + id, { perf });
+      toast("Performance settings saved");
+      m.close(); refresh();
+    } catch (ex) { toast(ex.message, "err"); }
+  };
+  const purge = document.getElementById("dd-purge-cache");
+  if (purge) {
+    purge.onclick = async () => {
+      try {
+        const r = await api.post(`/domains/${id}/cache/purge`, {});
+        toast(`Page cache purged (${r.purged} page${r.purged === 1 ? "" : "s"})`);
+        showStats();
+      } catch (ex) { toast(ex.message, "err"); }
+    };
+    const showStats = () => api.get(`/domains/${id}/cache`).then((c) => {
+      const st = c.stats || {};
+      const total = (st.hits || 0) + (st.misses || 0);
+      const el = document.getElementById("perf-stats");
+      if (el) el.textContent = `${st.entries || 0} pages cached, ${total ? Math.round(100 * (st.hits || 0) / total) : 0}% hit rate since start`;
+    }).catch(() => {});
+    showStats();
+  }
 }
 
 const CATEGORY_LABELS = { cms: "CMS", forum: "Forums", wiki: "Wikis", tools: "Tools", ecommerce: "E-commerce", framework: "Frameworks" };
