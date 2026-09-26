@@ -38,13 +38,19 @@ addRoute("/accounts", {
             <div><b>${esc(u.username)}</b><div class="small dim">${esc(u.email || "")}</div></div></div></td>
           <td>${roleTag(u.role)}</td>
           <td class="small">${esc(pkgName(u.package_id))}</td>
-          <td>${u.status === "suspended" ? statusTag("suspended") : statusTag("active")}</td>
+          <td><div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+            ${u.status === "suspended" ? statusTag("suspended") : statusTag("active")}
+            ${u.id === me()?.id
+              ? ""
+              : u.status === "suspended"
+                ? `<button class="btn btn-sm btn-primary act-susp" title="Restore this account's websites, logins and services">${icon("play")} Unsuspend</button>`
+                : `<button class="btn btn-sm btn-warn act-susp" title="Cut this account off: websites show a suspended page and FTP, mail, cron and database logins are blocked">${icon("pause")} Suspend</button>`}
+          </div></td>
           <td class="small dim">${fmtAgo(u.created_at)}</td>
           <td><div class="row-actions">
             ${isAdmin() ? `<button class="btn btn-ghost act-imp" title="Log in as user">${icon("eye")}</button>` : ""}
             ${packages.length ? `<button class="btn btn-ghost act-pkg" title="Change package">${icon("box")}</button>` : ""}
             <button class="btn btn-ghost act-pass" title="Reset password">${icon("key")}</button>
-            <button class="btn btn-ghost act-susp" title="Suspend/unsuspend">${icon("toggle")}</button>
             <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
           </div></td>
         </tr>`).join("")}</tbody></table></div>`
