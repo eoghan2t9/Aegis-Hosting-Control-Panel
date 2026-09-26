@@ -431,7 +431,44 @@ func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	writeJSON(w, http.StatusOK, withoutPasswords(rows))
+}
+
+// withoutPasswords returns copies of rows with the stored password removed.
+// The list endpoint never returns passwords: they are shown once on create and
+// afterwards only through the audited handleDBCredentials.
+func withoutPasswords(rows []*store.Database) []*store.Database {
+	out := make([]*store.Database, len(rows))
+	for i, d := range rows {
+		c := *d
+		c.DBPassword = ""
+		out[i] = &c
+	}
+	return out
+}
+
+// handleDBCredentials reveals a database's stored password to its owner (or an
+// admin). Viewing a password is an explicit action: it is written to the audit
+// log and the response is marked non-cacheable.
+func (s *Server) handleDBCredentials(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	row, err := s.Store.GetDatabase(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "database not found")
+		return
+	}
+	u := userFrom(r)
+	if row.UserID != u.ID && u.Role != store.RoleAdmin {
+		writeErr(w, http.StatusForbidden, "cannot manage this database")
+		return
+	}
+	s.audit(r, "db.credentials", row.Name, "server="+row.Server)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, row)
 }
 
 type dbCreateReq struct {
@@ -455,6 +492,7 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "db.create", row.Name, "server="+row.Server)
+	w.Header().Set("Cache-Control", "no-store") // the response carries the new password
 	writeJSON(w, http.StatusCreated, row)
 }
 

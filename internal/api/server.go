@@ -230,6 +230,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/databases", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBList)))
 	mux.HandleFunc("POST /api/databases", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBCreate)))
 	mux.HandleFunc("DELETE /api/databases/{id}", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDelete)))
+	mux.HandleFunc("GET /api/databases/{id}/credentials", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBCredentials)))
 	mux.HandleFunc("GET /api/databases/{id}/dump", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDump)))
 
 	// Files.
