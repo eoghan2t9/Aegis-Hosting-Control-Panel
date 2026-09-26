@@ -294,7 +294,16 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 			ip := filepath.Join(fsPath, filepath.FromSlash(path.Clean("/"+name)))
 			if st, err := os.Stat(ip); err == nil && !st.IsDir() {
 				if strings.HasSuffix(name, ".php") && route.Socket != "" {
-					break // let the PHP path below handle it
+					// Let the PHP path below handle it — but point fsPath/info
+					// at the index file we just found *in this directory*,
+					// not the directory itself. Otherwise the info.IsDir()
+					// check below can't tell this apart from a genuinely
+					// missing path and falls back to the domain root's
+					// index.php instead of this directory's own front
+					// controller — silently running the wrong PHP app for
+					// every subfolder that has its own index.php.
+					fsPath, info = ip, st
+					break
 				}
 				http.ServeFile(rw, r, ip)
 				return
