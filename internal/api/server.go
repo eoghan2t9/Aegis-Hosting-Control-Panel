@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"aegis/internal/auth"
@@ -58,6 +59,13 @@ type Server struct {
 	PanelAssets http.Handler
 
 	primaryIPv4 string
+
+	// previewMu/previewSessions back handlePreview's own short-lived,
+	// per-domain session cookie (see handlers_preview.go) — lets links a
+	// previewed site renders keep working on click, without the panel's
+	// bearer token in a query string on every navigation.
+	previewMu       sync.Mutex
+	previewSessions map[string]previewSession
 }
 
 // New creates the API server.
@@ -69,7 +77,8 @@ func New(cfg *config.Config, st *store.Store, am *auth.Manager,
 		Cfg: cfg, Store: st, Auth: am, Domains: domains, Web: web, PHP: php,
 		DNS: dns, SSL: ssl, FTP: ftp, DB: db, Files: files, Thumbs: thumbs, Backup: backup,
 		System: sys, Tuner: tuner, Terminal: term, Cipher: cipher, Cron: cron, Mail: mailSvc, Tokens: tokens, Security: security, Quota: quota, WebApps: webApps, Packages: packages, Metrics: metrics, Docker: docker, IPs: ips,
-		primaryIPv4: svc.DetectPrimaryIP(),
+		primaryIPv4:     svc.DetectPrimaryIP(),
+		previewSessions: map[string]previewSession{},
 	}
 }
 
@@ -100,8 +109,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/totp/disable", s.withAuth(s.handleTOTPDisable))
 	mux.HandleFunc("POST /api/admin/impersonate", s.withAuth(s.handleImpersonate))
 	mux.HandleFunc("POST /api/admin/unimpersonate", s.withAuth(s.handleUnimpersonate))
-	mux.HandleFunc("GET /api/domains/{id}/preview/", s.withAuth(s.handlePreview))
-	mux.HandleFunc("GET /api/domains/{id}/preview", s.withAuth(s.handlePreview))
+	// Not withAuth: handlePreview does its own combined auth (bearer token
+	// OR a preview-session cookie, for in-page navigation — see
+	// handlers_preview.go).
+	mux.HandleFunc("GET /api/domains/{id}/preview/", s.handlePreview)
+	mux.HandleFunc("GET /api/domains/{id}/preview", s.handlePreview)
 	mux.HandleFunc("GET /api/admin/audit", s.withAuth(s.withRole(s.handleAudit, store.RoleAdmin)))
 
 	// System.
@@ -341,39 +353,49 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		// API tokens (aegis_...) are a separate credential from the panel
-		// JWT — scripting/automation auth, verified against api_tokens
-		// instead of a signed session. A synthetic Claims value keeps
-		// userFrom/claimsFrom/withRole working identically either way.
-		if strings.HasPrefix(token, "aegis_") {
-			user, err := s.Tokens.Verify(r.Context(), token)
-			if err != nil {
-				writeErr(w, http.StatusUnauthorized, "invalid api token")
-				return
-			}
-			if user.Status == store.StatusSuspended {
-				writeErr(w, http.StatusForbidden, "account is suspended")
-				return
-			}
-			claims := &auth.Claims{Username: user.Username, Role: user.Role}
-			ctx := context.WithValue(r.Context(), ctxUser, user)
-			ctx = context.WithValue(ctx, ctxClaims, claims)
-			next(w, r.WithContext(ctx))
-			return
-		}
-		claims, user, err := s.Auth.Verify(r.Context(), token)
-		if err != nil {
-			status := http.StatusUnauthorized
-			if errors.Is(err, auth.ErrSuspended) {
-				status = http.StatusForbidden
-			}
-			writeErr(w, status, err.Error())
+		user, claims, status, msg := s.resolveBearer(r, token)
+		if status != 0 {
+			writeErr(w, status, msg)
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUser, user)
 		ctx = context.WithValue(ctx, ctxClaims, claims)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// resolveBearer verifies a bearer/API token (see bearerToken) and resolves
+// the acting user + claims. Shared by withAuth and handlePreview — the
+// latter can't just use withAuth because it also accepts a preview-session
+// cookie as a fallback (for in-page navigation after the first request; see
+// handlers_preview.go), so it needs its own combined auth check. status==0
+// means success; otherwise it's the exact status/message the caller should
+// write, preserving withAuth's original behavior byte-for-byte.
+func (s *Server) resolveBearer(r *http.Request, token string) (*store.User, *auth.Claims, int, string) {
+	// API tokens (aegis_...) are a separate credential from the panel
+	// JWT — scripting/automation auth, verified against api_tokens
+	// instead of a signed session. A synthetic Claims value keeps
+	// userFrom/claimsFrom/withRole working identically either way.
+	if strings.HasPrefix(token, "aegis_") {
+		user, err := s.Tokens.Verify(r.Context(), token)
+		if err != nil {
+			return nil, nil, http.StatusUnauthorized, "invalid api token"
+		}
+		if user.Status == store.StatusSuspended {
+			return nil, nil, http.StatusForbidden, "account is suspended"
+		}
+		claims := &auth.Claims{Username: user.Username, Role: user.Role}
+		return user, claims, 0, ""
+	}
+	claims, user, err := s.Auth.Verify(r.Context(), token)
+	if err != nil {
+		status := http.StatusUnauthorized
+		if errors.Is(err, auth.ErrSuspended) {
+			status = http.StatusForbidden
+		}
+		return nil, nil, status, err.Error()
+	}
+	return user, claims, 0, ""
 }
 
 // withRole restricts to the given roles.
