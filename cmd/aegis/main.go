@@ -162,7 +162,7 @@ func run(configPath string) error {
 	})
 	go func() {
 		slog.Info("panel listening", "addr", panelAddr, "base", cfg.PanelBase)
-		if err := http.ListenAndServe(panelAddr, panelHandler(server, panelRoot)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := newHTTPServer(panelAddr, panelHandler(server, panelRoot)).ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("panel server: %w", err)
 		}
 	}()
@@ -222,7 +222,7 @@ func run(configPath string) error {
 	// svc.SuspendedAddr). Loopback-only, reached only through the web server.
 	suspendedSvc := svc.NewSuspendedServer(st)
 	go func() {
-		if err := http.ListenAndServe(svc.SuspendedAddr, suspendedSvc.Handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := newHTTPServer(svc.SuspendedAddr, suspendedSvc.Handler()).ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("suspended-page server: %w", err)
 		}
 	}()
@@ -232,7 +232,7 @@ func run(configPath string) error {
 	go suspender.ReconcileLoop(ctx, 20*time.Second)
 
 	go func() {
-		if err := http.ListenAndServe(svc.WebFTPAddr, webftpSvc.Handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := newHTTPServer(svc.WebFTPAddr, webftpSvc.Handler()).ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("webftp server: %w", err)
 		}
 	}()
@@ -381,7 +381,7 @@ func panelHandler(server *api.Server, outside http.Handler) http.Handler {
 		_, _ = w.Write(indexHTML)
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if base != "" {
 			prefix := base + "/"
 			if r.URL.Path == base {
@@ -435,6 +435,40 @@ func panelHandler(server *api.Server, outside http.Handler) http.Handler {
 			}
 		}
 		fileHandler.ServeHTTP(w, r)
+	}))
+}
+
+// newHTTPServer builds a listener with the two timeouts that defeat slowloris:
+// a client that dribbles its request headers, or parks an idle connection, is
+// dropped. There is deliberately no ReadTimeout/WriteTimeout — those would cut
+// off large uploads, downloads and the WebSocket terminal.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
+
+// securityHeaders adds the browser hardening headers every panel response
+// should carry. Strict-Transport-Security is deliberately absent: the panel is
+// also served under /aegis on every customer domain, and HSTS applies to the
+// whole host name, so it would silently force HTTPS on customers' sites.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "SAMEORIGIN") // the panel embeds its own domain previews
+		h.Set("Content-Security-Policy", "frame-ancestors 'self'")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		// API responses carry account data and must not be cached by the browser
+		// or an intermediary. (A domain preview is a customer's own site.)
+		if p := r.URL.Path; strings.Contains(p, "/api/") && !strings.Contains(p, "/preview") {
+			h.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
