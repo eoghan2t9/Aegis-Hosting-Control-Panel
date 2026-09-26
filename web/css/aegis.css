@@ -515,8 +515,13 @@ tr:hover .row-actions, .row-actions:hover { opacity: 1; }
 .modal-title { font-weight: 650; font-size: 14.5px; }
 .modal-body { padding: 20px; }
 .modal-foot {
-  display: flex; justify-content: flex-end; gap: 8px;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px;
   padding: 14px 20px; border-top: 1px solid var(--line);
+}
+.modal-foot .btn { justify-content: center; }
+@media (max-width: 600px) {
+  .modal-foot { padding: 12px 14px; }
+  .modal-foot .btn { flex: 1 1 calc(50% - 8px); min-height: 40px; }
 }
 .modal-head .btn { margin-left: auto; }
 .m-close { border: none; background: none; color: var(--text-3); font-size: 20px; cursor: pointer; line-height: 1; padding: 4px 6px; }
