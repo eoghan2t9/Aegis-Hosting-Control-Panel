@@ -355,6 +355,15 @@ func (w *WebFTP) handleIndex(rw http.ResponseWriter, r *http.Request) {
 // the *parent* domain's document root when SSL.obtain includes this
 // hostname as an additional SAN.
 func (w *WebFTP) handleACMEChallenge(rw http.ResponseWriter, r *http.Request) {
+	// PathValue is the URL-*decoded* segment, so "..%2f..%2fetc%2fpasswd"
+	// arrives here as "../../etc/passwd". This handler is unauthenticated and
+	// reachable from the internet through every webftp.<domain> vhost, and the
+	// panel runs as root, so the token must be a plain ACME token — never a path.
+	token := r.PathValue("token")
+	if !acmeTokenRe.MatchString(token) {
+		http.NotFound(rw, r)
+		return
+	}
 	host := requestHost(r)
 	parent := strings.TrimPrefix(host, "webftp.")
 	if parent == host {
@@ -366,7 +375,7 @@ func (w *WebFTP) handleACMEChallenge(rw http.ResponseWriter, r *http.Request) {
 		http.NotFound(rw, r)
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(dom.DocumentRoot, ".well-known", "acme-challenge", r.PathValue("token")))
+	data, err := os.ReadFile(filepath.Join(dom.DocumentRoot, ".well-known", "acme-challenge", token))
 	if err != nil {
 		http.NotFound(rw, r)
 		return
