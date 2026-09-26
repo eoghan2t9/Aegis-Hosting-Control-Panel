@@ -33,6 +33,7 @@ type Server struct {
 	SSL      *svc.SSL
 	FTP      *svc.FTP
 	WebFTP   *svc.WebFTP // browser file manager; set after New (nil disables the panel's "open in Web FTP" button)
+	Purge    *svc.Purger // deletes a user together with everything they own; set after New
 	DB       *svc.Databases
 	Files    *svc.Files
 	Thumbs   *svc.Thumbs
@@ -150,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/users/{id}", s.withAuth(s.withRole(s.handleUsersGet, store.RoleAdmin, store.RoleReseller)))
 	mux.HandleFunc("PATCH /api/users/{id}", s.withAuth(s.withRole(s.handleUsersUpdate, store.RoleAdmin, store.RoleReseller)))
 	mux.HandleFunc("DELETE /api/users/{id}", s.withAuth(s.withRole(s.handleUsersDelete, store.RoleAdmin, store.RoleReseller)))
+	mux.HandleFunc("GET /api/users/{id}/deletion-plan", s.withAuth(s.withRole(s.handleUsersDeletionPlan, store.RoleAdmin, store.RoleReseller)))
 	// No withRole gate: handleUsersResetPassword's own canManageUser check
 	// already allows a user to reset their own password (the dashboard's
 	// self-service "My account" form uses this same route), on top of

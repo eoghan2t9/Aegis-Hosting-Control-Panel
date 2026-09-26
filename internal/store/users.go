@@ -170,25 +170,55 @@ func (s *Store) IsSuspendedByQuota(ctx context.Context, id int64) (bool, error) 
 	return getBool(v), nil
 }
 
+// DeleteUser removes a user's panel rows: everything keyed to the user, and
+// the child rows of each of their domains (aliases, DNS zones/records, SSL
+// orders, mail domains/mailboxes/aliases). No foreign keys are declared in the
+// schema, so nothing cascades — every table has to be listed here, otherwise
+// deleting a user leaves orphaned rows behind. This is rows only: freeing the
+// real resources (databases, vhosts, files, system users) is svc.Purger's job,
+// which runs first and then calls this last.
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
-	// Delete dependent rows first (FKs are on by default).
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	// id is an int64, so formatting it into the statements is injection-safe
+	// and keeps the sub-selects readable.
+	doms := fmt.Sprintf("(SELECT id FROM domains WHERE user_id = %d)", id)
+	mailDoms := "(SELECT id FROM mail_domains WHERE domain_id IN " + doms + ")"
+	zones := "(SELECT id FROM dns_zones WHERE domain_id IN " + doms + ")"
 	for _, q := range []string{
-		"DELETE FROM domains WHERE user_id = ?",
-		"DELETE FROM ftp_accounts WHERE user_id = ?",
-		"DELETE FROM databases WHERE user_id = ?",
-		"DELETE FROM sessions WHERE user_id = ?",
-		"DELETE FROM users WHERE id = ?",
+		"DELETE FROM mailboxes WHERE mail_domain_id IN " + mailDoms,
+		"DELETE FROM mail_aliases WHERE mail_domain_id IN " + mailDoms,
+		"DELETE FROM mail_domains WHERE domain_id IN " + doms,
+		"DELETE FROM domain_aliases WHERE domain_id IN " + doms,
+		"DELETE FROM dns_records WHERE zone_id IN " + zones,
+		"DELETE FROM dns_zones WHERE domain_id IN " + doms,
+		"DELETE FROM ssl_orders WHERE domain_id IN " + doms,
+		fmt.Sprintf("DELETE FROM containers WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM cron_jobs WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM api_tokens WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM totp_challenges WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM domains WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM ftp_accounts WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM databases WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM sessions WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM users WHERE id = %d", id),
 	} {
-		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return wrapErr(err)
 		}
 	}
 	return tx.Commit()
+}
+
+// CountAdmins returns how many accounts have the admin role (used to refuse
+// deleting the last one).
+func (s *Store) CountAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE role = ?", RoleAdmin).Scan(&n)
+	return n, err
 }
 
 // CountUsers returns the total number of accounts (optionally scoped).

@@ -133,6 +133,7 @@ func run(configPath string) error {
 	// logins for it without racing the assignment.
 	webftpSvc := svc.NewWebFTP(st, files, thumbsSvc)
 	server.WebFTP = webftpSvc
+	server.Purge = svc.NewPurger(cfg, st, domains, dbSvc, ftpSvc, mailSvc, dockerSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

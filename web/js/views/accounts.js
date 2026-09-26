@@ -86,8 +86,27 @@ addRoute("/accounts", {
         try { await api.post(`/users/${row.id}/${suspending ? "suspend" : "unsuspend"}`); toast("Done"); refresh(); } catch (ex) { toast(ex.message, "err"); }
       });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
-        if (!await confirmDialog(`Delete ${row.username}? The system account and panel data are removed.`, { danger: true, title: "Delete account" })) return;
-        try { await api.del(`/users/${row.id}`); toast("Account deleted"); refresh(); } catch (ex) { toast(ex.message, "err"); }
+        // Deleting an account removes everything it owns, so show exactly what
+        // (and stop early if the server says it must not be deleted).
+        let plan;
+        try { plan = await api.get(`/users/${row.id}/deletion-plan`); } catch (ex) { toast(ex.message, "err"); return; }
+        if ((plan.blockers || []).length) { toast(`Cannot delete ${row.username}: ${plan.blockers.join("; ")}`, "err"); return; }
+        const n = (a, word) => `${a.length} ${word}${a.length === 1 ? "" : "s"}`;
+        const parts = [
+          "their home directory and every file in it",
+          (plan.domains || []).length && n(plan.domains, "domain"),
+          (plan.databases || []).length && `${n(plan.databases, "database")} (dropped from the server)`,
+          (plan.mail_domains || []).length && `mail for ${n(plan.mail_domains, "domain")}`,
+          (plan.ftp_accounts || []).length && n(plan.ftp_accounts, "FTP account"),
+          plan.containers && `${plan.containers} container${plan.containers === 1 ? "" : "s"}`,
+          plan.cron_jobs && `${plan.cron_jobs} cron job${plan.cron_jobs === 1 ? "" : "s"}`,
+        ].filter(Boolean);
+        if (!await confirmDialog(`Permanently delete ${row.username} and everything they own: ${parts.join(", ")}, plus the system account and vhost/DNS/certificate config. This cannot be undone. Backup archives are kept.`, { danger: true, title: "Delete account", okText: "Delete everything" })) return;
+        try {
+          const r = await api.del(`/users/${row.id}`);
+          toast((r.warnings || []).length ? `Account deleted (${r.warnings.length} warning${r.warnings.length === 1 ? "" : "s"} — see the server log)` : "Account deleted");
+          refresh();
+        } catch (ex) { toast(ex.message, "err"); }
       });
     });
 
