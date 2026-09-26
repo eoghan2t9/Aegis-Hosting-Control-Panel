@@ -197,8 +197,21 @@ func (d *Domains) Create(ctx context.Context, user *store.User, domain string, o
 	// the docroot and placeholder page would stay root:root — unusable over
 	// the owner's FTP/web-FTP account and unreadable by their PHP-FPM pool.
 	// Same "chown to <owner>:www-data" convention as ftp.go, cron.go,
-	// backup.go, docker.go and webapps.go.
-	_, _ = RunTimeout(15*time.Second, "chown", "-R", user.Username+":www-data", root)
+	// backup.go, docker.go and webapps.go. (createDefaultFTP, below, may
+	// re-chown root itself to a dedicated per-domain FTP account — that's
+	// expected — but MkdirAll can also have created root's *parent* (e.g.
+	// "<home>/<domain>" above "<home>/<domain>/public") as a brand new,
+	// still root-owned directory that nothing else ever touches; chown that
+	// too, non-recursively, so the domain's own folder — the first thing a
+	// file manager shows — isn't left owned by root.
+	if out, cerr := RunTimeout(15*time.Second, "chown", "-R", user.Username+":www-data", root); cerr != nil {
+		slog.Warn("domain docroot chown failed", "root", root, "user", user.Username, "err", cerr, "out", out)
+	}
+	if parent := filepath.Dir(root); parent != d.UserHome(user) {
+		if out, cerr := RunTimeout(15*time.Second, "chown", user.Username+":www-data", parent); cerr != nil {
+			slog.Warn("domain folder chown failed", "parent", parent, "user", user.Username, "err", cerr, "out", out)
+		}
+	}
 
 	dom := &store.Domain{
 		UserID:         user.ID,
