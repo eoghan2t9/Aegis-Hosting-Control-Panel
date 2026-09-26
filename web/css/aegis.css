@@ -461,7 +461,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 .tbl-empty { text-align: center; color: var(--text-3); padding: 34px 14px; font-size: 12.5px; }
 .row-actions { display: flex; gap: 2px; justify-content: flex-end; opacity: .55; transition: opacity .15s; }
 tr:hover .row-actions, .row-actions:hover { opacity: 1; }
-.row-actions .btn { padding: 4px 6px; }
+.row-actions .btn { padding: 4px 6px; justify-content: center; }
 .row-actions svg { width: 14px; height: 14px; }
 .hoverable { cursor: pointer; }
 
