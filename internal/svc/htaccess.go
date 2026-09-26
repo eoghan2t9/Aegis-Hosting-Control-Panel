@@ -44,7 +44,13 @@ type HtConfig struct {
 	// e.g. a sensitive .db file, would silently apply to every file in the
 	// directory instead).
 	FileDenies []HtFileDeny
-	Skipped    []string
+	// PHPExtensions are file extensions (lowercase, no leading dot) that an
+	// "AddType application/x-httpd-php... .ext..." directive maps onto PHP
+	// execution — legacy sites commonly name a PHP script ".html" this way.
+	// Extensions already executed unconditionally (.php) don't need to be
+	// listed here.
+	PHPExtensions []string
+	Skipped       []string
 }
 
 // HtFileDeny is one <Files pattern> or <FilesMatch pattern> block's "Deny
@@ -279,6 +285,7 @@ func htParseDir(root, dir string) *HtConfig {
 			cfg.DenyAll = true
 		}
 		cfg.FileDenies = append(cfg.FileDenies, sub.FileDenies...)
+		cfg.PHPExtensions = append(cfg.PHPExtensions, sub.PHPExtensions...)
 		cfg.Skipped = append(cfg.Skipped, sub.Skipped...)
 	}
 	return cfg
@@ -377,6 +384,18 @@ func htParseFile(file string, cfg *HtConfig) {
 		case "options":
 			// Only -Indexes matters conceptually; the Go server never lists
 			// directories, and Caddy's file_server has browse off by default.
+		case "addtype":
+			// "AddType application/x-httpd-php[74] .html .htm ..." — legacy
+			// sites use this to have a script literally named e.g. "x.html"
+			// execute as PHP. Other AddType uses (real MIME overrides like
+			// "AddType video/mp4 mp4") don't change how the file is served
+			// here (net/http already infers a sane Content-Type), so only
+			// the PHP-mapping case is meaningful to record.
+			if len(args) >= 2 && strings.Contains(strings.ToLower(args[0]), "php") {
+				for _, ext := range args[1:] {
+					cfg.PHPExtensions = append(cfg.PHPExtensions, strings.ToLower(strings.TrimPrefix(ext, ".")))
+				}
+			}
 		case "<files", "<filesmatch":
 			pattern := ""
 			if len(args) > 0 {

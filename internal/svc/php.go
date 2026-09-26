@@ -232,6 +232,13 @@ pm.max_spare_servers = %d
 pm.max_requests = 500
 request_terminate_timeout = 300
 catch_workers_output = yes
+; Aegis's own goserver.go .htaccess interpreter is the sole gatekeeper for
+; which files it hands to FastCGI at all (including non-.php names an
+; "AddType application/x-httpd-php .html" directive maps onto PHP) — FPM's
+; own default (.php only, even though it's commented out in the stock
+; www.conf template) would otherwise redundantly reject anything else with
+; "Access denied.", second-guessing a decision already made correctly.
+security.limit_extensions =
 php_admin_value[open_basedir] = %s:%s/tmp
 %s`, domain, domain, systemUser, group, sock,
 		tuning.PM, tuning.MaxChildren, tuning.StartServers, tuning.MinSpare, tuning.MaxSpare,

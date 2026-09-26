@@ -279,6 +279,20 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 
 	info, statErr := os.Stat(fsPath)
 	isPHP := strings.HasSuffix(upath, ".php")
+	if !isPHP {
+		// "AddType application/x-httpd-php .html .htm" — legacy sites use
+		// this to have a script literally named e.g. "x.html" execute as
+		// PHP instead of being served as static text (which would leak its
+		// raw source).
+		if ext := strings.TrimPrefix(path.Ext(upath), "."); ext != "" {
+			for _, e := range w.htConfigFor(root, upath).PHPExtensions {
+				if strings.EqualFold(e, ext) {
+					isPHP = true
+					break
+				}
+			}
+		}
+	}
 
 	// A directory requested without a trailing slash must redirect to add
 	// one, exactly like Apache's mod_dir/nginx's default behavior — without
@@ -318,14 +332,27 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	// DirectoryIndex when present, else the usual defaults) when one of the
 	// index files exists — before the PHP fallback, so static sites work.
 	if statErr == nil && info.IsDir() {
-		idx := w.htConfigFor(root, upath).DirectoryIndex
+		dirCfg := w.htConfigFor(root, upath)
+		idx := dirCfg.DirectoryIndex
 		if len(idx) == 0 {
 			idx = []string{"index.php", "index.html", "index.htm"}
+		}
+		nameIsPHP := func(name string) bool {
+			if strings.HasSuffix(name, ".php") {
+				return true
+			}
+			ext := strings.TrimPrefix(path.Ext(name), ".")
+			for _, e := range dirCfg.PHPExtensions {
+				if strings.EqualFold(e, ext) {
+					return true
+				}
+			}
+			return false
 		}
 		for _, name := range idx {
 			ip := filepath.Join(fsPath, filepath.FromSlash(path.Clean("/"+name)))
 			if st, err := os.Stat(ip); err == nil && !st.IsDir() {
-				if strings.HasSuffix(name, ".php") && route.Socket != "" {
+				if nameIsPHP(name) && route.Socket != "" {
 					// Let the PHP path below handle it — but point fsPath/info
 					// at the index file we just found *in this directory*,
 					// not the directory itself. Otherwise the info.IsDir()
