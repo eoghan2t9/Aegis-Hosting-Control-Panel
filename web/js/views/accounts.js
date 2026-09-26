@@ -29,16 +29,16 @@ addRoute("/accounts", {
     });
     const pkgName = (id) => packages.find((p) => p.id === id)?.name || "—";
 
-    tabs.users.innerHTML = users.length ? `<div class="tbl-wrap"><table class="tbl">
+    tabs.users.innerHTML = users.length ? `<div class="tbl-wrap"><table class="tbl tbl-accounts">
       <thead><tr><th>Account</th><th>Role</th><th>Package</th><th>State</th><th>Created</th><th></th></tr></thead>
       <tbody>${users.map((u) => `
         <tr data-id="${u.id}">
-          <td><div style="display:flex;align-items:center;gap:9px">
+          <td class="col-acct"><div style="display:flex;align-items:center;gap:9px">
             <span class="avatar">${esc(u.username.slice(0, 2))}</span>
             <div><b>${esc(u.username)}</b><div class="small dim">${esc(u.email || "")}</div></div></div></td>
-          <td>${roleTag(u.role)}</td>
-          <td class="small">${esc(pkgName(u.package_id))}</td>
-          <td><div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <td class="col-role">${roleTag(u.role)}</td>
+          <td class="col-pkg small">${esc(pkgName(u.package_id))}</td>
+          <td class="col-state"><div class="state-cell">
             ${u.status === "suspended" ? statusTag("suspended") : statusTag("active")}
             ${u.id === me()?.id
               ? ""
@@ -46,8 +46,8 @@ addRoute("/accounts", {
                 ? `<button class="btn btn-sm btn-primary act-susp" title="Restore this account's websites, logins and services">${icon("play")} Unsuspend</button>`
                 : `<button class="btn btn-sm btn-warn act-susp" title="Cut this account off: websites show a suspended page and FTP, mail, cron and database logins are blocked">${icon("pause")} Suspend</button>`}
           </div></td>
-          <td class="small dim">${fmtAgo(u.created_at)}</td>
-          <td><div class="row-actions">
+          <td class="col-created small dim">${fmtAgo(u.created_at)}</td>
+          <td class="col-act"><div class="row-actions">
             ${isAdmin() ? `<button class="btn btn-ghost act-imp" title="Log in as user">${icon("eye")}</button>` : ""}
             ${packages.length ? `<button class="btn btn-ghost act-pkg" title="Change package">${icon("box")}</button>` : ""}
             <button class="btn btn-ghost act-pass" title="Reset password">${icon("key")}</button>
