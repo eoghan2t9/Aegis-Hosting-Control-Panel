@@ -48,9 +48,20 @@ internal/store ──SQL──▶ SQLite (WAL)
 | `sessions` | revocable JWT sessions |
 | `audit_log` | immutable record of every admin/security action |
 | `settings` | key/value |
+| `totp_challenges` | short-lived, single-use ids linking a password login to its TOTP step |
+| `backup_targets` | remote backup destinations (S3/SFTP) |
+| `login_attempts` | login attempts per username+IP; failed counts drive throttling and the security centre |
+| `api_tokens` | scoped, expiring `aegis_…` tokens for scripting |
+| `mail_domains`, `mailboxes`, `mail_aliases` | virtual mail hosting |
+| `cron_jobs` | per-user scheduled commands |
+| `suspension_actions` | what a suspend changed, so unsuspend restores exactly that |
+| `system_package_updates` | cached list of pending OS package updates |
+| `containers` | customer Docker containers (ports/env/volumes as JSON text) |
+| `ips` | server IP pool assignable to domains |
 
-Migrations are additive (`CREATE TABLE IF NOT EXISTS`); schema lives in
-`store.migrate`.
+Migrations are additive (`CREATE TABLE IF NOT EXISTS`, plus
+`addColumnIfMissing` for columns added later); schema lives in `store.migrate`.
+`docs/CODEMAP.md` maps each table to the file that queries it.
 
 ## Authentication & authorization
 

@@ -13,12 +13,12 @@ the current foundation, in rough priority order.
 
 ## High priority
 
-- **Two-factor authentication (TOTP)** for panel logins and recovery codes;
-  optional WebAuthn/passkeys.
-- **Per-site PHP settings editor**: `php_admin_value` UI for
-  `upload_max_filesize`, `memory_limit`, `opcache`, extensions — regenerating
-  the pool config. (Today only `open_basedir` is written per pool, in
-  `internal/svc/php.go`.)
+- **WebAuthn/passkeys** as a second factor. (TOTP with one-time backup codes
+  is implemented: `internal/auth/totp.go`, `handlers_auth.go`.)
+- **Per-site PHP settings — remaining gaps**: an allow-listed set of `php.ini`
+  overrides (`memory_limit`, `upload_max_filesize`, `post_max_size`, …) is
+  implemented (`svc.ValidatePHPIniSettings`, editor in the Domains view); still
+  missing are opcache tuning and per-site extension selection.
 - **Kernel-level disk quotas**: enforcement is currently application-level —
   periodic `du` + access-log bandwidth accounting that **suspends** the
   account over its hard limit (`internal/svc/quota.go`, cPanel-style non-strict

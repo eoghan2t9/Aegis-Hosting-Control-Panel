@@ -131,8 +131,9 @@ make test && make vet   # go test ./... && go vet ./...
 18. **Auto tuning** — first boot inspects the host and sizes php-fpm/nginx and
     kernel parameters (`/etc/aegis/tuned/`), applyable via `sysctl`.
 19. **Extras** — see `docs/ROADMAP.md` for what's still on the roadmap
-    (2FA, kernel quotas, …). Email, cron, web apps, fail2ban, quotas and
-    backup targets are already implemented.
+    (WebAuthn, kernel quotas, …). Email, cron, web apps, fail2ban, quotas,
+    backup targets, TOTP two-factor login and per-site `php.ini` overrides are
+    already implemented.
 20. **Docker containers** — run containers under an account (`internal/svc/docker.go`,
     shelling the real `docker` CLI, argv-only). Ports/env/volumes are
     structured input only — no free-form flags, so no path to `--privileged`
@@ -164,13 +165,18 @@ docs/            architecture, AI session instructions, roadmap
 
 ## Documentation
 
+- `CLAUDE.md` — quick-start rules for AI agents: commands, layering, security,
+  the deploy sequence, git rules.
 - `AGENTS.md` — knowledge-graph access for AI agents (query CLI + MCP server
   over `graphify-out/graph.json`).
 - `docs/AI_INSTRUCTIONS.md` — the instruction set every AI session must follow
   when working on this repository.
+- `docs/CODEMAP.md` — which file owns what (api / svc / store / web), tables,
+  listeners, feature status.
+- `docs/OPERATIONS.md` — live-host paths, deploy and rollback, safe testing.
 - `docs/ARCHITECTURE.md` — design, data model, extension points.
-- `docs/ROADMAP.md` — what a professional panel still needs (2FA, kernel
-  quotas, Node/reverse-proxy apps, …).
+- `docs/ROADMAP.md` — what a professional panel still needs (WebAuthn, kernel
+  quotas, a Node app manager, …).
 
 ## License
 
