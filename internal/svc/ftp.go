@@ -22,6 +22,10 @@ import (
 // WriteUserConf). It's a variable so tests can point it at a temp dir.
 var vsftpdUserConfDir = "/etc/vsftpd_user_conf"
 
+// userConfMarker is the first line of every per-user file Aegis writes, so
+// PruneUserConfs only ever removes files it created itself.
+const userConfMarker = "# managed by Aegis - do not edit"
+
 // FTP manages FTP accounts backed by system users and served by vsftpd
 // (chrooted, writeable). Each panel user gets a primary FTP account matching
 // their username plus optional sub-accounts rooted in their home.
@@ -123,7 +127,8 @@ func (f *FTP) ensureUserConfDirective(conf string) (bool, error) {
 // uploads 644/755 so the www-data web server can read them (vsftpd's default
 // umask is 077, which leaves uploaded files unreadable by nginx/apache).
 func userConf(ownerUsername, home string) string {
-	return "guest_enable=YES\n" +
+	return userConfMarker + "\n" +
+		"guest_enable=YES\n" +
 		"guest_username=" + ownerUsername + "\n" +
 		"virtual_use_local_privs=YES\n" +
 		"local_root=" + home + "\n" +
@@ -188,6 +193,46 @@ func (f *FTP) SyncUserConfs(ctx context.Context) error {
 			continue
 		}
 		f.handOverRoot(a.Username, owner.Username, a.HomeDir)
+	}
+	return f.PruneUserConfs(ctx)
+}
+
+// PruneUserConfs removes Aegis-written per-user vsftpd configs whose FTP
+// account no longer exists. Deleting a panel user cascades its FTP account
+// rows away without going through FTP.Delete, which would otherwise leave a
+// stale config still mapping that login onto an owner. Files without the
+// userConfMarker (hand-written ones) are never touched.
+func (f *FTP) PruneUserConfs(ctx context.Context) error {
+	accts, err := f.Store.ListFTPAccounts(ctx, 0)
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(accts))
+	for _, a := range accts {
+		keep[a.Username] = true
+	}
+	entries, err := os.ReadDir(vsftpdUserConfDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || keep[name] || !ValidUsername(name) {
+			continue
+		}
+		path := filepath.Join(vsftpdUserConfDir, name)
+		b, err := os.ReadFile(path)
+		if err != nil || !strings.HasPrefix(string(b), userConfMarker) {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			slog.Warn("could not remove stale ftp user config", "path", path, "err", err)
+			continue
+		}
+		slog.Info("removed stale ftp user config", "login", name)
 	}
 	return nil
 }

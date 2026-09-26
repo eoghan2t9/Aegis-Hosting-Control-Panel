@@ -333,7 +333,11 @@ func cmdUser(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		return st.DeleteUser(ctx, u.ID)
+		if err := st.DeleteUser(ctx, u.ID); err != nil {
+			return err
+		}
+		// The FTP account rows went with the user; drop their vsftpd configs too.
+		return ss.ftp.PruneUserConfs(ctx)
 	case "reset-pass":
 		fs := flag.NewFlagSet("reset-pass", flag.ExitOnError)
 		p := fs.String("p", "", "password")

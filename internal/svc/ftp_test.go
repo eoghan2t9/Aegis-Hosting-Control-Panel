@@ -1,10 +1,13 @@
 package svc
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"aegis/internal/store"
 )
 
 func withTempUserConfDir(t *testing.T) string {
@@ -70,6 +73,81 @@ func TestRemoveUserConf(t *testing.T) {
 		t.Errorf("user conf still present after remove: %v", err)
 	}
 	f.removeUserConf("../evil") // invalid names are ignored, must not panic or escape
+}
+
+func TestUserConfStartsWithMarker(t *testing.T) {
+	if got := userConf("alice", "/home/alice"); !strings.HasPrefix(got, userConfMarker+"\n") {
+		t.Errorf("user conf must start with the managed marker, got:\n%s", got)
+	}
+}
+
+// Deleting a panel user cascades its FTP rows away without FTP.Delete, so
+// PruneUserConfs must drop the stale per-login config — but only files Aegis
+// wrote itself.
+func TestPruneUserConfsRemovesOnlyStaleManagedFiles(t *testing.T) {
+	ctx := context.Background()
+	dir := withTempUserConfDir(t)
+	st, err := store.New(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	u := &store.User{Username: "alice", Email: "alice@example.com", PasswordHash: "h",
+		Role: store.RoleUser, Status: store.StatusActive, HomeDir: "/home/alice"}
+	if err := st.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateFTPAccount(ctx, &store.FTPAccount{UserID: u.ID, Username: "site_alice",
+		PasswordHash: "h", HomeDir: "/home/alice/site", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &FTP{Store: st}
+	for login, home := range map[string]string{"site_alice": "/home/alice/site", "gone_login": "/home/alice/gone"} {
+		if err := f.WriteUserConf(login, "alice", home); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handmade := filepath.Join(dir, "handmade")
+	if err := os.WriteFile(handmade, []byte("local_umask=077\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exists := func(name string) bool { _, err := os.Stat(filepath.Join(dir, name)); return err == nil }
+
+	if err := f.PruneUserConfs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !exists("site_alice") {
+		t.Error("config for a live FTP account was pruned")
+	}
+	if exists("gone_login") {
+		t.Error("stale managed config was not pruned")
+	}
+	if !exists("handmade") {
+		t.Error("hand-written config (no marker) was pruned")
+	}
+
+	// Deleting the panel user cascades its FTP account away.
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PruneUserConfs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if exists("site_alice") {
+		t.Error("config survived deletion of its panel user")
+	}
+	if !exists("handmade") {
+		t.Error("hand-written config removed after user deletion")
+	}
+
+	// A missing directory is not an error.
+	vsftpdUserConfDir = filepath.Join(t.TempDir(), "does-not-exist")
+	if err := f.PruneUserConfs(ctx); err != nil {
+		t.Errorf("missing dir returned error: %v", err)
+	}
 }
 
 func TestEnsureUserConfDirective(t *testing.T) {

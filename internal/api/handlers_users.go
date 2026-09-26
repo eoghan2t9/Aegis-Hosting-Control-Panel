@@ -225,6 +225,8 @@ func (s *Server) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = svc.RunTimeout(15*time.Second, "userdel", "-r", u.Username)
+	// The FTP account rows went with the user; drop their vsftpd configs too.
+	_ = s.FTP.PruneUserConfs(r.Context())
 	s.audit(r, "user.delete", u.Username, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
