@@ -2,9 +2,9 @@ package svc
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -26,18 +26,23 @@ func (w *WebFTP) apiList(rw http.ResponseWriter, r *http.Request, sess webftpSes
 }
 
 func (w *WebFTP) apiDownload(rw http.ResponseWriter, r *http.Request, sess webftpSession) {
-	abs, err := w.Files.Resolve(w.sessionUser(sess), r.URL.Query().Get("path"))
+	// Opened as the account and streamed from that handle (see Files.OpenRead).
+	fh, info, err := w.Files.OpenRead(w.sessionUser(sess), r.URL.Query().Get("path"))
 	if err != nil {
-		writeWebFTPErr(rw, err)
+		if errors.Is(err, ErrForbidden) {
+			writeWebFTPErr(rw, err)
+		} else {
+			http.NotFound(rw, r)
+		}
 		return
 	}
-	info, err := os.Stat(abs)
-	if err != nil || info.IsDir() {
+	defer fh.Close()
+	if info.IsDir() {
 		http.NotFound(rw, r)
 		return
 	}
-	rw.Header().Set("Content-Disposition", `attachment; filename="`+filepath.Base(abs)+`"`)
-	http.ServeFile(rw, r, abs)
+	rw.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(filepath.Base(info.Name()), `"`, "")+`"`)
+	http.ServeContent(rw, r, info.Name(), info.ModTime(), fh)
 }
 
 func (w *WebFTP) apiUpload(rw http.ResponseWriter, r *http.Request, sess webftpSession) {
@@ -55,13 +60,8 @@ func (w *WebFTP) apiUpload(rw http.ResponseWriter, r *http.Request, sess webftpS
 			return
 		}
 		dest := strings.TrimSuffix(destDir, "/") + "/" + fh.Filename
-		abs, err := w.Files.Resolve(user, dest)
-		if err != nil {
-			src.Close()
-			writeWebFTPErr(rw, err)
-			return
-		}
-		out, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		// Created as the account (see Files.OpenWrite).
+		out, err := w.Files.OpenWrite(user, dest, 0o644)
 		if err != nil {
 			src.Close()
 			writeWebFTPErr(rw, err)

@@ -10,11 +10,17 @@ import (
 	"aegis/internal/store"
 )
 
+// inProcess stands in for runAsAccount in tests that exercise the file-manager
+// logic on a temp dir owned by the test process. The identity switch itself is
+// tested in asuser_linux_test.go against a real unprivileged account.
+func inProcess(_ string, fn func() error) error { return fn() }
+
 func newFilesT(t *testing.T) (*Files, *store.User) {
 	t.Helper()
 	home := t.TempDir()
 	cfg := config.Default()
 	f := NewFiles(cfg)
+	f.runAs = inProcess
 	u := &store.User{Username: "tester", HomeDir: home}
 	return f, u
 }
@@ -190,6 +196,7 @@ func TestListCreatesMissingHomeDir(t *testing.T) {
 	// creating it, not surface a raw "stat: no such file or directory".
 	cfg := config.Default()
 	f := NewFiles(cfg)
+	f.runAs = inProcess
 	home := filepath.Join(t.TempDir(), "admin")
 	u := &store.User{Username: "admin", HomeDir: home}
 

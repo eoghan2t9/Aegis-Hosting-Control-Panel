@@ -166,7 +166,9 @@ func (w *WebServer) StartGo(panelHandler http.Handler, errCh chan<- error) error
 		})
 	}
 
-	httpSrv := &http.Server{Addr: httpAddr, Handler: site}
+	// Header-read and idle timeouts only (slowloris); no Read/WriteTimeout, which
+	// would cut off large uploads and downloads on customers' sites.
+	httpSrv := &http.Server{Addr: httpAddr, Handler: site, ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
 	slog.Info("go web server listening (http)", "addr", httpAddr)
 	go func() {
 		if err := httpSrv.Serve(httpLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -175,8 +177,10 @@ func (w *WebServer) StartGo(panelHandler http.Handler, errCh chan<- error) error
 	}()
 
 	httpsSrv := &http.Server{
-		Addr:    httpsAddr,
-		Handler: site,
+		Addr:              httpsAddr,
+		Handler:           site,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 		TLSConfig: &tls.Config{
 			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				return w.GoTLSCert(hello.ServerName)
@@ -235,6 +239,33 @@ func (w *WebServer) ServePreviewRoute(rw http.ResponseWriter, r *http.Request, r
 	w.serveGoRoute(rw, r, route)
 }
 
+// serveDocFile serves one static file from a customer's web root, opened as the
+// route's owning account and confined to that account's home (see openDocFile).
+// Every failure is the same plain 404, so a customer cannot use the response to
+// learn which paths exist elsewhere on the host.
+func (w *WebServer) serveDocFile(rw http.ResponseWriter, r *http.Request, route GoRoute, file string) {
+	// http.ServeFile redirects ".../index.html" to "./"; keep that behaviour.
+	if strings.HasSuffix(r.URL.Path, "/index.html") {
+		loc := "./"
+		if q := r.URL.RawQuery; q != "" {
+			loc += "?" + q
+		}
+		rw.Header().Set("Location", loc)
+		rw.WriteHeader(http.StatusMovedPermanently)
+		return
+	}
+	fh, info, err := openDocFile(route.Owner, file)
+	if err != nil {
+		if errors.Is(err, ErrForbidden) {
+			slog.Warn("blocked a static file that resolves outside the owner's home", "domain", route.Domain, "owner", route.Owner)
+		}
+		http.NotFound(rw, r)
+		return
+	}
+	defer fh.Close()
+	http.ServeContent(rw, r, info.Name(), info.ModTime(), fh)
+}
+
 func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route GoRoute) {
 	if route.ProxyTarget != "" {
 		w.proxyGoRoute(rw, r, route.ProxyTarget)
@@ -277,7 +308,9 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		return
 	}
 
-	info, statErr := os.Stat(fsPath)
+	// Stat as the owning account, not as root: root can stat anything, which
+	// would let a customer's symlink probe for files elsewhere on the host.
+	info, statErr := statAs(route.Owner, fsPath)
 	isPHP := strings.HasSuffix(upath, ".php")
 	if !isPHP {
 		// "AddType application/x-httpd-php .html .htm" — legacy sites use
@@ -328,7 +361,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		// of headers it manages itself (Content-Type/ETag/Last-Modified),
 		// never the custom ones "Header set/add" is actually used for.
 		htApplyHeaders(rw.Header(), w.htConfigFor(root, upath).Headers)
-		http.ServeFile(rw, r, fsPath)
+		w.serveDocFile(rw, r, route, fsPath)
 		return
 	}
 
@@ -355,7 +388,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		}
 		for _, name := range idx {
 			ip := filepath.Join(fsPath, filepath.FromSlash(path.Clean("/"+name)))
-			if st, err := os.Stat(ip); err == nil && !st.IsDir() {
+			if st, err := statAs(route.Owner, ip); err == nil && !st.IsDir() {
 				if nameIsPHP(name) && route.Socket != "" {
 					// Let the PHP path below handle it — but point fsPath/info
 					// at the index file we just found *in this directory*,
@@ -369,7 +402,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 					break
 				}
 				htApplyHeaders(rw.Header(), dirCfg.Headers)
-				http.ServeFile(rw, r, ip)
+				w.serveDocFile(rw, r, route, ip)
 				return
 			}
 		}
@@ -380,7 +413,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		// No PHP configured: if a static file exists serve it, else 404.
 		if statErr == nil && !info.IsDir() {
 			htApplyHeaders(rw.Header(), w.htConfigFor(root, upath).Headers)
-			http.ServeFile(rw, r, fsPath)
+			w.serveDocFile(rw, r, route, fsPath)
 		} else {
 			http.NotFound(rw, r)
 		}

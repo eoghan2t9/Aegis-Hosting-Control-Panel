@@ -62,6 +62,9 @@ type GoRoute struct {
 	// ProxyTarget, when set, makes serveGoRoute reverse-proxy every request
 	// there instead of serving Root/PHP — mirrors Domain.ProxyTarget.
 	ProxyTarget string `json:"proxy_target,omitempty"`
+	// Owner is the system account that owns Root. Static files are opened and
+	// stat'ed as this account (see openDocFile), never as the panel's root.
+	Owner string `json:"owner,omitempty"`
 }
 
 func NewWebServer(cfg *config.Config, php *PHP) *WebServer {
@@ -852,6 +855,7 @@ func (w *WebServer) applyGo(d *store.Domain, aliases []string, systemUser string
 		Key:         d.SSLKeyPath,
 		Hostnames:   hostnames(d, aliases),
 		ProxyTarget: d.ProxyTarget,
+		Owner:       systemUser,
 	}
 	if d.PHPVersion != "" {
 		route.Socket = w.PHP.SocketPath(d.Domain)

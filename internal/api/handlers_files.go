@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"aegis/internal/store"
+	"aegis/internal/svc"
 )
 
 // fileUser returns the user whose files are being accessed. Admins can pass
@@ -288,22 +290,24 @@ func (s *Server) handleFilesDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Query().Get("path")
-	abs, err := s.Files.Resolve(u, path)
+	// Opened as the account, then streamed from that handle: re-opening the
+	// path here (http.ServeFile) would follow a customer's symlink as root.
+	fh, info, err := s.Files.OpenRead(u, path)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, svc.ErrForbidden) {
+			writeErr(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeErr(w, http.StatusNotFound, "not found")
+		}
 		return
 	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "not found")
-		return
-	}
+	defer fh.Close()
 	if info.IsDir() {
 		writeErr(w, http.StatusBadRequest, "cannot download a directory; zip it first")
 		return
 	}
-	w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(abs))
-	http.ServeFile(w, r, abs)
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(filepath.Base(info.Name())))
+	http.ServeContent(w, r, info.Name(), info.ModTime(), fh)
 }
 
 func (s *Server) handleFilesUpload(w http.ResponseWriter, r *http.Request) {
@@ -326,14 +330,15 @@ func (s *Server) handleFilesUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dest := strings.TrimSuffix(destDir, "/") + "/" + fh.Filename
-		abs, err := s.Files.Resolve(u, dest)
+		// Created as the account, so the file belongs to the customer and a
+		// planted symlink cannot redirect the write.
+		out, err := s.Files.OpenWrite(u, dest, 0o644)
 		if err != nil {
-			src.Close()
-			writeErr(w, http.StatusForbidden, err.Error())
-			return
-		}
-		out, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-		if err != nil {
+			if errors.Is(err, svc.ErrForbidden) {
+				src.Close()
+				writeErr(w, http.StatusForbidden, err.Error())
+				return
+			}
 			src.Close()
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

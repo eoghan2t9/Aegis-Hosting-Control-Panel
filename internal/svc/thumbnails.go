@@ -1,19 +1,23 @@
 package svc
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
-	"image/jpeg"
 	_ "image/gif"
+	"image/jpeg"
 	_ "image/png"
+	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/image/draw"
@@ -30,6 +34,89 @@ import (
 type Thumbs struct {
 	Cfg   *config.Config
 	Files *Files
+
+	// sandbox prepares where and as whom an external tool runs. nil means
+	// accountSandbox. Unexported so only tests in this package can swap it.
+	sandbox func(account string) (*toolSandbox, error)
+}
+
+// toolSandbox is a private scratch directory plus a way to run an external
+// tool inside it. ffmpeg and poppler parse files a customer uploaded, and both
+// have a long history of parser bugs and local-file-disclosure tricks
+// (crafted playlists that pull in file:// URLs), so they must never run with
+// the panel's root privileges.
+type toolSandbox struct {
+	Dir   string
+	Run   func(timeout time.Duration, name string, args ...string) error
+	Close func()
+}
+
+// accountSandbox runs tools as the customer's own uid/gid, in a scratch
+// directory only they can enter, with a minimal environment (the panel's own
+// environment carries the database admin passwords).
+func accountSandbox(account string) (*toolSandbox, error) {
+	uid, gid, groups, err := terminalIdentity(account)
+	if err != nil {
+		return nil, fmt.Errorf("no system account for %q: %w", account, err)
+	}
+	if uid == 0 || gid == 0 {
+		return nil, errors.New("refusing to run a media tool as root")
+	}
+	dir, err := os.MkdirTemp("", "aegis-thumb-")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chown(dir, int(uid), int(gid)); err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
+	_ = os.Chmod(dir, 0o700)
+	return &toolSandbox{
+		Dir:   dir,
+		Close: func() { os.RemoveAll(dir) },
+		Run: func(timeout time.Duration, name string, args ...string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = dir
+			cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + dir, "LANG=C.UTF-8"}
+			cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: groups}}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(string(out)))
+			}
+			return nil
+		},
+	}, nil
+}
+
+// maxThumbBytes caps what is accepted back from a tool run as the customer.
+const maxThumbBytes = 8 << 20
+
+// takeToolOutput reads a file a customer-privileged tool produced. The tool ran
+// as the customer, so the path is not trusted: it must be a plain regular file
+// (never a symlink to something root can read) that starts with JPEG magic.
+func takeToolOutput(path string) ([]byte, error) {
+	fh, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+	st, err := fh.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() || st.Size() == 0 || st.Size() > maxThumbBytes {
+		return nil, errors.New("tool produced no usable output")
+	}
+	data, err := io.ReadAll(io.LimitReader(fh, maxThumbBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) < 3 || data[0] != 0xFF || data[1] != 0xD8 || data[2] != 0xFF {
+		return nil, errors.New("tool output is not a JPEG")
+	}
+	return data, nil
 }
 
 func NewThumbs(cfg *config.Config, files *Files) *Thumbs {
@@ -71,8 +158,14 @@ func (t *Thumbs) Get(user *store.User, rel, size string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	info, err := os.Stat(abs)
-	if err != nil || info.IsDir() {
+	// Opened as the account: the kernel, not just Resolve's path check, decides
+	// whether this customer may read the file.
+	fh, info, err := t.Files.OpenRead(user, rel)
+	if err != nil {
+		return nil, false, nil
+	}
+	defer fh.Close()
+	if info.IsDir() {
 		return nil, false, nil
 	}
 	kind := thumbKind(abs)
@@ -94,11 +187,11 @@ func (t *Thumbs) Get(user *store.User, rel, size string) ([]byte, bool, error) {
 	var genErr error
 	switch kind {
 	case "image":
-		genErr = generateImageThumb(abs, tmp, px)
+		genErr = encodeImageThumb(fh, tmp, px)
 	case "video":
-		genErr = generateVideoThumb(abs, tmp, px)
+		genErr = t.generateVideoThumb(user.Username, abs, tmp, px)
 	case "pdf":
-		genErr = generatePDFThumb(abs, tmp, px)
+		genErr = t.generatePDFThumb(user.Username, abs, tmp, px)
 	}
 	if genErr != nil {
 		os.Remove(tmp)
@@ -134,12 +227,24 @@ func targetSize(w, h, maxPx int) (int, int) {
 	return int(float64(w) * float64(maxPx) / float64(h)), maxPx
 }
 
-func generateImageThumb(src, dstTmp string, px int) error {
-	f, err := os.Open(src)
+// maxThumbPixels bounds the decoded size of an image we are willing to
+// thumbnail: a tiny PNG can declare gigapixel dimensions and would otherwise be
+// decompressed into memory inside the panel process.
+const maxThumbPixels = 100_000_000
+
+// encodeImageThumb decodes an already-opened image (opened as the customer) and
+// writes its JPEG thumbnail to dstTmp.
+func encodeImageThumb(f io.ReadSeeker, dstTmp string, px int) error {
+	cfg, _, err := image.DecodeConfig(f)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > maxThumbPixels {
+		return errors.New("image is too large to thumbnail")
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return err
@@ -162,34 +267,55 @@ func generateImageThumb(src, dstTmp string, px int) error {
 	return jpeg.Encode(out, dst, &jpeg.Options{Quality: 82})
 }
 
-func generateVideoThumb(src, dstTmp string, px int) error {
+func (t *Thumbs) newSandbox(account string) (*toolSandbox, error) {
+	if t.sandbox != nil {
+		return t.sandbox(account)
+	}
+	return accountSandbox(account)
+}
+
+func (t *Thumbs) generateVideoThumb(account, src, dstTmp string, px int) error {
 	if !LookPath("ffmpeg") {
 		return errors.New("ffmpeg not installed")
 	}
+	sb, err := t.newSandbox(account)
+	if err != nil {
+		return err
+	}
+	defer sb.Close()
+	out := filepath.Join(sb.Dir, "thumb.jpg")
 	// -f image2 -c:v mjpeg: dstTmp has no recognizable extension (it's a
 	// *.jpg.tmp staging path renamed into place on success), so ffmpeg can't
 	// infer the output muxer/codec from the filename and errors out ("Unable
 	// to find a suitable output format") without them being explicit.
-	_, err := RunTimeout(20*time.Second, "ffmpeg", "-y", "-i", src,
+	// -protocol_whitelist file: the input is a local file; refuse the network and
+	// every other protocol a crafted playlist could reference. -nostdin keeps
+	// ffmpeg from waiting on a terminal.
+	if err := sb.Run(20*time.Second, "ffmpeg", "-nostdin", "-y", "-protocol_whitelist", "file", "-i", src,
 		"-vf", fmt.Sprintf("thumbnail,scale=%d:-1", px), "-frames:v", "1",
-		"-f", "image2", "-c:v", "mjpeg", dstTmp)
-	return err
-}
-
-func generatePDFThumb(src, dstTmp string, px int) error {
-	if !LookPath("pdftoppm") {
-		return errors.New("pdftoppm not installed")
+		"-f", "image2", "-c:v", "mjpeg", out); err != nil {
+		return err
 	}
-	// The scratch dir must live next to dstTmp: os.Rename below can't cross
-	// filesystems, and Cfg.ThumbCacheDir is commonly a separate mount (e.g.
-	// its own volume in the dev container) from the system temp dir.
-	tmpDir, err := os.MkdirTemp(filepath.Dir(dstTmp), "aegis-pdf-*")
+	data, err := takeToolOutput(out)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
-	prefix := filepath.Join(tmpDir, "page")
-	if _, err := RunTimeout(20*time.Second, "pdftoppm", "-jpeg", "-f", "1", "-l", "1",
+	return os.WriteFile(dstTmp, data, 0o600)
+}
+
+func (t *Thumbs) generatePDFThumb(account, src, dstTmp string, px int) error {
+	if !LookPath("pdftoppm") {
+		return errors.New("pdftoppm not installed")
+	}
+	// The tool runs as the customer in a private scratch dir, and only a plain
+	// JPEG file from it is copied into the cache (see takeToolOutput).
+	sb, err := t.newSandbox(account)
+	if err != nil {
+		return err
+	}
+	defer sb.Close()
+	prefix := filepath.Join(sb.Dir, "page")
+	if err := sb.Run(20*time.Second, "pdftoppm", "-jpeg", "-f", "1", "-l", "1",
 		"-scale-to", strconv.Itoa(px), src, prefix); err != nil {
 		return err
 	}
@@ -197,5 +323,9 @@ func generatePDFThumb(src, dstTmp string, px int) error {
 	if err != nil || len(matches) == 0 {
 		return errors.New("pdftoppm produced no output")
 	}
-	return os.Rename(matches[0], dstTmp)
+	data, err := takeToolOutput(matches[0])
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dstTmp, data, 0o600)
 }

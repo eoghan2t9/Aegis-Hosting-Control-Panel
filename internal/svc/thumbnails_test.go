@@ -14,6 +14,24 @@ import (
 	"aegis/internal/store"
 )
 
+// localSandbox runs the external tools as the test process itself in a scratch
+// directory, standing in for accountSandbox (which needs a real system account
+// and root). The privilege drop is covered in thumbnails_sandbox_test.go.
+func localSandbox(_ string) (*toolSandbox, error) {
+	dir, err := os.MkdirTemp("", "aegis-thumb-test-")
+	if err != nil {
+		return nil, err
+	}
+	return &toolSandbox{
+		Dir:   dir,
+		Close: func() { os.RemoveAll(dir) },
+		Run: func(timeout time.Duration, name string, args ...string) error {
+			_, err := RunTimeout(timeout, name, args...)
+			return err
+		},
+	}, nil
+}
+
 func newThumbsT(t *testing.T) (*Thumbs, *Files, *store.User) {
 	t.Helper()
 	f, u := newFilesT(t)
@@ -21,6 +39,7 @@ func newThumbsT(t *testing.T) (*Thumbs, *Files, *store.User) {
 	cfg.ThumbCacheDir = t.TempDir()
 	f.Cfg = cfg
 	th := NewThumbs(cfg, f)
+	th.sandbox = localSandbox
 	return th, f, u
 }
 
@@ -209,4 +228,3 @@ func TestThumbsMissingPdftoppmDegradesGracefully(t *testing.T) {
 		t.Error("expected ok=false when pdftoppm is unavailable")
 	}
 }
-

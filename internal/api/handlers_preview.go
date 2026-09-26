@@ -143,6 +143,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		Root:       dom.DocumentRoot,
 		PHPVersion: dom.PHPVersion,
 		Socket:     s.PHP.SocketPath(dom.Domain),
+		Owner:      owner.Username,
 	}
 
 	// Only the remainder after .../preview counts as the site path; the browser
