@@ -107,6 +107,11 @@ func (s *Server) handleCronToggle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	state := "disabled"
+	if req.Enabled {
+		state = "enabled"
+	}
+	s.audit(r, "cron.toggle", job.Schedule, state+": "+job.Command)
 	writeJSON(w, http.StatusOK, job)
 }
 

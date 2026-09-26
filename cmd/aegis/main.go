@@ -294,7 +294,7 @@ func bootstrap(cfg *config.Config, st *store.Store, tuner *svc.Tuner, webSvc *sv
 		username := envOr("AEGIS_ADMIN_USER", "admin")
 		password := os.Getenv("AEGIS_ADMIN_PASSWORD")
 		if password == "" {
-			return errors.New("no accounts exist and AEGIS_ADMIN_PASSWORD is not set — run: aegisctl user create --admin <username>")
+			return errors.New("no accounts exist and AEGIS_ADMIN_PASSWORD is not set — run: aegisctl user create -u <username> --role admin")
 		}
 		if !svc.ValidUsername(username) {
 			return errors.New("invalid admin username from AEGIS_ADMIN_USER")
