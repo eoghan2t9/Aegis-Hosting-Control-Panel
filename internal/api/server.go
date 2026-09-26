@@ -32,8 +32,9 @@ type Server struct {
 	DNS      *svc.DNS
 	SSL      *svc.SSL
 	FTP      *svc.FTP
-	WebFTP   *svc.WebFTP // browser file manager; set after New (nil disables the panel's "open in Web FTP" button)
-	Purge    *svc.Purger // deletes a user together with everything they own; set after New
+	WebFTP   *svc.WebFTP    // browser file manager; set after New (nil disables the panel's "open in Web FTP" button)
+	Purge    *svc.Purger    // deletes a user together with everything they own; set after New
+	Suspend  *svc.Suspender // suspends/unsuspends accounts across every service; set after New
 	DB       *svc.Databases
 	Files    *svc.Files
 	Thumbs   *svc.Thumbs

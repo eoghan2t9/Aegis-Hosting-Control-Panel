@@ -105,6 +105,7 @@ func wire() (*config.Config, *store.Store, *serviceSet, error) {
 	ss := &serviceSet{
 		cfg: cfg, store: st, cipher: cipher, am: am,
 		php: php, web: web, purge: purger,
+		suspend: svc.NewSuspender(cfg, st, domainsSvc, svc.NewCron(cfg, st), dbSvc, ftpSvc, nil),
 		domains: domainsSvc,
 		dns:     dnsSvc,
 		ssl:     svc.NewSSL(cfg, st, web, dnsSvc),
@@ -136,6 +137,7 @@ type serviceSet struct {
 	ssl     *svc.SSL
 	ftp     *svc.FTP
 	purge   *svc.Purger
+	suspend *svc.Suspender
 	db      *svc.Databases
 	backup  *svc.Backup
 	tuner   *svc.Tuner
@@ -408,18 +410,23 @@ func cmdUser(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		// Suspending cuts the account off everywhere (websites, FTP, mail, cron,
+		// containers, database logins); unsuspending restores exactly that. The
+		// running panel notices the change within seconds and updates its own
+		// web routes.
+		var rep *svc.SuspendReport
 		status := store.StatusSuspended
 		if sub == "unsuspend" {
 			status = store.StatusActive
+			rep, err = ss.suspend.Unsuspend(ctx, u)
+		} else {
+			rep, err = ss.suspend.Suspend(ctx, u)
 		}
-		if err := st.SetUserStatus(ctx, u.ID, status); err != nil {
+		if err != nil {
 			return err
 		}
-		if status == store.StatusSuspended {
-			_ = st.DeleteUserSessions(ctx, u.ID)
-			_, _ = svc.RunTimeout(10*time.Second, "usermod", "-L", u.Username)
-		} else {
-			_, _ = svc.RunTimeout(10*time.Second, "usermod", "-U", u.Username)
+		for _, w := range rep.Warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
 		}
 		fmt.Printf("%s %s\n", u.Username, status)
 		return nil

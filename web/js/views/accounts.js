@@ -82,8 +82,16 @@ addRoute("/accounts", {
       });
       tr.querySelector(".act-susp")?.addEventListener("click", async () => {
         const suspending = row.status !== "suspended";
-        if (!await confirmDialog(suspending ? `Suspend ${row.username}? Active sessions are killed.` : `Unsuspend ${row.username}?`, { danger: suspending, title: suspending ? "Suspend account" : "Unsuspend account" })) return;
-        try { await api.post(`/users/${row.id}/${suspending ? "suspend" : "unsuspend"}`); toast("Done"); refresh(); } catch (ex) { toast(ex.message, "err"); }
+        const msg = suspending
+          ? `Suspend ${row.username}? Their websites will show an "Account Suspended" page, and panel, FTP, Web FTP, webmail, cron jobs, containers and database logins are cut off. Nothing is deleted, and unsuspending restores everything.`
+          : `Unsuspend ${row.username}? Their websites, logins, cron jobs, containers and mailboxes are restored.`;
+        if (!await confirmDialog(msg, { danger: suspending, title: suspending ? "Suspend account" : "Unsuspend account", okText: suspending ? "Suspend" : "Unsuspend" })) return;
+        try {
+          const r = await api.post(`/users/${row.id}/${suspending ? "suspend" : "unsuspend"}`);
+          const n = (r.warnings || []).length;
+          toast(n ? `Done (${n} warning${n === 1 ? "" : "s"} — see the server log)` : (suspending ? "Account suspended" : "Account unsuspended"));
+          refresh();
+        } catch (ex) { toast(ex.message, "err"); }
       });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         // Deleting an account removes everything it owns, so show exactly what

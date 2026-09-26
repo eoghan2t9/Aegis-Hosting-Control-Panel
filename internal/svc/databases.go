@@ -243,6 +243,66 @@ func (d *Databases) Drop(ctx context.Context, dbRow *store.Database) error {
 	return d.Store.DeleteDatabaseRow(ctx, dbRow.ID)
 }
 
+// SetLocked locks or unlocks a database's login (used while the owning account
+// is suspended), so its credentials stop working for anything still running on
+// the host, and closes connections that are already open when locking. The
+// database and its data are untouched, and the panel's own root connection
+// (backups, dumps) is unaffected.
+func (d *Databases) SetLocked(ctx context.Context, dbRow *store.Database, locked bool) error {
+	switch dbRow.Server {
+	case "mariadb":
+		db, err := d.mariaConn(ctx)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		verb := "UNLOCK"
+		if locked {
+			verb = "LOCK"
+		}
+		for _, host := range []string{"localhost", "127.0.0.1"} {
+			if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER USER '%s'@'%s' ACCOUNT %s", dbRow.DBUser, host, verb)); err != nil {
+				return fmt.Errorf("mariadb: %w", err)
+			}
+		}
+		if locked {
+			rows, err := db.QueryContext(ctx, "SELECT id FROM information_schema.processlist WHERE user = ?", dbRow.DBUser)
+			if err == nil {
+				var ids []int64
+				for rows.Next() {
+					var id int64
+					if rows.Scan(&id) == nil {
+						ids = append(ids, id)
+					}
+				}
+				rows.Close()
+				for _, id := range ids {
+					_, _ = db.ExecContext(ctx, fmt.Sprintf("KILL CONNECTION %d", id))
+				}
+			}
+		}
+	case "postgres":
+		conn, err := d.pgConn(ctx)
+		if err != nil {
+			return err
+		}
+		defer conn.Close(context.Background())
+		verb := "LOGIN"
+		if locked {
+			verb = "NOLOGIN"
+		}
+		if _, err := conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s %s", dbRow.DBUser, verb)); err != nil {
+			return fmt.Errorf("postgres: %w", err)
+		}
+		if locked {
+			_, _ = conn.Exec(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1", dbRow.DBUser)
+		}
+	default:
+		return fmt.Errorf("unsupported server %q", dbRow.Server)
+	}
+	return nil
+}
+
 // Dump writes a SQL dump of a database to path (used by backups).
 func (d *Databases) Dump(ctx context.Context, dbRow *store.Database, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

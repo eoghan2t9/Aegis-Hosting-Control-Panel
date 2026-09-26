@@ -93,6 +93,12 @@ func run(configPath string) error {
 	tuner := svc.NewTuner(cfg)
 	php := svc.NewPHP(cfg)
 	webSvc := svc.NewWebServer(cfg, php)
+	// A manually suspended owner's domains are rendered as the "Account
+	// Suspended" page (see WebServer.Apply). Set before anything applies a
+	// domain so the boot-time reconciliation honours it too.
+	webSvc.IsSuspended = func(systemUser string) bool {
+		return st.IsUsernameManuallySuspended(context.Background(), systemUser)
+	}
 	dnsSvc := svc.NewDNS(cfg, st, cipher)
 	ftpSvc := svc.NewFTP(cfg, st)
 	domains := svc.NewDomains(cfg, st, webSvc, php, dnsSvc, ftpSvc)
@@ -134,6 +140,8 @@ func run(configPath string) error {
 	webftpSvc := svc.NewWebFTP(st, files, thumbsSvc)
 	server.WebFTP = webftpSvc
 	server.Purge = svc.NewPurger(cfg, st, domains, dbSvc, ftpSvc, mailSvc, dockerSvc)
+	suspender := svc.NewSuspender(cfg, st, domains, cronSvc, dbSvc, ftpSvc, webftpSvc)
+	server.Suspend = suspender
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -209,6 +217,19 @@ func run(configPath string) error {
 	// Shared webftp server: every domain's "webftp.<domain>" vhost reverse
 	// proxies here (see svc.Domains.createWebftpDomain), loopback-only since
 	// it's only ever reached through that proxy, never directly.
+	// "Account Suspended" site: suspended users' domains proxy here (see
+	// svc.SuspendedAddr). Loopback-only, reached only through the web server.
+	suspendedSvc := svc.NewSuspendedServer(st)
+	go func() {
+		if err := http.ListenAndServe(svc.SuspendedAddr, suspendedSvc.Handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("suspended-page server: %w", err)
+		}
+	}()
+	// Enforce every suspended account now (so a restart can never leave one
+	// partly active) and keep the enforced state in line with the stored
+	// status, which is how a suspend made via aegisctl reaches this process.
+	go suspender.ReconcileLoop(ctx, 20*time.Second)
+
 	go func() {
 		if err := http.ListenAndServe(svc.WebFTPAddr, webftpSvc.Handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("webftp server: %w", err)

@@ -200,6 +200,7 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		fmt.Sprintf("DELETE FROM cron_jobs WHERE user_id = %d", id),
 		fmt.Sprintf("DELETE FROM api_tokens WHERE user_id = %d", id),
 		fmt.Sprintf("DELETE FROM totp_challenges WHERE user_id = %d", id),
+		fmt.Sprintf("DELETE FROM suspension_actions WHERE user_id = %d", id),
 		fmt.Sprintf("DELETE FROM domains WHERE user_id = %d", id),
 		fmt.Sprintf("DELETE FROM ftp_accounts WHERE user_id = %d", id),
 		fmt.Sprintf("DELETE FROM databases WHERE user_id = %d", id),

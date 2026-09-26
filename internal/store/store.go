@@ -295,6 +295,15 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 	enabled INTEGER NOT NULL DEFAULT 1,
 	created_at TEXT NOT NULL
 );
+-- What suspending a user actually changed (kind: mailbox = a mailbox we
+-- disabled, container = one we stopped), so unsuspending restores exactly
+-- that and never re-enables something an admin had switched off themselves.
+CREATE TABLE IF NOT EXISTS suspension_actions (
+	user_id INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	ref INTEGER NOT NULL,
+	PRIMARY KEY (user_id, kind, ref)
+);
 CREATE TABLE IF NOT EXISTS system_package_updates (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
