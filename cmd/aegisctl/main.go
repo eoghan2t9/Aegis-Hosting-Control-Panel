@@ -649,7 +649,7 @@ func cmdDB(ctx context.Context, args []string) error {
 		}
 		return nil
 	case "delete":
-		if len(args) < 4 {
+		if len(args) < 3 {
 			return fmt.Errorf("db delete SERVER NAME")
 		}
 		rows, err := st.ListDatabases(ctx, 0)

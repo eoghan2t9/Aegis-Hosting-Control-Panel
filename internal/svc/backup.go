@@ -176,9 +176,24 @@ func (b *Backup) collectUser(ctx context.Context, staging string, u *store.User)
 				return nil, fmt.Errorf("dump %s/%s: %w", d.Server, d.Name, err)
 			}
 		}
-		mu.Databases = databases
+		mu.Databases = redactDatabases(databases)
 	}
 	return mu, nil
+}
+
+// redactDatabases returns copies of rows that are safe to put in a backup
+// manifest. The manifest is written into every archive (and any remote backup
+// target), and restore recreates databases from the dumps by name, so it never
+// needs the stored password — leaving it in would put every database password
+// in plaintext inside each backup.
+func redactDatabases(rows []*store.Database) []*store.Database {
+	out := make([]*store.Database, len(rows))
+	for i, d := range rows {
+		c := *d
+		c.DBPassword = ""
+		out[i] = &c
+	}
+	return out
 }
 
 // List returns existing backups sorted newest-first.

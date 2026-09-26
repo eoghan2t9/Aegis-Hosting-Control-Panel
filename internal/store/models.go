@@ -205,7 +205,7 @@ type Database struct {
 	Server     string    `json:"server"` // mariadb|postgres
 	Name       string    `json:"name"`
 	DBUser     string    `json:"db_user"`
-	DBPassword string    `json:"db_password"` // plaintext in memory (needed to dump/restore); encrypted at rest, see SetSecretBox
+	DBPassword string    `json:"db_password,omitempty"` // plaintext in memory; encrypted at rest (see SetSecretBox); omitted from JSON when empty so lists and backup manifests never carry it
 	CreatedAt  time.Time `json:"created_at"`
 }
 

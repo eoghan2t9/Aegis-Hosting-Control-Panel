@@ -47,7 +47,11 @@ addRoute("/databases", {
     root.querySelectorAll("tbody tr").forEach((tr) => {
       const row = dbs.find((d) => d.id === +tr.dataset.id);
       if (!row) return;
-      tr.querySelector(".act-cred")?.addEventListener("click", () => credsModal(row));
+      // The list never carries passwords; fetch this one on demand (audited server-side).
+      tr.querySelector(".act-cred")?.addEventListener("click", async () => {
+        try { credsModal(await api.get("/databases/" + row.id + "/credentials")); }
+        catch (ex) { toast(ex.message, "err"); }
+      });
       tr.querySelector(".act-dump")?.addEventListener("click", () => { location.href = p("/api/databases/" + row.id + "/dump"); });
       tr.querySelector(".act-del")?.addEventListener("click", async () => {
         if (!await confirmDialog(`Drop database ${row.name} on ${row.server}? This deletes the data.`, { danger: true, title: "Drop database", okText: "Drop" })) return;
@@ -93,7 +97,7 @@ function credsModal(row, note) {
     title: "Database credentials" + (row.name ? " — " + row.name : ""),
     body: `<div>
       <div class="creds-box">${lines.map(([k, v]) => `${k}: <b>${esc(v)}</b>`).join("<br>")}</div>
-      ${note ? `<p class="small dim">This is the only time the password is shown in full — record it now or reset by deleting and recreating.</p>` : ""}
+      ${note ? `<p class="small dim">Record this password now. You can view it again later from the Credentials button; each view is logged.</p>` : ""}
       <p class="small dim mono" style="word-break:break-all">dsn: ${esc(dsn)}</p>
     </div>`,
     actions: [close],
