@@ -129,6 +129,11 @@ func run(configPath string) error {
 	if err := ftpSvc.SyncUserConfs(context.Background()); err != nil {
 		slog.Warn("ftp user config sync incomplete", "err", err)
 	}
+	// Bring an existing vsftpd up to "TLS required" (restarts it only if its config
+	// actually changes), so upgraded servers stop accepting plaintext FTP logins.
+	if err := ftpSvc.EnsureTLS(); err != nil {
+		slog.Warn("could not enforce TLS on vsftpd", "err", err)
+	}
 
 	server := api.New(cfg, st, am, domains, webSvc, php, dnsSvc, sslSvc,
 		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist, dockerSvc, ipsSvc)

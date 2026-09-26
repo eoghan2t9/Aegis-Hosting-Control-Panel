@@ -74,7 +74,9 @@ func (f *FTP) vsftpdConfPath() string {
 // EnsureVsftpd writes a sane vsftpd config when missing and starts the service.
 func (f *FTP) EnsureVsftpd() error {
 	conf := f.vsftpdConfPath()
+	changed := false
 	if _, err := os.Stat(conf); os.IsNotExist(err) {
+		changed = true
 		content := `listen=YES
 listen_ipv6=NO
 anonymous_enable=NO
@@ -95,11 +97,25 @@ user_config_dir=` + vsftpdUserConfDir + `
 		if err := os.WriteFile(conf, []byte(content), 0o644); err != nil {
 			return err
 		}
-	} else if _, err := f.ensureUserConfDirective(conf); err != nil {
+	} else if c, err := f.ensureUserConfDirective(conf); err != nil {
 		return err
+	} else if c {
+		changed = true
 	}
+	// Encrypted FTP only: logins and data must use TLS (see ftptls.go).
+	tlsChanged, terr := f.applyTLS(conf)
+	if terr != nil {
+		return terr
+	}
+	changed = changed || tlsChanged
 	if LookPath("systemctl") {
-		out, err := RunTimeout(15*time.Second, "systemctl", "restart", "vsftpd")
+		// Restart only when the config changed: this runs after every FTP account is
+		// created, and an unconditional restart cut off everyone mid-transfer.
+		action := "start"
+		if changed {
+			action = "restart"
+		}
+		out, err := RunTimeout(15*time.Second, "systemctl", action, "vsftpd")
 		if err != nil && !strings.Contains(out, "Unit vsftpd.service could not be found") {
 			return fmt.Errorf("vsftpd: %w", err)
 		}
