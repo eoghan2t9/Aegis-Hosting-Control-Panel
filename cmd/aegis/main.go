@@ -142,6 +142,7 @@ func run(configPath string) error {
 	server.Purge = svc.NewPurger(cfg, st, domains, dbSvc, ftpSvc, mailSvc, dockerSvc)
 	suspender := svc.NewSuspender(cfg, st, domains, cronSvc, dbSvc, ftpSvc, webftpSvc)
 	server.Suspend = suspender
+	server.Editor = svc.NewDBEditor(cfg, st)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
