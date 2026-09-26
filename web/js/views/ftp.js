@@ -28,6 +28,7 @@ addRoute("/ftp", {
             <td>${a.enabled ? statusTag("active") : statusTag("suspended")}</td>
             <td class="small dim">${fmtAgo(a.created_at)}</td>
             <td><div class="row-actions">
+              ${a.enabled && (a.webftp_domains || []).length ? `<button class="btn btn-ghost act-web" title="Open in Web FTP (logs you in)">${icon("globe")}</button>` : ""}
               <button class="btn btn-ghost act-cred" title="Connection details">${icon("eye")}</button>
               <button class="btn btn-ghost act-pass" title="Reset password">${icon("key")}</button>
               <button class="btn btn-ghost act-tog" title="Enable/disable">${icon("toggle")}</button>
@@ -48,6 +49,7 @@ addRoute("/ftp", {
       const id = +tr.dataset.id;
       const acct = accounts.find((a) => a.id === id);
       if (!acct) return;
+      tr.querySelector(".act-web")?.addEventListener("click", () => openWebFTP(acct));
       tr.querySelector(".act-cred")?.addEventListener("click", () => credsModal(acct));
       tr.querySelector(".act-pass")?.addEventListener("click", async () => {
         const vals = await promptDialog(`Reset password for ${acct.username}`, [
@@ -85,6 +87,45 @@ addRoute("/ftp", {
     };
   },
 });
+
+// Opens the account's Web FTP already logged in. The server hands back a
+// one-time token (valid ~60s) which is POSTed to the Web FTP host from a form,
+// so it never appears in a URL, history or access logs. The window is opened
+// synchronously from the click so pop-up blockers allow it.
+async function openWebFTP(acct) {
+  const domains = acct.webftp_domains || [];
+  let domain = domains[0];
+  if (domains.length > 1) {
+    const vals = await promptDialog(`Open Web FTP for ${acct.username}`, [
+      { name: "domain", label: "Domain", type: "select", options: domains.map((d) => ({ value: d, label: d })) },
+    ]);
+    if (!vals) return;
+    domain = vals.domain;
+  }
+  const name = "wf_" + Math.random().toString(36).slice(2);
+  const win = window.open("", name);
+  if (win) win.opener = null; // the Web FTP site must not be able to reach back into the panel
+  try {
+    const r = await api.post(`/ftp/accounts/${acct.id}/webftp`, { domain });
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = r.url;
+    form.target = win ? name : "_blank";
+    form.style.display = "none";
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "t";
+    input.value = r.token;
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+    if (!win) toast("Allow pop-ups for this site to open Web FTP", "warn");
+  } catch (ex) {
+    win?.close();
+    toast(ex.message, "err");
+  }
+}
 
 function credsModal(acct) {
   const host = location.hostname;

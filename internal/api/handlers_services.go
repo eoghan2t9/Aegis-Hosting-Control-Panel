@@ -293,6 +293,13 @@ func (s *Server) handleWebServerPreview(w http.ResponseWriter, r *http.Request) 
 
 // --- FTP --------------------------------------------------------------------------
 
+// ftpAccountView is an FTP account plus the domains whose Web FTP it can open
+// straight from the panel (see handleFTPWebFTP); empty hides the button.
+type ftpAccountView struct {
+	*store.FTPAccount
+	WebFTPDomains []string `json:"webftp_domains"`
+}
+
 func (s *Server) handleFTPList(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	accounts, err := s.Store.ListFTPAccounts(r.Context(), u.ID)
@@ -300,7 +307,81 @@ func (s *Server) handleFTPList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, accounts)
+	views := make([]ftpAccountView, len(accounts))
+	for i, a := range accounts {
+		views[i] = ftpAccountView{FTPAccount: a, WebFTPDomains: []string{}}
+		if s.WebFTP != nil && a.Enabled {
+			for _, t := range s.WebFTP.Targets(r.Context(), a) {
+				views[i].WebFTPDomains = append(views[i].WebFTPDomains, t.Domain)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, views)
+}
+
+// handleFTPWebFTP mints a one-time login token so the panel can open an FTP
+// account's Web FTP site already logged in. The token is posted to the Web FTP
+// host by the browser (never put in a URL); it is single-use and expires in
+// 60 seconds. Only the account's owner (or an admin) can request one.
+func (s *Server) handleFTPWebFTP(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	acct, err := s.Store.GetFTPAccount(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "account not found")
+		return
+	}
+	if acct.UserID != userFrom(r).ID && userFrom(r).Role != store.RoleAdmin {
+		writeErr(w, http.StatusForbidden, "cannot manage this account")
+		return
+	}
+	if !acct.Enabled {
+		writeErr(w, http.StatusBadRequest, "this FTP account is disabled")
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if s.WebFTP == nil {
+		writeErr(w, http.StatusServiceUnavailable, "Web FTP is not available")
+		return
+	}
+	targets := s.WebFTP.Targets(r.Context(), acct)
+	var picked *svc.WebFTPTarget
+	for i := range targets {
+		if targets[i].Domain == req.Domain || (req.Domain == "" && len(targets) == 1) {
+			picked = &targets[i]
+			break
+		}
+	}
+	if picked == nil {
+		msg := "Web FTP is not set up for this account"
+		if len(targets) > 0 {
+			msg = "choose which domain to open"
+		}
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	tok, err := s.WebFTP.MintSSO(r.Context(), acct, *picked)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	scheme := "http"
+	if picked.HTTPS {
+		scheme = "https"
+	}
+	s.audit(r, "ftp.webftp", acct.Username, "domain="+picked.Domain)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"url": scheme + "://" + picked.Host + "/sso", "token": tok, "domain": picked.Domain,
+	})
 }
 
 type ftpCreateReq struct {

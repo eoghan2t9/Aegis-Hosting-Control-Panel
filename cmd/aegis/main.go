@@ -128,6 +128,12 @@ func run(configPath string) error {
 		ftpSvc, dbSvc, files, thumbsSvc, backupSvc, sys, tuner, term, cipher, cronSvc, mailSvc, tokensSvc, securitySvc, quotaSvc, webAppsSvc, packagesSvc, metricsHist, dockerSvc, ipsSvc)
 	server.PanelAssets = panelHandler(server, nil)
 
+	// Browser file manager (served on its own loopback listener below). Created
+	// before any listener starts so the panel's FTP page can mint one-time
+	// logins for it without racing the assignment.
+	webftpSvc := svc.NewWebFTP(st, files, thumbsSvc)
+	server.WebFTP = webftpSvc
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -202,7 +208,6 @@ func run(configPath string) error {
 	// Shared webftp server: every domain's "webftp.<domain>" vhost reverse
 	// proxies here (see svc.Domains.createWebftpDomain), loopback-only since
 	// it's only ever reached through that proxy, never directly.
-	webftpSvc := svc.NewWebFTP(st, files, thumbsSvc)
 	go func() {
 		if err := http.ListenAndServe(svc.WebFTPAddr, webftpSvc.Handler()); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("webftp server: %w", err)

@@ -32,6 +32,7 @@ type Server struct {
 	DNS      *svc.DNS
 	SSL      *svc.SSL
 	FTP      *svc.FTP
+	WebFTP   *svc.WebFTP // browser file manager; set after New (nil disables the panel's "open in Web FTP" button)
 	DB       *svc.Databases
 	Files    *svc.Files
 	Thumbs   *svc.Thumbs
@@ -223,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ftp/accounts", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPCreate)))
 	mux.HandleFunc("POST /api/ftp/accounts/{id}/password", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPPassword)))
 	mux.HandleFunc("POST /api/ftp/accounts/{id}/toggle", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPToggle)))
+	mux.HandleFunc("POST /api/ftp/accounts/{id}/webftp", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPWebFTP)))
 	mux.HandleFunc("DELETE /api/ftp/accounts/{id}", s.withAuth(s.withFeature(FeatureFTP, s.handleFTPDelete)))
 
 	// Databases.
