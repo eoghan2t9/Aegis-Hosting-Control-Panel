@@ -79,6 +79,15 @@ func run(configPath string) error {
 		return err
 	}
 
+	// Database passwords are encrypted at rest with the panel cipher; encrypt
+	// any rows still stored as plaintext (idempotent).
+	st.SetSecretBox(cipher)
+	if n, err := st.EncryptLegacySecrets(context.Background()); err != nil {
+		return fmt.Errorf("encrypt legacy secrets: %w", err)
+	} else if n > 0 {
+		slog.Info("encrypted plaintext database passwords at rest", "count", n)
+	}
+
 	// Services.
 	sys := svc.NewSystem(cfg)
 	tuner := svc.NewTuner(cfg)

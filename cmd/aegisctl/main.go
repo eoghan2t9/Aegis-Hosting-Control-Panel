@@ -88,6 +88,7 @@ func wire() (*config.Config, *store.Store, *serviceSet, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	st.SetSecretBox(cipher) // database passwords are encrypted at rest
 	am, err := auth.New(cfg.JWTSecret, st, time.Hour)
 	if err != nil {
 		return nil, nil, nil, err
