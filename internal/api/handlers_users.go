@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -218,17 +220,58 @@ func (s *Server) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "you cannot delete your own account")
 		return
 	}
-	// Archive first? Keep it simple: delete system user + home is destructive,
-	// so only remove the panel account unless confirmed.
-	if err := s.Store.DeleteUser(r.Context(), id); err != nil {
+	if s.Purge == nil {
+		writeErr(w, http.StatusServiceUnavailable, "account deletion is not available")
+		return
+	}
+	// Removes everything the user owns — files, domains, databases, mail,
+	// cron, containers, FTP and the system account — not just the panel row.
+	rep, err := s.Purge.DeleteUser(r.Context(), u)
+	if err != nil {
+		var blocked *svc.BlockedError
+		if errors.As(err, &blocked) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	p := rep.Plan
+	s.audit(r, "user.delete", u.Username, fmt.Sprintf("domains=%d databases=%d ftp=%d mail=%d containers=%d cron=%d",
+		len(p.Domains), len(p.Databases), len(p.FTPAccounts), len(p.MailDomains), p.Containers, p.CronJobs))
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "warnings": rep.Warnings})
+}
+
+// handleUsersDeletionPlan previews what deleting a user would remove (and what
+// forbids it), for the confirmation dialog. It changes nothing.
+func (s *Server) handleUsersDeletionPlan(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	u, err := s.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !s.canManageUser(userFrom(r), u) {
+		writeErr(w, http.StatusForbidden, "cannot manage this account")
+		return
+	}
+	if s.Purge == nil {
+		writeErr(w, http.StatusServiceUnavailable, "account deletion is not available")
+		return
+	}
+	plan, err := s.Purge.Plan(r.Context(), u)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, _ = svc.RunTimeout(15*time.Second, "userdel", "-r", u.Username)
-	// The FTP account rows went with the user; drop their vsftpd configs too.
-	_ = s.FTP.PruneUserConfs(r.Context())
-	s.audit(r, "user.delete", u.Username, "")
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	if u.ID == userFrom(r).ID {
+		plan.Blockers = append(plan.Blockers, "you cannot delete your own account")
+	}
+	writeJSON(w, http.StatusOK, plan)
 }
 
 func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request) {

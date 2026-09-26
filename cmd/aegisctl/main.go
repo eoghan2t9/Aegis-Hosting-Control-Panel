@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"aegis/internal/auth"
@@ -42,7 +43,7 @@ Setup & info
 Users & packages
   user create -u NAME [-e email] [-p password] [--role user|reseller|admin]
   user list
-  user delete NAME
+  user delete NAME [--yes]                  (permanently removes their files, domains, databases, mail...)
   user reset-pass NAME [-p password]        (also revokes sessions)
   user suspend NAME | user unsuspend NAME
   package list | package create -n NAME --domains N --databases N
@@ -98,10 +99,13 @@ func wire() (*config.Config, *store.Store, *serviceSet, error) {
 	dnsSvc := svc.NewDNS(cfg, st, cipher)
 	ftpSvc := svc.NewFTP(cfg, st)
 	dbSvc := svc.NewDatabases(cfg, st)
+	domainsSvc := svc.NewDomains(cfg, st, web, php, dnsSvc, ftpSvc)
+	purger := svc.NewPurger(cfg, st, domainsSvc, dbSvc, ftpSvc,
+		svc.NewMail(cfg, st, dnsSvc), svc.NewDocker(cfg, st, svc.NewFiles(cfg), domainsSvc))
 	ss := &serviceSet{
 		cfg: cfg, store: st, cipher: cipher, am: am,
-		php: php, web: web,
-		domains: svc.NewDomains(cfg, st, web, php, dnsSvc, ftpSvc),
+		php: php, web: web, purge: purger,
+		domains: domainsSvc,
 		dns:     dnsSvc,
 		ssl:     svc.NewSSL(cfg, st, web, dnsSvc),
 		ftp:     ftpSvc,
@@ -131,6 +135,7 @@ type serviceSet struct {
 	dns     *svc.DNS
 	ssl     *svc.SSL
 	ftp     *svc.FTP
+	purge   *svc.Purger
 	db      *svc.Databases
 	backup  *svc.Backup
 	tuner   *svc.Tuner
@@ -333,11 +338,35 @@ func cmdUser(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := st.DeleteUser(ctx, u.ID); err != nil {
+		yes := false
+		for _, a := range rest[1:] {
+			if a == "--yes" || a == "-y" {
+				yes = true
+			}
+		}
+		plan, err := ss.purge.Plan(ctx, u)
+		if err != nil {
 			return err
 		}
-		// The FTP account rows went with the user; drop their vsftpd configs too.
-		return ss.ftp.PruneUserConfs(ctx)
+		fmt.Printf("Deleting %s permanently removes:\n  home directory  %s (all files)\n  domains         %v\n  mail domains    %v\n  databases       %v\n  FTP accounts    %v\n  containers %d, cron jobs %d, API tokens %d\n",
+			plan.Username, plan.Home, plan.Domains, plan.MailDomains, plan.Databases, plan.FTPAccounts, plan.Containers, plan.CronJobs, plan.APITokens)
+		fmt.Println("  (backup archives are kept)")
+		if len(plan.Blockers) > 0 {
+			return fmt.Errorf("cannot delete %s: %s", u.Username, strings.Join(plan.Blockers, "; "))
+		}
+		if !yes {
+			fmt.Println("Nothing was deleted. Re-run with --yes to do it.")
+			return nil
+		}
+		rep, err := ss.purge.DeleteUser(ctx, u)
+		if err != nil {
+			return err
+		}
+		for _, w := range rep.Warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
+		}
+		fmt.Printf("deleted %s\n", u.Username)
+		return nil
 	case "reset-pass":
 		fs := flag.NewFlagSet("reset-pass", flag.ExitOnError)
 		p := fs.String("p", "", "password")
