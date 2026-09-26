@@ -278,6 +278,16 @@ if [ "$WITH_FTP" = 1 ]; then
   if [ -f /etc/pam.d/vsftpd ]; then
     sed -i '/pam_shells\.so/d' /etc/pam.d/vsftpd
   fi
+  # The stock config ships with write_enable commented out, i.e. disabled —
+  # vsftpd then refuses every STOR with "550 Permission denied" regardless
+  # of filesystem permissions being correct (confirmed live: the FTP
+  # account could create the file directly on disk, but uploads over FTP
+  # itself were rejected until this was uncommented). Every account this
+  # panel creates exists specifically to upload/manage a domain's files, so
+  # a read-only FTP server is never the intended default here.
+  if [ -f /etc/vsftpd.conf ]; then
+    sed -i 's/^#write_enable=YES/write_enable=YES/' /etc/vsftpd.conf
+  fi
   # The stock config listens in dual-stack IPv6 mode (listen=NO,
   # listen_ipv6=YES). In that mode vsftpd's classic (non-EPSV) PASV reply
   # reports 0.0.0.0 instead of the real address — pasv_address is silently
