@@ -164,6 +164,7 @@ func (s *Server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	var statusChange string // "" = none; otherwise the status to move to, via the suspender
 	if req.Email != nil {
 		u.Email = *req.Email
 	}
@@ -189,12 +190,32 @@ func (s *Server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid status")
 			return
 		}
-		u.Status = *req.Status
-		_ = s.Store.DeleteUserSessions(r.Context(), u.ID)
+		statusChange = *req.Status
+		if statusChange == u.Status {
+			statusChange = "" // no change
+		}
+		if statusChange == store.StatusSuspended && u.ID == userFrom(r).ID {
+			writeErr(w, http.StatusBadRequest, "you cannot suspend your own account")
+			return
+		}
 	}
 	if err := s.Store.UpdateUser(r.Context(), u); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// A status change goes through the suspender so it is enforced everywhere,
+	// not just written to the row.
+	if statusChange != "" && s.Suspend != nil {
+		var serr error
+		if statusChange == store.StatusSuspended {
+			_, serr = s.Suspend.Suspend(r.Context(), u)
+		} else {
+			_, serr = s.Suspend.Unsuspend(r.Context(), u)
+		}
+		if serr != nil {
+			writeErr(w, http.StatusInternalServerError, serr.Error())
+			return
+		}
 	}
 	s.audit(r, "user.update", u.Username, "")
 	writeJSON(w, http.StatusOK, publicUser(u))
@@ -334,23 +355,31 @@ func (s *Server) handleUsersSuspend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "cannot manage this account")
 		return
 	}
+	if s.Suspend == nil {
+		writeErr(w, http.StatusServiceUnavailable, "suspension is not available")
+		return
+	}
+	// Suspending cuts the account off everywhere (websites, FTP, Web FTP, mail,
+	// cron, containers, database logins) and unsuspending restores exactly
+	// that; see svc.Suspender.
 	status := store.StatusSuspended
+	var rep *svc.SuspendReport
 	if strings.HasSuffix(r.URL.Path, "/unsuspend") {
 		status = store.StatusActive
+		rep, err = s.Suspend.Unsuspend(r.Context(), u)
+	} else {
+		if u.ID == actor.ID {
+			writeErr(w, http.StatusBadRequest, "you cannot suspend your own account")
+			return
+		}
+		rep, err = s.Suspend.Suspend(r.Context(), u)
 	}
-	if err := s.Store.SetUserStatus(r.Context(), id, status); err != nil {
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Lock/unlock the system account so FTP/SSH access follows.
-	if status == store.StatusSuspended {
-		_, _ = svc.RunTimeout(10*time.Second, "usermod", "-L", u.Username)
-		_ = s.Store.DeleteUserSessions(r.Context(), id)
-	} else {
-		_, _ = svc.RunTimeout(10*time.Second, "usermod", "-U", u.Username)
-	}
 	s.audit(r, "user."+status, u.Username, "")
-	writeJSON(w, http.StatusOK, map[string]string{"status": status})
+	writeJSON(w, http.StatusOK, map[string]any{"status": status, "warnings": rep.Warnings})
 }
 
 // createSystemUser adds the system account with a home directory.

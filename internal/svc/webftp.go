@@ -108,6 +108,9 @@ func (w *WebFTP) MintSSO(ctx context.Context, acct *store.FTPAccount, t WebFTPTa
 	if !acct.Enabled {
 		return "", errors.New("ftp account is disabled")
 	}
+	if suspended, _ := w.Store.IsManuallySuspended(ctx, acct.UserID); suspended {
+		return "", errors.New("the account is suspended")
+	}
 	dom, err := w.Store.GetDomainByName(ctx, t.Domain)
 	if err != nil {
 		return "", err
@@ -168,6 +171,10 @@ func (w *WebFTP) handleSSO(rw http.ResponseWriter, r *http.Request) {
 		writeWebFTPPage(rw, webftpLoginPage(host, "this ftp account is disabled"))
 		return
 	}
+	if suspended, _ := w.Store.IsManuallySuspended(r.Context(), acct.UserID); suspended {
+		writeWebFTPPage(rw, webftpLoginPage(host, "this account has been suspended"))
+		return
+	}
 	tok, err := w.newSession(sso.userID, sso.username, sso.homeDir, host)
 	if err != nil {
 		writeWebFTPPage(rw, webftpLoginPage(host, "could not create session, try again"))
@@ -207,7 +214,29 @@ func (w *WebFTP) sessionFor(r *http.Request) (webftpSession, bool) {
 	if !ok || time.Now().After(sess.expires) || sess.host != requestHost(r) {
 		return webftpSession{}, false
 	}
+	// A suspended account's existing sessions stop working at once, even if
+	// RevokeUser has not run yet.
+	if suspended, _ := w.Store.IsManuallySuspended(r.Context(), sess.userID); suspended {
+		return webftpSession{}, false
+	}
 	return sess, true
+}
+
+// RevokeUser drops every browser session and unredeemed login token belonging
+// to the panel user userID (used when their account is suspended).
+func (w *WebFTP) RevokeUser(userID int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for k, s := range w.sessions {
+		if s.userID == userID {
+			delete(w.sessions, k)
+		}
+	}
+	for k, s := range w.ssoTokens {
+		if s.userID == userID {
+			delete(w.ssoTokens, k)
+		}
+	}
 }
 
 func (w *WebFTP) clearSession(r *http.Request) {
@@ -374,6 +403,10 @@ func (w *WebFTP) handleLogin(rw http.ResponseWriter, r *http.Request) {
 		// A suspended FTP account must not be able to log in through the
 		// browser client either (only the system-user lock stopped FTP itself).
 		writeWebFTPPage(rw, webftpLoginPage(host, "this ftp account is disabled"))
+		return
+	}
+	if suspended, _ := w.Store.IsManuallySuspended(r.Context(), acct.UserID); suspended {
+		writeWebFTPPage(rw, webftpLoginPage(host, "this account has been suspended"))
 		return
 	}
 	if !acctCoversHome(acct.HomeDir, dom.DocumentRoot) {

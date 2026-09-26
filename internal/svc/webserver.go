@@ -23,6 +23,10 @@ type WebServer struct {
 	Cfg *config.Config
 	PHP *PHP
 
+	// IsSuspended, when set, reports whether the account that owns systemUser is
+	// suspended (see Apply). It is a field, not a Store, so tests can stub it.
+	IsSuspended func(systemUser string) bool
+
 	mu       sync.Mutex
 	goRoutes map[string]GoRoute
 
@@ -190,6 +194,17 @@ func (w *WebServer) Generate(d *store.Domain, aliases []string, systemUser strin
 // Apply writes the config for a domain and reloads the active server.
 // Idempotent: re-running regenerates the same files.
 func (w *WebServer) Apply(d *store.Domain, aliases []string, systemUser string) error {
+	// A suspended owner's domains are rendered as a reverse proxy to the
+	// suspended-page listener (SuspendedAddr) instead of the real site. Every
+	// backend already knows how to proxy to an upstream, so this covers all of
+	// them at once, and the domain's own certificate still terminates TLS. The
+	// stored domain is untouched, so lifting the suspension and re-applying
+	// restores the real site (or its container proxy) exactly.
+	if w.IsSuspended != nil && w.IsSuspended(systemUser) {
+		sd := *d
+		sd.ProxyTarget = SuspendedAddr
+		d = &sd
+	}
 	switch w.Active() {
 	case "nginx":
 		return w.applyNginx(d, aliases, systemUser)

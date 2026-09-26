@@ -132,6 +132,19 @@ func (c *Cron) validate(user *store.User, schedule, command string) (*store.Cron
 	return &store.CronJob{Schedule: schedule, Command: command, LogPath: logPath}, nil
 }
 
+// Pause removes user's crontab so none of their jobs run (used while the
+// account is suspended). The jobs themselves stay in the store; Resume puts
+// the crontab back. Having no crontab to remove is not an error.
+func (c *Cron) Pause(ctx context.Context, user *store.User) error {
+	_, _ = RunTimeout(10*time.Second, "crontab", "-r", "-u", user.Username)
+	return nil
+}
+
+// Resume reinstalls user's crontab from their stored, enabled jobs.
+func (c *Cron) Resume(ctx context.Context, user *store.User) error {
+	return c.writeCrontab(ctx, user)
+}
+
 // writeCrontab regenerates and installs the full crontab for user from the
 // store's current cron_jobs rows (enabled jobs only).
 func (c *Cron) writeCrontab(ctx context.Context, user *store.User) error {

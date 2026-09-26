@@ -11,7 +11,7 @@ import (
 var userOwnedTables = []string{
 	"users", "domains", "domain_aliases", "dns_zones", "dns_records", "ssl_orders",
 	"ftp_accounts", "databases", "sessions", "totp_challenges", "api_tokens",
-	"mail_domains", "mailboxes", "mail_aliases", "cron_jobs", "containers",
+	"mail_domains", "mailboxes", "mail_aliases", "cron_jobs", "containers", "suspension_actions",
 }
 
 func rowCounts(t *testing.T, s *Store) map[string]int {
@@ -60,6 +60,7 @@ func seedUser(t *testing.T, s *Store, name string) *User {
 	must(s.CreateAPIToken(ctx, &APIToken{UserID: u.ID, Label: "ci", TokenHash: "hash-" + name}))
 	must(s.CreateCronJob(ctx, &CronJob{UserID: u.ID, Schedule: "* * * * *", Command: "true", Enabled: true}))
 	must(s.CreateContainer(ctx, &Container{UserID: u.ID, DomainID: dom.ID, Name: name + "-app", Image: "nginx"}))
+	must(s.RecordSuspensionAction(ctx, u.ID, SuspendKindMailbox, 1))
 	return u
 }
 

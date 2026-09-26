@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -320,8 +321,37 @@ func (s *Server) withWebmailAuth(next func(http.ResponseWriter, *http.Request, w
 			writeErr(w, http.StatusUnauthorized, "invalid or expired webmail session")
 			return
 		}
+		// A suspended account's webmail sessions stop working immediately.
+		if s.webmailOwnerSuspended(r.Context(), sess.address) {
+			writeErr(w, http.StatusForbidden, "this account has been suspended")
+			return
+		}
 		next(w, r, sess)
 	}
+}
+
+// webmailOwnerSuspended reports whether the panel user who owns the mailbox's
+// domain is suspended, so webmail can refuse logins and live sessions. An
+// unknown address is not suspended (the login itself will fail).
+func (s *Server) webmailOwnerSuspended(ctx context.Context, address string) bool {
+	localpart, domain, ok := strings.Cut(address, "@")
+	if !ok {
+		return false
+	}
+	mb, err := s.Store.GetMailboxByAddress(ctx, domain, localpart)
+	if err != nil {
+		return false
+	}
+	md, err := s.Store.GetMailDomain(ctx, mb.MailDomainID)
+	if err != nil {
+		return false
+	}
+	dom, err := s.Store.GetDomain(ctx, md.DomainID)
+	if err != nil {
+		return false
+	}
+	suspended, _ := s.Store.IsManuallySuspended(ctx, dom.UserID)
+	return suspended
 }
 
 type webmailLoginReq struct {
@@ -332,6 +362,10 @@ type webmailLoginReq struct {
 func (s *Server) handleWebmailLogin(w http.ResponseWriter, r *http.Request) {
 	var req webmailLoginReq
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if s.webmailOwnerSuspended(r.Context(), req.Address) {
+		writeErr(w, http.StatusForbidden, "this account has been suspended")
 		return
 	}
 	// Package gate: webmail sessions authenticate with mailbox credentials,
