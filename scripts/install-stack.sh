@@ -125,6 +125,43 @@ for v in $PHP_VERSIONS; do
 done
 log "PHP installed: $(ls -1 /usr/bin/php* 2>/dev/null | grep -E 'php[0-9.]+$' | tr '\n' ' ')"
 
+# ionCube Loader + SourceGuardian, for every PHP version unconditionally
+# (same "every version, no flag" treatment as the redis/memcached/apcu/imap
+# extensions above) — hosted sites frequently ship ionCube- or
+# SourceGuardian-encoded PHP, and without the matching loader php-fpm just
+# serves the visitor a fatal error telling them to go install one. Both
+# vendors distribute a single tarball covering every supported PHP version;
+# best-effort (a flaky download here shouldn't fail the whole install).
+log "installing ionCube Loader + SourceGuardian: $PHP_VERSIONS"
+LOADER_TMP="$(mktemp -d)"
+if curl -fsSL -o "$LOADER_TMP/ioncube.tar.gz" https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz \
+  && curl -fsSL -o "$LOADER_TMP/sourceguardian.tar.gz" https://sourceguardian.com/loaders/download/loaders.linux-x86_64.tar.gz \
+  && tar xzf "$LOADER_TMP/ioncube.tar.gz" -C "$LOADER_TMP" \
+  && tar xzf "$LOADER_TMP/sourceguardian.tar.gz" -C "$LOADER_TMP"; then
+  for v in $PHP_VERSIONS; do
+    ext_dir="$(php$v -r 'echo ini_get("extension_dir");' 2>/dev/null)"
+    ic="$LOADER_TMP/ioncube/ioncube_loader_lin_$v.so"
+    sg="$LOADER_TMP/ixed.$v.lin"
+    if [ -z "$ext_dir" ] || [ ! -f "$ic" ] || [ ! -f "$sg" ]; then
+      warn "no ionCube/SourceGuardian loader available for php$v — skipping"
+      continue
+    fi
+    cp "$ic" "$ext_dir/ioncube_loader.so"
+    cp "$sg" "$ext_dir/sourceguardian.so"
+    chmod 644 "$ext_dir/ioncube_loader.so" "$ext_dir/sourceguardian.so"
+    mkdir -p "/etc/php/$v/mods-available"
+    # Both must load before opcache (priority 10) — ionCube's own docs
+    # require it, and SourceGuardian follows the same convention.
+    printf '; priority=00\nzend_extension=ioncube_loader.so\n' > "/etc/php/$v/mods-available/ioncube.ini"
+    printf '; priority=01\nzend_extension=sourceguardian.so\n' > "/etc/php/$v/mods-available/sourceguardian.ini"
+    phpenmod -v "$v" ioncube sourceguardian 2>/dev/null || true
+    systemctl restart "php$v-fpm" 2>/dev/null || true
+  done
+else
+  warn "could not download ionCube/SourceGuardian loaders — skipping (check internet access at install time)"
+fi
+rm -rf "$LOADER_TMP"
+
 # ----------------------------- 2. databases ----------------------------------
 if [ "$WITH_DB" = 1 ]; then
   log "installing MariaDB server + client"
