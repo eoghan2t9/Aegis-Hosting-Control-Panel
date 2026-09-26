@@ -241,6 +241,10 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		return
 	}
 	root := route.Root
+	// path.Clean below always strips a trailing slash, so this has to be
+	// captured first — it's the only place that still knows whether the
+	// browser-facing request actually had one.
+	hadTrailingSlash := strings.HasSuffix(r.URL.Path, "/")
 	upath := path.Clean("/" + r.URL.Path)
 
 	// .htaccess interpretation: block sensitive/dot paths, then apply
@@ -275,6 +279,34 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 
 	info, statErr := os.Stat(fsPath)
 	isPHP := strings.HasSuffix(upath, ".php")
+
+	// A directory requested without a trailing slash must redirect to add
+	// one, exactly like Apache's mod_dir/nginx's default behavior — without
+	// it, the browser resolves the served page's own relative links (assets,
+	// AJAX calls, logins) against the *parent* directory instead of this
+	// one, since "/xciptv4" (no slash) is itself indistinguishable from a
+	// file for URL-resolution purposes (RFC 3986).
+	//
+	// The Location is written directly (not via http.Redirect) as a bare
+	// relative segment ("xciptv4/", no leading slash): http.Redirect tries
+	// to be helpful by resolving a relative target against r.URL.Path
+	// server-side, but handlePreview rewrites r.URL.Path to a docroot-
+	// relative value before calling into this same function, which made
+	// that resolution produce either a doubled path or one missing the
+	// "/api/domains/{id}/preview/" prefix entirely. A truly relative
+	// Location header is resolved by the *browser* against whatever URL it
+	// actually navigated to, so it's correct in both live-domain and
+	// preview contexts without this function needing to know which one
+	// it's in.
+	if statErr == nil && info.IsDir() && !hadTrailingSlash {
+		loc := path.Base(upath) + "/"
+		if r.URL.RawQuery != "" {
+			loc += "?" + r.URL.RawQuery
+		}
+		rw.Header().Set("Location", loc)
+		rw.WriteHeader(http.StatusMovedPermanently)
+		return
+	}
 
 	if statErr == nil && !info.IsDir() && !isPHP {
 		// Serve static files directly.
