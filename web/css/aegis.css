@@ -799,3 +799,55 @@ pre.codeblock {
 .log-lvl-err { color: var(--danger); font-weight: 650; }
 .log-lvl-warn { color: var(--warn); font-weight: 650; }
 .log-lvl-info { color: var(--teal); }
+
+/* ==========================================================================
+   Phone layout, whole panel (<= 600px)
+   Tables become labelled cards, inline flex rows may wrap, and the shell,
+   cards and dialogs stop forcing desktop widths. The accounts table has its
+   own card layout above and is excluded from the generic one.
+   ========================================================================== */
+.creds-box { overflow-wrap: anywhere; }
+input, select, textarea { min-width: 0; }
+@media (max-width: 600px) {
+  /* shell */
+  .page-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-actions { flex-shrink: 0; }
+  .view { overflow-x: clip; }
+  .card { padding: 16px 14px; }
+  .card-head { margin: -16px -14px 14px; padding: 13px 14px; flex-wrap: wrap; }
+  .card-actions { flex-wrap: wrap; }
+  .page-head .page-actions { margin-left: 0; width: 100%; }
+  .page-head .page-actions .btn { flex: 1 1 auto; }
+  .input-row { flex-direction: column; }
+  .input-row > * { flex: none; }
+  /* any inline flex row (many are written as style="display:flex;...") may wrap
+     instead of pushing its buttons off the screen */
+  [style*="display:flex"], [style*="display: flex"] { flex-wrap: wrap; }
+
+  /* tables -> labelled cards */
+  table.tbl:not(.tbl-accounts) { min-width: 0; display: block; }
+  .tbl:not(.tbl-accounts) thead { display: none; }
+  .tbl:not(.tbl-accounts) tbody { display: block; }
+  .tbl:not(.tbl-accounts) tbody tr { display: block; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .tbl:not(.tbl-accounts) tbody tr:last-child { border-bottom: none; }
+  .tbl:not(.tbl-accounts) tbody tr:hover td { background: none; }
+  .tbl:not(.tbl-accounts) td {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 5px 0; border: none; min-width: 0; text-align: right; overflow-wrap: anywhere;
+  }
+  .tbl:not(.tbl-accounts) td::before {
+    content: attr(data-label); flex: 0 0 auto; max-width: 42%; text-align: left;
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); font-weight: 700;
+  }
+  /* the first column is the row's name: show it as the card's title, unlabelled */
+  .tbl:not(.tbl-accounts) td:first-child { justify-content: flex-start; text-align: left; font-weight: 600; padding-bottom: 8px; }
+  .tbl:not(.tbl-accounts) td:first-child::before,
+  .tbl:not(.tbl-accounts) td[data-label=""]::before,
+  .tbl:not(.tbl-accounts) td:not([data-label])::before { content: none; }
+  /* the actions column (no header) keeps its buttons together, left-aligned, touch-sized */
+  .tbl:not(.tbl-accounts) td[data-label=""]:not(:first-child) { justify-content: flex-start; text-align: left; padding-top: 8px; }
+  .tbl:not(.tbl-accounts) .row-actions { justify-content: flex-start; flex-wrap: wrap; opacity: 1; gap: 6px; }
+  .tbl:not(.tbl-accounts) .row-actions .btn { min-width: 42px; min-height: 40px; border-color: var(--line); }
+  .tbl:not(.tbl-accounts) td[colspan] { display: block; text-align: center; }
+  .tbl:not(.tbl-accounts) td[colspan]::before { content: none; }
+}

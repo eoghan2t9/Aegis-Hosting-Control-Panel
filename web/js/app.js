@@ -242,6 +242,29 @@ async function navigate(hash) {
 
 window.addEventListener("hashchange", () => navigate(location.hash));
 
+// On phones every table row is shown as a labelled card (the max-width:600px
+// rules in aegis.css), and the labels come from the column headers. Views
+// render and re-render their tables at will, so keep the labels in sync with
+// whatever is on the page. Setting data-* attributes is not observed (only
+// child list changes are), so this cannot loop.
+function labelTableCells() {
+  document.querySelectorAll("table.tbl").forEach((t) => {
+    const heads = [...t.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+    if (!heads.length) return;
+    t.querySelectorAll("tbody tr").forEach((tr) => {
+      [...tr.children].forEach((td, i) => {
+        if (td.tagName === "TD" && !td.hasAttribute("colspan") && td.dataset.label !== (heads[i] || "")) td.dataset.label = heads[i] || "";
+      });
+    });
+  });
+}
+let labelQueued = false;
+new MutationObserver(() => {
+  if (labelQueued) return;
+  labelQueued = true;
+  requestAnimationFrame(() => { labelQueued = false; labelTableCells(); });
+}).observe(document.body, { childList: true, subtree: true });
+
 // Re-render the current view in place (re-fetches its data) without a full
 // browser reload — the live-update path every view's mutation handlers use
 // instead of location.reload().
