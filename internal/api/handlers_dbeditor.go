@@ -42,6 +42,11 @@ type editorHandler func(w http.ResponseWriter, r *http.Request, row *store.Datab
 // withEditor authorises the caller for the database in the URL, opens a
 // connection as that database's own user and closes it afterwards.
 func (s *Server) withEditor(next editorHandler) http.HandlerFunc {
+	return s.withEditorFor(45*time.Second, next)
+}
+
+// withEditorFor is withEditor with an explicit time budget for the request.
+func (s *Server) withEditorFor(timeout time.Duration, next editorHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.Editor == nil {
 			writeErr(w, http.StatusServiceUnavailable, "the database editor is not available")
@@ -62,7 +67,7 @@ func (s *Server) withEditor(next editorHandler) http.HandlerFunc {
 			writeErr(w, http.StatusForbidden, "cannot manage this database")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		conn, err := s.Editor.Open(ctx, row)
 		if err != nil {

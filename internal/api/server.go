@@ -240,6 +240,9 @@ func (s *Server) Handler() http.Handler {
 	feat := func(h editorHandler) http.HandlerFunc {
 		return s.withAuth(s.withFeature(FeatureDatabases, s.withEditor(h)))
 	}
+	featLong := func(h editorHandler) http.HandlerFunc {
+		return s.withAuth(s.withFeature(FeatureDatabases, s.withEditorLong(h)))
+	}
 	mux.HandleFunc("GET /api/dbeditor/{id}/tables", feat(s.handleEditorTables))
 	mux.HandleFunc("GET /api/dbeditor/{id}/tables/{table}", feat(s.handleEditorStructure))
 	mux.HandleFunc("GET /api/dbeditor/{id}/tables/{table}/rows", feat(s.handleEditorRows))
@@ -250,6 +253,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/truncate", feat(s.handleEditorDestroy(false)))
 	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/drop", feat(s.handleEditorDestroy(true)))
 	mux.HandleFunc("POST /api/dbeditor/{id}/query", feat(s.handleEditorQuery))
+	mux.HandleFunc("POST /api/dbeditor/{id}/script", feat(s.handleEditorScript))
+	mux.HandleFunc("GET /api/dbeditor/{id}/tables/{table}/definition", feat(s.handleEditorDefinition))
+	mux.HandleFunc("GET /api/dbeditor/{id}/export", featLong(s.handleEditorExport))
+	mux.HandleFunc("POST /api/dbeditor/{id}/import", featLong(s.handleEditorImport))
+	mux.HandleFunc("GET /api/dbeditor/{id}/info", feat(s.handleEditorInfo))
+	mux.HandleFunc("POST /api/dbeditor/{id}/schema", feat(s.handleEditorSchema))
+	mux.HandleFunc("POST /api/dbeditor/{id}/tables/{table}/maintenance", featLong(s.handleEditorMaintenance))
+	mux.HandleFunc("GET /api/dbeditor/{id}/search", feat(s.handleEditorSearch))
+	mux.HandleFunc("GET /api/dbeditor/{id}/objects", feat(s.handleEditorObjects))
 	mux.HandleFunc("GET /api/databases/{id}/credentials", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBCredentials)))
 	mux.HandleFunc("GET /api/databases/{id}/dump", s.withAuth(s.withFeature(FeatureDatabases, s.handleDBDump)))
 
