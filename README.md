@@ -10,7 +10,7 @@ fast dark "ops console" in your browser — or script all of it with `aegisctl`.
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![SQLite](https://img.shields.io/badge/SQLite-single_file-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org)
 [![PHP](https://img.shields.io/badge/PHP-7.4_→_8.4+-777BB4?style=for-the-badge&logo=php&logoColor=white)](https://www.php.net)
-[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-22c55e?style=for-the-badge)](LICENSE)
 [![Status](https://img.shields.io/badge/status-pre--1.0-f59e0b?style=for-the-badge)](docs/ROADMAP.md)
 
 [**Quick start**](#-quick-start) ·
@@ -345,8 +345,17 @@ theming, notifications and multi-server mode. See
 
 ## 📄 License
 
-MIT — see [`LICENSE`](LICENSE).
+Aegis is **source-available**, not open source.
+
+| Use | Licence |
+|---|---|
+| Personal, hobby, homelab, research, education, charities and other **noncommercial** use | ✅ **Free** under the [PolyForm Noncommercial License 1.0.0](LICENSE) |
+| **Commercial** use — e.g. hosting paying customers, or running it as part of a business | 💼 Needs a **paid licence** — see [`COMMERCIAL.md`](COMMERCIAL.md) |
+
+If you change the code, please **contribute your changes back** to this
+repository — see [`CONTRIBUTING.md`](CONTRIBUTING.md). Copies obtained before the
+licence change remain available under the MIT licence that applied to them.
 
 <div align="center">
-<sub>Built with Go · Ships as one binary · Treat as pre-1.0</sub>
+<sub>Built with Go · Ships as one binary · Free for noncommercial use · Treat as pre-1.0</sub>
 </div>
