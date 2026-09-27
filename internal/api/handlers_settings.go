@@ -92,7 +92,6 @@ func (v *settingsView) applyToConfig(c *config.Config) {
 	}
 	c.LetsEncryptStaging = v.LEStaging
 	c.PanelBase = normalizePanelBaseInput(v.PanelBase)
-	c.WebServer.Server = v.WebServer
 	c.WebServer.NginxDir = strings.TrimSpace(v.NginxDir)
 	c.WebServer.ApacheDir = strings.TrimSpace(v.ApacheDir)
 	c.WebServer.CaddyFile = strings.TrimSpace(v.CaddyFile)
@@ -157,6 +156,14 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	case "nginx", "apache", "caddy", "go":
 	default:
 		writeErr(w, http.StatusBadRequest, "invalid web server (nginx|apache|caddy|go)")
+		return
+	}
+	// Saving settings only rewrites the config; it would not stop the old
+	// server or start the new one, leaving the setting disagreeing with what
+	// is actually bound to :80/:443. Switching goes through PATCH
+	// /api/webserver, which does both.
+	if v.WebServer != s.Web.Active() {
+		writeErr(w, http.StatusBadRequest, "change the web server with the switch on the Runtime page; saving settings does not start or stop servers")
 		return
 	}
 	if v.PanelBase != "" && v.PanelBase != "-" && !strings.HasPrefix(v.PanelBase, "/") {

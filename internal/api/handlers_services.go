@@ -170,6 +170,9 @@ func (s *Server) handleWebServerSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid server (nginx|apache|caddy|go)")
 		return
 	}
+	// The new server is started before the setting is saved; hold off the
+	// "only the selected server may run" watchdog until the switch settles.
+	defer s.Web.BeginSwitch()()
 	old := s.Cfg.WebServer.Server
 	if req.Server == old {
 		writeJSON(w, http.StatusOK, map[string]string{"active": old})

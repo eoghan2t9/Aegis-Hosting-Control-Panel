@@ -172,6 +172,13 @@ func run(configPath string) error {
 		}
 	}()
 
+	// Only the web server selected in the panel may run. Stop and disable any
+	// other (an enabled nginx grabbing :80 before aegis put the panel into a
+	// crash loop), and keep checking so an upgrade or manual enable can't
+	// bring one back. Must run before StartGo binds :80/:443.
+	webSvc.ReportStrays(webSvc.EnforceSingle())
+	go webSvc.WatchStrays(ctx, time.Minute)
+
 	// Native Go web server for customer sites. Its listener also serves the
 	// panel under PanelBase so http://<ip>/aegis works without DNS or a
 	// dedicated panel port. StartGo/StopGo (called again later from

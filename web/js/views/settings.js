@@ -44,10 +44,11 @@ addRoute("/settings", {
       <div class="card" style="margin-bottom:16px">
         <div class="card-head"><span class="card-title">Web server &amp; PHP</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
-          <label class="field"><span class="field-label">Active web server (new domains)</span>
-            <select name="web_server">
+          <label class="field"><span class="field-label">Active web server</span>
+            <select name="web_server" disabled>
               ${["go", "nginx", "apache", "caddy"].map((x) => `<option value="${x}" ${x === s.web_server ? "selected" : ""}>${x}</option>`).join("")}
-            </select></label>
+            </select>
+            <span class="field-help small dim">Change it with Switch on the Runtime page. Only this server may run; any other is stopped and disabled.</span></label>
           ${inp("php_fpm_socket_dir", "PHP-FPM socket dir", s.php_fpm_socket_dir, { mono: true, help: "Pools listen at <dir>/aegis-<domain>.sock (default /run/php)" })}
           ${inp("apache_listen_port", "Apache HTTP port", s.apache_listen_port, { type: "number", help: "Move Apache off 80 when nginx owns it" })}
           ${inp("nginx_dir", "Nginx config dir (blank = auto-detect)", s.nginx_dir, { mono: true })}

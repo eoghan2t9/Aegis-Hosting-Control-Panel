@@ -32,6 +32,12 @@ type WebServer struct {
 	mu       sync.Mutex
 	goRoutes map[string]GoRoute
 
+	// switchMu serialises a live web-server switch against EnforceSingle
+	// (webserver_guard.go). unitCtl runs systemctl and is a field only so tests
+	// can stub it; nil means the real thing.
+	switchMu sync.Mutex
+	unitCtl  func(args ...string) (string, error)
+
 	// pcache holds rendered pages for sites that enabled the page cache; it is
 	// created on first use so a bare &WebServer{} literal keeps working.
 	pcacheOnce sync.Once
