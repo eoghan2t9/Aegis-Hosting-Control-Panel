@@ -265,7 +265,8 @@ const ICONS={
  trash:'<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6M14 11v6"/>',
  lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
  link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
- extract:'<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
+ archiveadd:'<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/>',
+ extract:'<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M12 17v-6"/><path d="m9 14 3-3 3 3"/>',
  search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>',
  grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
  list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
@@ -313,7 +314,7 @@ func webftpBrowserPage(host string) string {
     <label class="btn btn-primary tb-primary" style="cursor:pointer"><span class="ic-upload"></span>Upload<input id="file-input" type="file" multiple style="display:none"></label>
     <button class="btn" id="btn-mkdir"><span class="ic-folderplus"></span>New folder</button>
     <button class="btn" id="btn-newfile"><span class="ic-fileplus"></span>New file</button>
-    <button class="btn" id="btn-zip"><span class="ic-archive"></span>Create archive</button>
+    <button class="btn" id="btn-zip"><span class="ic-archiveadd"></span>Create archive</button>
     <span class="spacer"></span>
     <div class="view-toggle" role="group" aria-label="View">
       <button class="btn btn-sm active" id="btn-view-list" title="List view" aria-label="List view"><span class="ic-list"></span></button>

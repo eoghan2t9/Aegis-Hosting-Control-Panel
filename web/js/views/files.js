@@ -65,7 +65,7 @@ async function list() {
         <button class="btn btn-sm" id="fm-newfile">${icon("file")} New file</button>
         <button class="btn btn-sm" id="fm-newdir">${icon("folder")} New folder</button>
         <button class="btn btn-sm" id="fm-upload">${icon("upload")} Upload</button>
-        <button class="btn btn-sm" id="fm-zip">${icon("archive")} Create archive</button>
+        <button class="btn btn-sm" id="fm-zip">${icon("archiveadd")} Create archive</button>
         <div class="view-toggle" id="fm-viewtoggle">
           <button class="btn btn-sm view-btn" id="fm-view-list" title="List view">${icon("list")}</button>
           <button class="btn btn-sm view-btn" id="fm-view-gallery" title="Gallery view">${icon("grid")}</button>
@@ -161,7 +161,7 @@ function renderList(entries) {
         <td class="small dim">${fmtAgo(e.mod_time)}</td>
         <td><div class="row-actions">
           ${e.type === "file" ? `<button class="btn btn-ghost act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost act-dl" title="Download">${icon("download")}</button><button class="btn btn-ghost act-copy" title="Copy download link">${icon("copy")}</button>` : ""}
-          ${e.type === "symlink" ? "" : `<button class="btn btn-ghost act-arch" title="Create archive">${icon("archive")}</button>`}
+          ${e.type === "symlink" ? "" : `<button class="btn btn-ghost act-arch" title="Create archive">${icon("archiveadd")}</button>`}
           ${isArchive(e.name) ? `<button class="btn btn-ghost act-extract" title="Extract here">${icon("extract")}</button>` : ""}
           <button class="btn btn-ghost act-perm" title="Permissions">${icon("lock")}</button>
           <button class="btn btn-ghost act-ren" title="Rename">${icon("edit")}</button>
@@ -201,7 +201,7 @@ function renderGallery(entries) {
       <div class="gal-meta small dim">${e.type === "dir" ? "—" : fmtBytes(e.size)}</div>
       <div class="gal-actions">
         ${e.type === "file" ? `<button class="btn btn-ghost btn-xs act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost btn-xs act-dl" title="Download">${icon("download")}</button><button class="btn btn-ghost btn-xs act-copy" title="Copy download link">${icon("copy")}</button>` : ""}
-        ${e.type === "symlink" ? "" : `<button class="btn btn-ghost btn-xs act-arch" title="Create archive">${icon("archive")}</button>`}
+        ${e.type === "symlink" ? "" : `<button class="btn btn-ghost btn-xs act-arch" title="Create archive">${icon("archiveadd")}</button>`}
         ${isArchive(e.name) ? `<button class="btn btn-ghost btn-xs act-extract" title="Extract here">${icon("extract")}</button>` : ""}
         <button class="btn btn-ghost btn-xs act-perm" title="Permissions">${icon("lock")}</button>
         <button class="btn btn-ghost btn-xs act-ren" title="Rename">${icon("edit")}</button>
