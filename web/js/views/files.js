@@ -65,7 +65,7 @@ async function list() {
         <button class="btn btn-sm" id="fm-newfile">${icon("file")} New file</button>
         <button class="btn btn-sm" id="fm-newdir">${icon("folder")} New folder</button>
         <button class="btn btn-sm" id="fm-upload">${icon("upload")} Upload</button>
-        <button class="btn btn-sm" id="fm-zip">${icon("archive")} Zip folder</button>
+        <button class="btn btn-sm" id="fm-zip">${icon("archive")} Create archive</button>
         <div class="view-toggle" id="fm-viewtoggle">
           <button class="btn btn-sm view-btn" id="fm-view-list" title="List view">${icon("list")}</button>
           <button class="btn btn-sm view-btn" id="fm-view-gallery" title="Gallery view">${icon("grid")}</button>
@@ -109,7 +109,7 @@ async function list() {
   document.getElementById("fm-newfile").onclick = () => fileDialog();
   document.getElementById("fm-newdir").onclick = () => dirDialog();
   document.getElementById("fm-upload").onclick = () => uploadPicker();
-  document.getElementById("fm-zip").onclick = () => zipDialog();
+  document.getElementById("fm-zip").onclick = () => archiveDialog(currentPath || "/", currentPath ? currentPath.split("/").pop() : "home");
 
   document.getElementById("fm-view-list").onclick = () => { viewMode = "list"; renderCurrent(); };
   document.getElementById("fm-view-gallery").onclick = () => { viewMode = "gallery"; renderCurrent(); };
@@ -161,6 +161,8 @@ function renderList(entries) {
         <td class="small dim">${fmtAgo(e.mod_time)}</td>
         <td><div class="row-actions">
           ${e.type === "file" ? `<button class="btn btn-ghost act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost act-dl" title="Download">${icon("download")}</button><button class="btn btn-ghost act-copy" title="Copy download link">${icon("copy")}</button>` : ""}
+          ${e.type === "symlink" ? "" : `<button class="btn btn-ghost act-arch" title="Create archive">${icon("archive")}</button>`}
+          ${isArchive(e.name) ? `<button class="btn btn-ghost act-extract" title="Extract here">${icon("extract")}</button>` : ""}
           <button class="btn btn-ghost act-perm" title="Permissions">${icon("lock")}</button>
           <button class="btn btn-ghost act-ren" title="Rename">${icon("edit")}</button>
           <button class="btn btn-ghost act-del" title="Delete">${icon("trash")}</button>
@@ -199,6 +201,8 @@ function renderGallery(entries) {
       <div class="gal-meta small dim">${e.type === "dir" ? "—" : fmtBytes(e.size)}</div>
       <div class="gal-actions">
         ${e.type === "file" ? `<button class="btn btn-ghost btn-xs act-edit" title="Edit">${icon("edit")}</button><button class="btn btn-ghost btn-xs act-dl" title="Download">${icon("download")}</button><button class="btn btn-ghost btn-xs act-copy" title="Copy download link">${icon("copy")}</button>` : ""}
+        ${e.type === "symlink" ? "" : `<button class="btn btn-ghost btn-xs act-arch" title="Create archive">${icon("archive")}</button>`}
+        ${isArchive(e.name) ? `<button class="btn btn-ghost btn-xs act-extract" title="Extract here">${icon("extract")}</button>` : ""}
         <button class="btn btn-ghost btn-xs act-perm" title="Permissions">${icon("lock")}</button>
         <button class="btn btn-ghost btn-xs act-ren" title="Rename">${icon("edit")}</button>
         <button class="btn btn-ghost btn-xs act-del" title="Delete">${icon("trash")}</button>
@@ -235,6 +239,17 @@ function bindItemActions(box, itemSel) {
     const p = b.closest(itemSel).dataset.path;
     copyText(location.origin + downloadUrl(p));
   });
+  box.querySelectorAll(".act-arch").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const it = b.closest(itemSel);
+    archiveDialog(it.dataset.path, it.dataset.name);
+  });
+  box.querySelectorAll(".act-extract").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    const p = b.closest(itemSel).dataset.path;
+    if (!await confirmDialog(`Extract ${p} into the current folder? Existing files with the same names are overwritten.`, { title: "Extract" })) return;
+    try { await api.post("/files/unzip", { path: p, dest: currentPath || "/" }); toast("Extracted"); list(); } catch (ex) { toast(ex.message, "err"); }
+  });
   box.querySelectorAll(".act-perm").forEach((b) => b.onclick = (e) => { e.stopPropagation(); permDialog(b.closest(itemSel)); });
   box.querySelectorAll(".act-ren").forEach((b) => b.onclick = (e) => { e.stopPropagation(); renameDialog(b.closest(itemSel).dataset.path); });
   box.querySelectorAll(".act-del").forEach((b) => b.onclick = async (e) => {
@@ -262,12 +277,14 @@ function renderSearch(hits) {
 
 function fileCls(name) {
   const ext = name.split(".").pop().toLowerCase();
-  return ["php"].includes(ext) ? "php" : ["zip", "gz", "tar"].includes(ext) ? "zip" : "";
+  return ["php"].includes(ext) ? "php" : isArchive(name) ? "zip" : "";
 }
+const ARCHIVE_RE = /\.(zip|tar|tgz|tbz2?|tzst|gz|bz2|zst|tar\.(gz|bz2|zst))$/i;
+function isArchive(name) { return ARCHIVE_RE.test(name); }
 function fileGlyph(name) {
   const ext = name.split(".").pop().toLowerCase();
   if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(ext)) return "🖼";
-  if (["zip", "gz", "tar", "tgz"].includes(ext)) return "📦";
+  if (isArchive(name)) return "📦";
   if (["php"].includes(ext)) return "🐘";
   if (VIDEO_EXTS.includes(ext)) return "🎞";
   if (ext === "pdf") return "📄";
@@ -479,14 +496,25 @@ function openLightbox(startPath) {
   render();
 }
 
-function zipDialog() {
-  promptDialog("Zip current folder", [
-    { name: "name", label: "Archive name", value: "archive.zip", mono: true },
-  ]).then(async (vals) => {
+// Archives are always created in the home directory; the format follows the
+// chosen type (extraction picks the format from the file name).
+const ARCHIVE_FORMATS = [
+  { value: "zip", label: "ZIP (.zip)" },
+  { value: "tar.gz", label: "Gzip tarball (.tar.gz)" },
+  { value: "tar.zst", label: "Zstandard tarball (.tar.zst)" },
+  { value: "tar", label: "Plain tar (.tar)" },
+];
+
+function archiveDialog(path, baseName) {
+  promptDialog("Create archive", [
+    { name: "name", label: "Archive name", value: baseName || "archive", mono: true, required: true },
+    { name: "format", label: "Format", type: "select", value: "zip", options: ARCHIVE_FORMATS },
+  ], { okText: "Create" }).then(async (vals) => {
     if (!vals) return;
+    const stem = vals.name.replace(/\.(zip|tar|tgz|tar\.(gz|bz2|zst))$/i, "");
     try {
-      await api.post("/files/zip", { path: currentPath || "/", name: vals.name });
-      toast("Archive created");
+      await api.post("/files/zip", { path, name: stem + "." + vals.format });
+      toast("Archive created in your home directory");
       list();
     } catch (ex) { toast(ex.message, "err"); }
   });

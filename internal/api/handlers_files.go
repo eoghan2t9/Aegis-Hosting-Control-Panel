@@ -254,7 +254,7 @@ func (s *Server) handleFilesZip(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := s.Files.Zip(u, req.Path, req.Name); err != nil {
+	if err := s.Files.Archive(u, req.Path, req.Name); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -275,7 +275,7 @@ func (s *Server) handleFilesUnzip(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := s.Files.Unzip(u, req.Path, req.Dest); err != nil {
+	if err := s.Files.Extract(u, req.Path, req.Dest); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

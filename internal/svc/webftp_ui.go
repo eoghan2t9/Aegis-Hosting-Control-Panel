@@ -313,7 +313,7 @@ func webftpBrowserPage(host string) string {
     <label class="btn btn-primary tb-primary" style="cursor:pointer"><span class="ic-upload"></span>Upload<input id="file-input" type="file" multiple style="display:none"></label>
     <button class="btn" id="btn-mkdir"><span class="ic-folderplus"></span>New folder</button>
     <button class="btn" id="btn-newfile"><span class="ic-fileplus"></span>New file</button>
-    <button class="btn" id="btn-zip"><span class="ic-archive"></span>Zip folder</button>
+    <button class="btn" id="btn-zip"><span class="ic-archive"></span>Create archive</button>
     <span class="spacer"></span>
     <div class="view-toggle" role="group" aria-label="View">
       <button class="btn btn-sm active" id="btn-view-list" title="List view" aria-label="List view"><span class="ic-list"></span></button>
@@ -335,6 +335,8 @@ let lastEntries = [];
 const VIDEO_EXTS = ["mp4","mov","mkv","webm","avi","m4v"];
 const THUMBABLE_EXTS = ["jpg","jpeg","png","gif","pdf"].concat(VIDEO_EXTS);
 const ARCHIVE_EXTS = ["zip","tar","gz","tgz","rar","7z","bz2"];
+// Formats the server can extract (it picks the format from the file name).
+const ARCHIVE_RE = /\.(zip|tar|tgz|tbz2?|tzst|gz|bz2|zst)$/i;
 const TEXT_EXTS = ["txt","md","log","json","css","js","html","htm","xml","ini","conf","yml","yaml","csv","sql","htaccess"];
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -456,7 +458,7 @@ function emptyState(){return '<div class="empty-state">'+ic("folder")+'<p>This f
 
 function rowActions(e){
   const isDir=e.type==="dir";
-  const isZip=!isDir&&extOf(e.name)==="zip";
+  const isZip=!isDir&&ARCHIVE_RE.test(e.name);
   const b=(attr,icon,title)=>'<button class="btn btn-ghost" '+attr+' title="'+title+'" aria-label="'+title+'">'+ic(icon)+'</button>';
   return (isDir?"":b('data-edit="'+esc(e.path)+'"',"edit","Edit")+
       '<a class="btn btn-ghost" href="/api/download?path='+encodeURIComponent(e.path)+'" title="Download" aria-label="Download">'+ic("download")+'</a>'+
@@ -527,7 +529,7 @@ function bindRowActions(scope){
   scope.querySelectorAll("[data-perm]").forEach(b=>b.onclick=()=>openPerm(b.dataset));
   scope.querySelectorAll("[data-copylink]").forEach(b=>b.onclick=()=>copyText(location.origin+"/api/download?path="+encodeURIComponent(b.dataset.copylink)));
   scope.querySelectorAll("[data-extract]").forEach(b=>b.onclick=async()=>{
-    if(!await askConfirm("Extract",'Extract "'+b.dataset.extract.split("/").pop()+'" into the current folder?',"Extract",false))return;
+    if(!await askConfirm("Extract",'Extract "'+b.dataset.extract.split("/").pop()+'" into the current folder? Files with the same names are overwritten.',"Extract",false))return;
     const r=await api("/api/unzip","POST",{path:b.dataset.extract,dest:path});
     if(r.ok){toast("Extracted");load(path)}else await fail(r);
   });
@@ -673,10 +675,10 @@ $("btn-newfile").onclick=async()=>{
   if(r.ok){load(path);openEditor(target)}else await fail(r);
 };
 $("btn-zip").onclick=async()=>{
-  const name=await askText("Zip folder","Archive name (created in the current folder's parent)","archive.zip","Zip");
+  const name=await askText("Create archive","Archive name (.zip, .tar, .tar.gz or .tar.zst) - created in your home folder","archive.zip","Create");
   if(!name)return;
   const r=await api("/api/zip","POST",{path,name});
-  if(r.ok){toast("Zipped");load(path)}else await fail(r);
+  if(r.ok){toast("Archive created");load(path)}else await fail(r);
 };
 $("file-input").onchange=(e)=>{
   const files=e.target.files;

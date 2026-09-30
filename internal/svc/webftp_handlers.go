@@ -218,7 +218,7 @@ func (w *WebFTP) apiZip(rw http.ResponseWriter, r *http.Request, sess webftpSess
 	if !decodeWebFTPJSON(rw, r, &req) {
 		return
 	}
-	if err := w.Files.Zip(w.sessionUser(sess), req.Path, req.Name); err != nil {
+	if err := w.Files.Archive(w.sessionUser(sess), req.Path, req.Name); err != nil {
 		writeWebFTPErr(rw, err)
 		return
 	}
@@ -236,7 +236,7 @@ func (w *WebFTP) apiUnzip(rw http.ResponseWriter, r *http.Request, sess webftpSe
 	if !decodeWebFTPJSON(rw, r, &req) {
 		return
 	}
-	if err := w.Files.Unzip(w.sessionUser(sess), req.Path, req.Dest); err != nil {
+	if err := w.Files.Extract(w.sessionUser(sess), req.Path, req.Dest); err != nil {
 		writeWebFTPErr(rw, err)
 		return
 	}

@@ -448,11 +448,18 @@ func zipTree(src, dst string) error {
 	}
 	defer out.Close()
 	zw := zip.NewWriter(out)
+	base := src
+	if st, err := os.Lstat(src); err == nil && !st.IsDir() {
+		base = filepath.Dir(src) // a single file is stored under its own name
+	}
 	err = filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		relPath, err := filepath.Rel(src, path)
+		if path == dst {
+			return nil // the archive being written
+		}
+		relPath, err := filepath.Rel(base, path)
 		if err != nil {
 			return err
 		}
