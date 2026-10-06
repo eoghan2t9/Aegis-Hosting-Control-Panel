@@ -1,4 +1,4 @@
-import { addRoute, isAdmin } from "../app.js";
+import { addRoute, isAdmin, me } from "../app.js";
 import { p } from "../base.js";
 import { api, qs } from "../api.js";
 import { icon, esc, toast, promptDialog, confirmDialog, pageHead, loading, fmtBytes, fmtAgo, modal, debounce, copyText } from "../ui.js";
@@ -31,6 +31,35 @@ function pagerPath(p) {
 function downloadUrl(path) {
   return p("/api/files/download") + qs({ path, token: api.token });
 }
+// Public address of a file: the URL a visitor would use on the site whose
+// document root contains it (longest root wins, so a sub-domain nested in
+// another site's folder resolves to itself). Null when the file is not under
+// any site's document root, e.g. a backup in the home directory.
+async function publicUrl(path) {
+  const home = (me()?.home_dir || "").replace(/\/+$/, "");
+  if (!home) return null;
+  const abs = home + "/" + String(path).replace(/^\/+/, "");
+  let domains;
+  try { domains = await api.get("/domains"); } catch { return null; }
+  let best = null;
+  for (const d of domains) {
+    const root = (d.document_root || "").replace(/\/+$/, "");
+    if (!root || d.proxy_target) continue;
+    if ((abs === root || abs.startsWith(root + "/")) && (!best || root.length > best.root.length)) best = { d, root };
+  }
+  if (!best) return null;
+  const rest = abs.slice(best.root.length).split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  return (best.d.ssl_enabled ? "https://" : "http://") + best.d.domain + "/" + rest;
+}
+
+// Copy the direct link when the file is web-visible; otherwise say so rather
+// than copying a token-bearing API URL.
+async function copyFileLink(path) {
+  const url = await publicUrl(path);
+  if (!url) { toast("This file is outside every site's document root, so it has no public link", "err"); return; }
+  copyText(url);
+}
+
 function thumbUrl(path, size) {
   return p("/api/files/thumb") + qs({ path, size, token: api.token });
 }
@@ -236,8 +265,7 @@ function bindItemActions(box, itemSel) {
   box.querySelectorAll(".act-dl").forEach((b) => b.onclick = (e) => { e.stopPropagation(); location.href = downloadUrl(b.closest(itemSel).dataset.path); });
   box.querySelectorAll(".act-copy").forEach((b) => b.onclick = (e) => {
     e.stopPropagation();
-    const p = b.closest(itemSel).dataset.path;
-    copyText(location.origin + downloadUrl(p));
+    copyFileLink(b.closest(itemSel).dataset.path);
   });
   box.querySelectorAll(".act-arch").forEach((b) => b.onclick = (e) => {
     e.stopPropagation();
@@ -481,7 +509,7 @@ function openLightbox(startPath) {
           <a class="btn btn-sm btn-primary" href="${url}" download="${esc(e.name)}">${icon("download")} Download</a>
         </div>
       </div>`;
-    m.bodyEl.querySelector(".lightbox-copy").onclick = () => copyText(location.origin + url);
+    m.bodyEl.querySelector(".lightbox-copy").onclick = () => copyFileLink(e.path);
     const prevBtn = m.bodyEl.querySelector(".prev");
     const nextBtn = m.bodyEl.querySelector(".next");
     if (prevBtn) prevBtn.onclick = () => { idx = (idx - 1 + media.length) % media.length; render(); };
