@@ -346,7 +346,9 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		u := *r.URL
 		u.Path = upath
 		u.RawQuery = out.Query
-		r2 := r.Clone(r.Context())
+		// Apache keeps REQUEST_URI as the browser's URL across an internal
+		// rewrite; front controllers (index.php routers) rely on it.
+		r2 := r.Clone(context.WithValue(r.Context(), origURIKey{}, r.URL.RequestURI()))
 		r2.URL = &u
 		r = r2
 	}
@@ -607,6 +609,9 @@ func (w *WebServer) htGate(rw http.ResponseWriter, r *http.Request, upath string
 	return false
 }
 
+// origURIKey carries the pre-rewrite request URI to fcgiExec.
+type origURIKey struct{}
+
 // fcgiExec builds FastCGI params from the HTTP request and calls php-fpm.
 func (w *WebServer) fcgiExec(socket string, r *http.Request, scriptFile, scriptName string) (int, http.Header, []byte, string, error) {
 	var params [][2]string
@@ -622,7 +627,12 @@ func (w *WebServer) fcgiExec(socket string, r *http.Request, scriptFile, scriptN
 	add("SERVER_PORT", port)
 	add("SERVER_PROTOCOL", r.Proto)
 	add("REQUEST_METHOD", r.Method)
-	add("REQUEST_URI", r.URL.RequestURI())
+	if orig, ok := r.Context().Value(origURIKey{}).(string); ok {
+		add("REQUEST_URI", orig)
+		add("REDIRECT_URL", strings.SplitN(orig, "?", 2)[0])
+	} else {
+		add("REQUEST_URI", r.URL.RequestURI())
+	}
 	add("SCRIPT_NAME", scriptName)
 	add("SCRIPT_FILENAME", scriptFile)
 	add("DOCUMENT_ROOT", filepath.Dir(scriptFile))
