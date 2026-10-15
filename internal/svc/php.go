@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -278,9 +280,17 @@ catch_workers_output = yes
 ; "Access denied.", second-guessing a decision already made correctly.
 security.limit_extensions =
 php_admin_value[open_basedir] = %s:%s/tmp
+; PHP's default upload/temp dir is /tmp, which open_basedir forbids, so every
+; upload failed with "Missing a temporary folder". Give the account its own.
+php_admin_value[upload_tmp_dir] = %s
+php_admin_value[sys_temp_dir] = %s
 %s`, domain, domain, systemUser, group, sock,
 		tuning.PM, tuning.MaxChildren, tuning.StartServers, tuning.MinSpare, tuning.MaxSpare,
-		p.Cfg.HomeRoot, p.Cfg.HomeRoot, sanitizedPHPIniLines(iniSettings))
+		p.Cfg.HomeRoot, p.Cfg.HomeRoot, phpTmpDir(p.Cfg.HomeRoot, systemUser), phpTmpDir(p.Cfg.HomeRoot, systemUser),
+		sanitizedPHPIniLines(iniSettings))
+	if err := ensurePHPTmp(p.Cfg.HomeRoot, systemUser); err != nil {
+		return err
+	}
 
 	// A site has exactly one pool. When it moves to another PHP version the old
 	// version's pool file must go first, and that FPM must let go of the socket:
@@ -298,6 +308,37 @@ php_admin_value[open_basedir] = %s:%s/tmp
 		return fmt.Errorf("php: write pool: %w", err)
 	}
 	return p.Reload(version)
+}
+
+// phpTmpDir is the account's private PHP temp directory, under <home>/tmp,
+// the one extra path every pool's open_basedir allows.
+func phpTmpDir(homeRoot, user string) string {
+	return filepath.Join(homeRoot, "tmp", user)
+}
+
+// ensurePHPTmp creates that directory. <home>/tmp is root-owned and outside any
+// customer's home, so a customer cannot swap a path component for a symlink
+// while root chowns it; the per-account directory is 0700 so tenants cannot
+// read each other's half-uploaded files.
+func ensurePHPTmp(homeRoot, user string) error {
+	u, err := osuser.Lookup(user)
+	if err != nil {
+		return fmt.Errorf("php: tmp dir: %w", err)
+	}
+	uid, _ := strconv.Atoi(u.Uid)
+	gid, _ := strconv.Atoi(u.Gid)
+	parent := filepath.Join(homeRoot, "tmp")
+	if err := os.MkdirAll(parent, 0o711); err != nil {
+		return fmt.Errorf("php: tmp dir: %w", err)
+	}
+	dir := phpTmpDir(homeRoot, user)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("php: tmp dir: %w", err)
+	}
+	if err := os.Lchown(dir, uid, gid); err != nil {
+		return fmt.Errorf("php: tmp dir: %w", err)
+	}
+	return os.Chmod(dir, 0o700)
 }
 
 // removeStalePools deletes the domain's pool file from every PHP version under

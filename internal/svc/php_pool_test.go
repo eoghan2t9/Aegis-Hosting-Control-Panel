@@ -2,6 +2,7 @@ package svc
 
 import (
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"testing"
 )
@@ -41,5 +42,33 @@ func TestRemoveStalePools(t *testing.T) {
 	}
 	if got := removeStalePools(root, "example.com", "7.4"); len(got) != 0 {
 		t.Errorf("second run should be a no-op, got %v", got)
+	}
+}
+
+// open_basedir forbids /tmp, so PHP's default upload dir made every upload fail
+// with "Missing a temporary folder". The account gets a private dir under the
+// one extra path open_basedir allows.
+func TestPHPTmpDirInsideOpenBasedirAndPrivate(t *testing.T) {
+	home := t.TempDir()
+	if got, want := phpTmpDir(home, "alice"), filepath.Join(home, "tmp", "alice"); got != want {
+		t.Fatalf("phpTmpDir = %q, want %q", got, want)
+	}
+	if !ReservedAccountName("tmp") {
+		t.Error("tmp must be reserved: <home>/tmp is the shared parent")
+	}
+	cur, err := osuser.Current()
+	if err != nil {
+		t.Skip("no current user")
+	}
+	if err := ensurePHPTmp(home, cur.Username); err != nil {
+		t.Fatal(err)
+	}
+	// idempotent
+	if err := ensurePHPTmp(home, cur.Username); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(phpTmpDir(home, cur.Username))
+	if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("tmp dir = %v, %v", fi, err)
 	}
 }

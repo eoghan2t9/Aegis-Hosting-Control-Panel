@@ -25,6 +25,7 @@ var reservedAccountNames = map[string]bool{
 	"tcpdump": true, "polkitd": true, "landscape": true, "ubuntu": true, "debian": true,
 	"caddy": true, "nginx": true, "apache": true, "httpd": true, "redis": true,
 	"memcache": true, "git": true, "docker": true, "containerd": true, "aegis": true,
+	"tmp": true, // <home>/tmp holds each account's private PHP temp dir
 }
 
 // ReservedAccountName reports whether name may not be used for a new account.
