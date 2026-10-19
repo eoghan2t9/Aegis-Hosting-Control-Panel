@@ -308,3 +308,16 @@ func TestPHPOpcacheSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestPHPIniDefaultsAndOverride(t *testing.T) {
+	got := sanitizedPHPIniLines(nil)
+	for _, want := range []string{"php_admin_value[upload_max_filesize] = 2G", "php_admin_value[post_max_size] = 2G", "php_admin_value[memory_limit] = 512M", "php_admin_flag[display_errors] = off"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("defaults missing %q:\n%s", want, got)
+		}
+	}
+	got = sanitizedPHPIniLines(map[string]string{"upload_max_filesize": "64M"})
+	if !strings.Contains(got, "php_admin_value[upload_max_filesize] = 64M") || strings.Contains(got, "= 2G\nphp_admin_value[post_max_size] = 2G\nphp_admin_value[memory_limit] = 512M\nphp_admin_value[upload") {
+		t.Errorf("override not applied:\n%s", got)
+	}
+}

@@ -199,11 +199,28 @@ func ValidatePHPIniSettings(settings map[string]string) error {
 	return nil
 }
 
+// defaultPHPIni is what every pool gets unless the domain overrides it. PHP's
+// stock 2M upload / 8M post limits rejected ordinary uploads (APKs, backups,
+// media), so they are raised well above anything a site normally needs;
+// post_max_size stays above upload_max_filesize so a full-size file plus its
+// form fields still fits. Time limits match the pool's request_terminate_timeout.
+var defaultPHPIni = map[string]string{
+	"display_errors":      "off",
+	"upload_max_filesize": "2G",
+	"post_max_size":       "2G",
+	"memory_limit":        "512M",
+	"max_execution_time":  "300",
+	"max_input_time":      "300",
+}
+
 // sanitizedPHPIniLines re-validates settings (see phpIniDirective's comment)
 // and formats them as php_admin_value/php_admin_flag pool.d lines in a fixed
-// order. display_errors defaults to off unless explicitly overridden.
+// order. Anything not set per domain falls back to defaultPHPIni.
 func sanitizedPHPIniLines(settings map[string]string) string {
-	merged := map[string]string{"display_errors": "off"}
+	merged := make(map[string]string, len(defaultPHPIni)+len(settings))
+	for k, v := range defaultPHPIni {
+		merged[k] = v
+	}
 	for k, v := range settings {
 		d, ok := phpIniDirectives[k]
 		v = strings.TrimSpace(v)
