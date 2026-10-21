@@ -42,7 +42,7 @@ AEGIS_DIR="/etc/aegis"
 AEGIS_BIN="/usr/local/bin/aegis"
 SERVICE_NAME="aegis"
 SURY_REPO="https://packages.sury.org/php"
-GO_VERSION_DIST="1.23"
+GO_VERSION_DIST="1.27.3"
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m !\033[0m  %s\n' "$*" >&2; }

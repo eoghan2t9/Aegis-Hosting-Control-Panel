@@ -7,7 +7,7 @@
 Provision websites, DNS, SSL, mail, databases, FTP, containers and backups from a
 fast dark "ops console" in your browser — or script all of it with `aegisctl`.
 
-[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![SQLite](https://img.shields.io/badge/SQLite-single_file-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org)
 [![PHP](https://img.shields.io/badge/PHP-7.4_→_8.4+-777BB4?style=for-the-badge&logo=php&logoColor=white)](https://www.php.net)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-22c55e?style=for-the-badge)](LICENSE)

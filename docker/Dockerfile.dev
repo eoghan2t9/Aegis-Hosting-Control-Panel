@@ -74,7 +74,7 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
 # /usr/local/go in dev (see the `optional` volume), which also covers networks
 # where go.dev is unreachable. `go` must exist at /usr/local/go/bin/go at
 # runtime, so a failed download here must not abort the build.
-ARG GO_VERSION=1.26.0
+ARG GO_VERSION=1.27.3
 RUN if curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz; then \
         tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz; \
     else \
