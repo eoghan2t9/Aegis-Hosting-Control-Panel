@@ -14,7 +14,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/miekg/dns v1.1.73
 	github.com/minio/minio-go/v7 v7.4.1
-	github.com/pkg/sftp v1.13.11
+	github.com/pkg/sftp v1.13.12
 	github.com/quic-go/quic-go v0.64.1
 	github.com/shirou/gopsutil/v4 v4.26.9
 	go.yaml.in/yaml/v3 v3.0.5
