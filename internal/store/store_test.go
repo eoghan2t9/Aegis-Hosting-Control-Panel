@@ -225,3 +225,36 @@ func TestSettings(t *testing.T) {
 		t.Errorf("setting upsert failed: %q", v)
 	}
 }
+
+func TestDomainPHPPathsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u := &User{Username: "alice", Role: RoleUser, Status: StatusActive, HomeDir: "/home/alice"}
+	if err := s.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	d := &Domain{UserID: u.ID, Domain: "example.com", DocumentRoot: "/home/alice/example.com", PHPVersion: "7.4", WebServer: "go"}
+	if err := s.CreateDomain(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetDomain(ctx, d.ID)
+	if got.PHPPaths == nil || len(got.PHPPaths) != 0 {
+		t.Fatalf("new domain PHPPaths = %#v, want empty map", got.PHPPaths)
+	}
+	got.PHPPaths = map[string]string{"/app": "8.3"}
+	if err := s.UpdateDomain(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetDomain(ctx, d.ID)
+	if got.PHPPaths["/app"] != "8.3" || len(got.PHPPaths) != 1 {
+		t.Fatalf("PHPPaths = %#v", got.PHPPaths)
+	}
+	got.PHPPaths = nil
+	if err := s.UpdateDomain(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetDomain(ctx, d.ID)
+	if len(got.PHPPaths) != 0 {
+		t.Fatalf("PHPPaths after clear = %#v", got.PHPPaths)
+	}
+}

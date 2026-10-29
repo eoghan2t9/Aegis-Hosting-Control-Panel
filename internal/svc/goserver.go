@@ -443,7 +443,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		for _, name := range idx {
 			ip := filepath.Join(fsPath, filepath.FromSlash(path.Clean("/"+name)))
 			if st, err := statAs(route.Owner, ip); err == nil && !st.IsDir() {
-				if nameIsPHP(name) && route.Socket != "" {
+				if nameIsPHP(name) && route.socketFor(upath) != "" {
 					// Let the PHP path below handle it — but point fsPath/info
 					// at the index file we just found *in this directory*,
 					// not the directory itself. Otherwise the info.IsDir()
@@ -463,7 +463,7 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 	}
 
 	// PHP or pretty-URL fallback: run through php-fpm.
-	if route.Socket == "" {
+	if route.socketFor(upath) == "" {
 		// No PHP configured: if a static file exists serve it, else 404.
 		if statErr == nil && !info.IsDir() {
 			htApplyHeaders(rw.Header(), w.htConfigFor(root, upath).Headers)
@@ -515,7 +515,14 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 			cacheState = "BYPASS"
 		}
 	}
-	status, headers, body, stderr, err := w.fcgiExec(route.Socket, r, scriptFile, scriptName)
+	sock := route.socketFor(scriptName)
+	if sock == "" {
+		// A pretty URL under a PHP folder that fell through to the domain
+		// root's index.php, which the domain itself does not run as PHP.
+		http.NotFound(rw, r)
+		return
+	}
+	status, headers, body, stderr, err := w.fcgiExec(sock, r, scriptFile, scriptName)
 	if err != nil {
 		if stderr != "" {
 			// Surface php errors to the server log via headers in dev mode.

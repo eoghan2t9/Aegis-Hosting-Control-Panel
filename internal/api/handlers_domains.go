@@ -199,6 +199,7 @@ type updateDomainReq struct {
 	SSLAutoRenew *bool               `json:"ssl_auto_renew"`
 	PHPSettings  *map[string]string  `json:"php_settings"`
 	Perf         *store.PerfSettings `json:"perf"`
+	PHPPaths     *map[string]string  `json:"php_paths"`
 }
 
 func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +243,18 @@ func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dom.PHPSettings = *req.PHPSettings
+	}
+	if req.PHPPaths != nil {
+		if len(*req.PHPPaths) > 0 && s.Web.Active() != "go" {
+			writeErr(w, http.StatusBadRequest, "per-folder PHP versions need the built-in web server")
+			return
+		}
+		paths, err := svc.ValidatePHPPaths(*req.PHPPaths, s.PHP.Has)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dom.PHPPaths = paths
 	}
 	if req.Perf != nil {
 		perf, err := svc.ValidatePerf(*req.Perf)

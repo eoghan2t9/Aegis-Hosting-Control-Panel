@@ -144,6 +144,13 @@ func (p *PHP) SocketPath(domain string) string {
 	return filepath.Join(p.SocketDir, "aegis-"+domain+".sock")
 }
 
+// SubSocketPath is the unix socket of the extra pool that serves a domain's
+// sub-folders on another PHP version. "@" cannot occur in a valid domain, so
+// it never collides with a real domain's own socket or pool file.
+func (p *PHP) SubSocketPath(domain, version string) string {
+	return filepath.Join(p.SocketDir, "aegis-"+domain+"@"+version+".sock")
+}
+
 // phpIniDirective describes one user-editable php.ini directive exposed by
 // the panel's PHP settings screen. kind picks whether it's written as
 // php_admin_value or php_admin_flag into the pool config; re validates the
@@ -263,13 +270,63 @@ func (p *PHP) defaultTuning() *PHPFPMTuning {
 // the matching fpm service. poolName must be filesystem-safe (it is derived
 // from the domain, which is validated). iniSettings may be nil.
 func (p *PHP) EnsurePool(domain, systemUser, version string, tuning *PHPFPMTuning, iniSettings map[string]string) error {
+	return p.writePool(domain, domain, "aegis-"+domain, p.SocketPath(domain), systemUser, version, tuning, iniSettings, true)
+}
+
+// EnsureSubPools provisions one extra pool per distinct PHP version that the
+// domain's sub-folders use (paths maps URL prefix -> version), and removes the
+// extra pools nothing uses any more. A folder on the domain's own version needs
+// no extra pool — it shares the main one.
+func (p *PHP) EnsureSubPools(domain, systemUser, mainVersion string, paths map[string]string, tuning *PHPFPMTuning, iniSettings map[string]string) error {
+	keep := map[string]bool{}
+	for _, v := range paths {
+		if v != "" && v != mainVersion {
+			keep[v] = true
+		}
+	}
+	for v := range keep {
+		name := domain + "@" + v
+		if err := p.writePool(domain, name, "aegis-"+name, p.SubSocketPath(domain, v), systemUser, v, tuning, iniSettings, false); err != nil {
+			return err
+		}
+	}
+	p.removeSubPools(domain, keep)
+	return nil
+}
+
+// removeSubPools deletes the domain's extra pools for every version not in
+// keep and reloads the FPMs that lost one.
+func (p *PHP) removeSubPools(domain string, keep map[string]bool) {
+	for _, ver := range removeSubPoolFiles("/etc/php", domain, keep) {
+		_ = p.Reload(ver)
+	}
+}
+
+func removeSubPoolFiles(etcPHP, domain string, keep map[string]bool) []string {
+	files, _ := filepath.Glob(filepath.Join(etcPHP, "*", "fpm", "pool.d", "aegis-"+domain+"@*.conf"))
+	var changed []string
+	for _, f := range files {
+		ver := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(f))))
+		if keep[ver] {
+			continue
+		}
+		if os.Remove(f) == nil {
+			changed = append(changed, ver)
+		}
+	}
+	return changed
+}
+
+// writePool renders and installs one pool file. mainPool is true for the
+// domain's own pool, the only one that evicts the domain's pool from other PHP
+// versions (see below).
+func (p *PHP) writePool(domain, poolName, fileBase, sock, systemUser, version string, tuning *PHPFPMTuning, iniSettings map[string]string, mainPool bool) error {
 	if !p.Has(version) {
 		return fmt.Errorf("php %s is not installed", version)
 	}
 	if tuning == nil {
 		tuning = p.defaultTuning()
 	}
-	sock := p.SocketPath(domain)
 	// Aegis system accounts are created with primary group www-data (so nginx
 	// can serve the site); use the account's real primary group in the pool.
 	group := primaryGroup(systemUser)
@@ -301,7 +358,7 @@ php_admin_value[open_basedir] = %s:%s/tmp
 ; upload failed with "Missing a temporary folder". Give the account its own.
 php_admin_value[upload_tmp_dir] = %s
 php_admin_value[sys_temp_dir] = %s
-%s`, domain, domain, systemUser, group, sock,
+%s`, domain, poolName, systemUser, group, sock,
 		tuning.PM, tuning.MaxChildren, tuning.StartServers, tuning.MinSpare, tuning.MaxSpare,
 		p.Cfg.HomeRoot, p.Cfg.HomeRoot, phpTmpDir(p.Cfg.HomeRoot, systemUser), phpTmpDir(p.Cfg.HomeRoot, systemUser),
 		sanitizedPHPIniLines(iniSettings))
@@ -313,15 +370,17 @@ php_admin_value[sys_temp_dir] = %s
 	// version's pool file must go first, and that FPM must let go of the socket:
 	// otherwise the new version fails to bind it, refuses to start, and every
 	// other site on that version goes down with it.
-	for _, old := range removeStalePools("/etc/php", domain, version) {
-		_ = p.Reload(old)
+	if mainPool {
+		for _, old := range removeStalePools("/etc/php", domain, version) {
+			_ = p.Reload(old)
+		}
 	}
 
 	poolDir := filepath.Join("/etc/php", version, "fpm/pool.d")
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return fmt.Errorf("php: mkdir pool dir: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(poolDir, "aegis-"+domain+".conf"), []byte(pool), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(poolDir, fileBase+".conf"), []byte(pool), 0o644); err != nil {
 		return fmt.Errorf("php: write pool: %w", err)
 	}
 	return p.Reload(version)
@@ -377,6 +436,7 @@ func removeStalePools(etcPHP, domain, keep string) []string {
 
 // RemovePool deletes the pool config for a domain and reloads fpm.
 func (p *PHP) RemovePool(domain, version string) error {
+	p.removeSubPools(domain, nil)
 	if version == "" {
 		// Best-effort: remove from any version that has it.
 		for _, v := range p.Versions() {
@@ -433,4 +493,42 @@ func (p *PHP) Reload(version string) error {
 		return nil
 	}
 	return fmt.Errorf("php: could not reload %s (no systemd and no matching fpm master)", svcName)
+}
+
+var phpPathRe = regexp.MustCompile(`^/[A-Za-z0-9._~@+-]+(/[A-Za-z0-9._~@+-]+)*$`)
+
+const maxPHPPaths = 32
+
+// ValidatePHPPaths checks and normalises a domain's per-folder PHP versions:
+// keys are URL path prefixes, so they are held to a strict character set (no
+// "..", no empty segments, not the root — that is the domain's own version),
+// and every version must be installed. Entries with an empty version are
+// dropped ("use the domain's version"). The returned map is a fresh copy.
+func ValidatePHPPaths(in map[string]string, has func(version string) bool) (map[string]string, error) {
+	out := map[string]string{}
+	for k, v := range in {
+		k = strings.TrimRight(strings.TrimSpace(k), "/")
+		if v == "" {
+			continue
+		}
+		if !phpPathRe.MatchString(k) {
+			return nil, fmt.Errorf("invalid folder %q: use a path like /app or /tools/panel", k)
+		}
+		for _, seg := range strings.Split(k, "/") {
+			if seg == "." || seg == ".." {
+				return nil, fmt.Errorf("invalid folder %q", k)
+			}
+		}
+		if !has(v) {
+			return nil, fmt.Errorf("php %s is not installed", v)
+		}
+		if _, dup := out[k]; dup {
+			return nil, fmt.Errorf("folder %q is listed twice", k)
+		}
+		out[k] = v
+	}
+	if len(out) > maxPHPPaths {
+		return nil, fmt.Errorf("at most %d folders can have their own PHP version", maxPHPPaths)
+	}
+	return out, nil
 }

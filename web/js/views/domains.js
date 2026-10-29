@@ -254,6 +254,14 @@ function openDetail(id, onChanged) {
             </div>
             ${phpWarning}
             <div style="height:14px"></div>
+            <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP version per folder</b>
+            <p class="small dim" style="margin:6px 0 0">Run a sub-folder on another PHP version than the site's (for example an app that needs PHP 8 on a PHP 7.4 site).</p>
+            <div id="dd-pp-rows" style="margin-top:8px"></div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="btn btn-sm" id="dd-pp-add">${icon("plus")} Add folder</button>
+              <button class="btn btn-primary btn-sm" id="dd-pp-save">Save folders</button>
+            </div>
+            <div style="height:14px"></div>
             ${phpIniBlock(dom)}
             <div style="height:14px"></div>
             ${perfBlock(dom)}
@@ -303,6 +311,32 @@ function openDetail(id, onChanged) {
         try {
           await api.patch("/domains/" + id, { php_version: ver });
           toast("PHP pool updated and web server reloaded");
+          m.close(); refresh();
+        } catch (ex) { toast(ex.message, "err"); }
+      };
+      const ppRows = document.getElementById("dd-pp-rows");
+      const verOpts = (sel) => opts.filter(Boolean).map((v) => `<option value="${esc(v)}" ${v === sel ? "selected" : ""}>${esc(phpLabel(v))}</option>`).join("");
+      const addPPRow = (path, ver) => {
+        const row = document.createElement("div");
+        row.className = "dd-pp-row";
+        row.style.cssText = "display:flex;gap:8px;margin-bottom:6px";
+        row.innerHTML = `<input type="text" class="mono dd-pp-path" placeholder="/app" value="${esc(path)}" style="flex:1;min-width:0"><select class="dd-pp-ver">${verOpts(ver || dom.php_version)}</select><button class="btn btn-ghost btn-xs" title="Remove">${icon("x")}</button>`;
+        row.querySelector("button").onclick = () => row.remove();
+        ppRows.appendChild(row);
+      };
+      Object.entries(dom.php_paths || {}).sort().forEach(([path, ver]) => addPPRow(path, ver));
+      document.getElementById("dd-pp-add").onclick = () => addPPRow("", "");
+      document.getElementById("dd-pp-save").onclick = async () => {
+        const paths = {};
+        for (const row of ppRows.querySelectorAll(".dd-pp-row")) {
+          let path = row.querySelector(".dd-pp-path").value.trim();
+          if (!path) continue;
+          if (!path.startsWith("/")) path = "/" + path;
+          paths[path] = row.querySelector(".dd-pp-ver").value;
+        }
+        try {
+          await api.patch("/domains/" + id, { php_paths: paths });
+          toast("Folder PHP versions saved");
           m.close(); refresh();
         } catch (ex) { toast(ex.message, "err"); }
       };

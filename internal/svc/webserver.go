@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,14 +66,17 @@ type WebServer struct {
 
 // GoRoute is how a domain is served by the native Go web server.
 type GoRoute struct {
-	Domain     string   `json:"domain"`
-	Root       string   `json:"root"`
-	PHPVersion string   `json:"php_version"`
-	Socket     string   `json:"socket"`
-	SSL        bool     `json:"ssl"`
-	Cert       string   `json:"cert"`
-	Key        string   `json:"key"`
-	Hostnames  []string `json:"hostnames"`
+	Domain     string `json:"domain"`
+	Root       string `json:"root"`
+	PHPVersion string `json:"php_version"`
+	Socket     string `json:"socket"`
+	// PathPHP lists sub-folders served by another PHP version's pool, longest
+	// prefix first (see GoRoute.socketFor).
+	PathPHP   []GoPathPHP `json:"path_php,omitempty"`
+	SSL       bool        `json:"ssl"`
+	Cert      string      `json:"cert"`
+	Key       string      `json:"key"`
+	Hostnames []string    `json:"hostnames"`
 	// ProxyTarget, when set, makes serveGoRoute reverse-proxy every request
 	// there instead of serving Root/PHP — mirrors Domain.ProxyTarget.
 	ProxyTarget string `json:"proxy_target,omitempty"`
@@ -82,6 +86,25 @@ type GoRoute struct {
 	// Perf holds the domain's performance options (compression, static caching,
 	// page cache); the zero value is the default (compression on, nothing else).
 	Perf store.PerfSettings `json:"perf"`
+}
+
+// GoPathPHP binds a URL path prefix to the php-fpm socket that serves it.
+type GoPathPHP struct {
+	Prefix  string `json:"prefix"`
+	Version string `json:"version"`
+	Socket  string `json:"socket"`
+}
+
+// socketFor returns the php-fpm socket for a request path: the pool of the
+// longest folder prefix that contains it, else the domain's own ("" = no PHP).
+// Matching is on whole path segments, so "/app" never claims "/application".
+func (r GoRoute) socketFor(urlPath string) string {
+	for _, pp := range r.PathPHP {
+		if urlPath == pp.Prefix || strings.HasPrefix(urlPath, pp.Prefix+"/") {
+			return pp.Socket
+		}
+	}
+	return r.Socket
 }
 
 func NewWebServer(cfg *config.Config, php *PHP) *WebServer {
@@ -878,6 +901,20 @@ func (w *WebServer) applyGo(d *store.Domain, aliases []string, systemUser string
 	if d.PHPVersion != "" {
 		route.Socket = w.PHP.SocketPath(d.Domain)
 	}
+	for prefix, ver := range d.PHPPaths {
+		sock := w.PHP.SubSocketPath(d.Domain, ver)
+		if ver == d.PHPVersion {
+			sock = route.Socket
+		}
+		route.PathPHP = append(route.PathPHP, GoPathPHP{Prefix: prefix, Version: ver, Socket: sock})
+	}
+	sort.Slice(route.PathPHP, func(i, j int) bool {
+		a, b := route.PathPHP[i].Prefix, route.PathPHP[j].Prefix
+		if len(a) != len(b) {
+			return len(a) > len(b)
+		}
+		return a < b
+	})
 	w.mu.Lock()
 	w.goRoutes[d.Domain] = route
 	w.mu.Unlock()

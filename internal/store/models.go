@@ -121,6 +121,10 @@ type Domain struct {
 	// server (compression, static-asset caching, the page cache). Stored as
 	// JSON in domains.perf_settings; validated by svc.ValidatePerf.
 	Perf PerfSettings `json:"perf"`
+	// PHPPaths runs individual sub-folders on a different PHP version than the
+	// domain's own: URL path prefix ("/app") -> version ("8.3"). Served by the
+	// built-in Go server only; validated by svc.ValidatePHPPaths.
+	PHPPaths map[string]string `json:"php_paths"`
 	// IPID references IP.ID (0 = unassigned: the vhost keeps listening on
 	// the wildcard address instead of a specific one). Set via svc.IPs so
 	// the "dedicated means exactly one domain" invariant is enforced;

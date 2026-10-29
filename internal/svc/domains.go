@@ -728,6 +728,9 @@ func (d *Domains) Apply(ctx context.Context, domainID int64) error {
 			return err
 		}
 	}
+	if err := d.PHP.EnsureSubPools(dom.Domain, user.Username, dom.PHPVersion, dom.PHPPaths, nil, dom.PHPSettings); err != nil {
+		return err
+	}
 	aliases, _ := d.Store.ListAliases(ctx, dom.ID)
 	return d.Web.Apply(dom, aliases, user.Username)
 }
