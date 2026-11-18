@@ -403,6 +403,11 @@ CREATE TABLE IF NOT EXISTS ips (
 	if err := s.addColumnIfMissing(ctx, "domains", "php_paths", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		return fmt.Errorf("migrate domains.php_paths: %w", err)
 	}
+	// Switch a folder to a newer PHP version automatically when its code fails
+	// on the current one (svc.PHPAutoSwitch). On by default.
+	if err := s.addColumnIfMissing(ctx, "domains", "php_autoswitch", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return fmt.Errorf("migrate domains.php_autoswitch: %w", err)
+	}
 	// ip_id references ips(id); 0 means "unassigned" (vhost keeps listening
 	// on the wildcard address, the pre-existing behaviour).
 	if err := s.addColumnIfMissing(ctx, "domains", "ip_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {

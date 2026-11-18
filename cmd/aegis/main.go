@@ -102,6 +102,8 @@ func run(configPath string) error {
 	dnsSvc := svc.NewDNS(cfg, st, cipher)
 	ftpSvc := svc.NewFTP(cfg, st)
 	domains := svc.NewDomains(cfg, st, webSvc, php, dnsSvc, ftpSvc)
+	// Moves a sub-folder to a newer PHP when its code fails on the current one.
+	webSvc.AutoPHP = svc.NewPHPAutoSwitch(st, domains, php)
 	sslSvc := svc.NewSSL(cfg, st, webSvc, dnsSvc)
 	dbSvc := svc.NewDatabases(cfg, st)
 	files := svc.NewFiles(cfg)

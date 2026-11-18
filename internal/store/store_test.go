@@ -237,9 +237,15 @@ func TestDomainPHPPathsRoundTrip(t *testing.T) {
 	if err := s.CreateDomain(ctx, d); err != nil {
 		t.Fatal(err)
 	}
+	if !d.PHPAutoSwitch {
+		t.Fatal("CreateDomain must report the stored automatic-switch default")
+	}
 	got, _ := s.GetDomain(ctx, d.ID)
 	if got.PHPPaths == nil || len(got.PHPPaths) != 0 {
 		t.Fatalf("new domain PHPPaths = %#v, want empty map", got.PHPPaths)
+	}
+	if !got.PHPAutoSwitch {
+		t.Fatal("new domains must have automatic PHP switching on")
 	}
 	got.PHPPaths = map[string]string{"/app": "8.3"}
 	if err := s.UpdateDomain(ctx, got); err != nil {
@@ -256,5 +262,16 @@ func TestDomainPHPPathsRoundTrip(t *testing.T) {
 	got, _ = s.GetDomain(ctx, d.ID)
 	if len(got.PHPPaths) != 0 {
 		t.Fatalf("PHPPaths after clear = %#v", got.PHPPaths)
+	}
+	if !got.PHPAutoSwitch {
+		t.Fatal("UpdateDomain must not clear PHPAutoSwitch")
+	}
+	got.PHPAutoSwitch = false
+	if err := s.UpdateDomain(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetDomain(ctx, d.ID)
+	if got.PHPAutoSwitch {
+		t.Fatal("PHPAutoSwitch=false was not stored")
 	}
 }

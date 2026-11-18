@@ -125,6 +125,11 @@ type Domain struct {
 	// domain's own: URL path prefix ("/app") -> version ("8.3"). Served by the
 	// built-in Go server only; validated by svc.ValidatePHPPaths.
 	PHPPaths map[string]string `json:"php_paths"`
+	// PHPAutoSwitch lets the built-in Go server move a sub-folder to a newer
+	// installed PHP version when its code fails on the current one (see
+	// svc.PHPAutoSwitch). Only ever upgrades, never touches the domain's own
+	// version, and is recorded in the audit log.
+	PHPAutoSwitch bool `json:"php_autoswitch"`
 	// IPID references IP.ID (0 = unassigned: the vhost keeps listening on
 	// the wildcard address instead of a specific one). Set via svc.IPs so
 	// the "dedicated means exactly one domain" invariant is enforced;

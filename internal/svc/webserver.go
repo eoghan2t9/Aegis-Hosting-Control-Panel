@@ -30,6 +30,10 @@ type WebServer struct {
 	// suspended (see Apply). It is a field, not a Store, so tests can stub it.
 	IsSuspended func(systemUser string) bool
 
+	// AutoPHP, when set, upgrades sub-folders whose PHP code fails on the
+	// current version (see PHPAutoSwitch). Nil disables the feature.
+	AutoPHP *PHPAutoSwitch
+
 	mu       sync.Mutex
 	goRoutes map[string]GoRoute
 
@@ -86,6 +90,9 @@ type GoRoute struct {
 	// Perf holds the domain's performance options (compression, static caching,
 	// page cache); the zero value is the default (compression on, nothing else).
 	Perf store.PerfSettings `json:"perf"`
+	// PHPAutoSwitch lets a failing sub-folder be moved to a newer PHP version
+	// automatically (see PHPAutoSwitch); mirrors Domain.PHPAutoSwitch.
+	PHPAutoSwitch bool `json:"php_autoswitch,omitempty"`
 }
 
 // GoPathPHP binds a URL path prefix to the php-fpm socket that serves it.
@@ -897,6 +904,8 @@ func (w *WebServer) applyGo(d *store.Domain, aliases []string, systemUser string
 		ProxyTarget: d.ProxyTarget,
 		Owner:       systemUser,
 		Perf:        d.Perf,
+
+		PHPAutoSwitch: d.PHPAutoSwitch,
 	}
 	if d.PHPVersion != "" {
 		route.Socket = w.PHP.SocketPath(d.Domain)

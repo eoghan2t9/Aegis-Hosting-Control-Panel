@@ -13,22 +13,23 @@ import (
 // its own join.
 const domainCols = `d.id, d.user_id, d.domain, d.document_root, d.php_version, d.webserver, d.ssl_enabled,
 	d.ssl_cert_path, d.ssl_key_path, d.ssl_provider, d.ssl_auto_renew, d.proxy_target, d.php_settings,
-	d.ip_id, COALESCE(ip.address, ''), COALESCE(u.username, ''), d.parent_domain_id, d.created_at, d.perf_settings, d.php_paths`
+	d.ip_id, COALESCE(ip.address, ''), COALESCE(u.username, ''), d.parent_domain_id, d.created_at, d.perf_settings, d.php_paths, d.php_autoswitch`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var d Domain
-	var enabled, autoRenew, created interface{}
+	var enabled, autoRenew, created, autoSwitch interface{}
 	var phpSettings, perfSettings, phpPaths string
 	if err := row.Scan(&d.ID, &d.UserID, &d.Domain, &d.DocumentRoot, &d.PHPVersion,
 		&d.WebServer, &enabled, &d.SSLCertPath, &d.SSLKeyPath, &d.SSLProvider,
 		&autoRenew, &d.ProxyTarget, &phpSettings, &d.IPID, &d.IPAddress, &d.Username,
-		&d.ParentDomainID, &created, &perfSettings, &phpPaths); err != nil {
+		&d.ParentDomainID, &created, &perfSettings, &phpPaths, &autoSwitch); err != nil {
 		return nil, wrapErr(err)
 	}
 	_ = json.Unmarshal([]byte(perfSettings), &d.Perf)
 	d.PHPPaths = map[string]string{}
 	_ = json.Unmarshal([]byte(phpPaths), &d.PHPPaths)
 	d.SSLEnabled = getBool(enabled)
+	d.PHPAutoSwitch = getBool(autoSwitch)
 	d.SSLAutoRenew = getBool(autoRenew)
 	d.PHPSettings = map[string]string{}
 	_ = json.Unmarshal([]byte(phpSettings), &d.PHPSettings)
@@ -44,7 +45,7 @@ func (s *Store) CreateDomain(ctx context.Context, d *Domain) error {
 	ts := now()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO domains (user_id, domain, document_root,
 		php_version, webserver, ssl_enabled, ssl_cert_path, ssl_key_path, ssl_provider,
-		ssl_auto_renew, proxy_target, php_settings, parent_domain_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ssl_auto_renew, proxy_target, php_settings, parent_domain_id, created_at, php_autoswitch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
 		d.UserID, d.Domain, d.DocumentRoot, d.PHPVersion, d.WebServer, d.SSLEnabled,
 		d.SSLCertPath, d.SSLKeyPath, d.SSLProvider, d.SSLAutoRenew, d.ProxyTarget, string(phpSettings),
 		d.ParentDomainID, ts)
@@ -56,6 +57,7 @@ func (s *Store) CreateDomain(ctx context.Context, d *Domain) error {
 		return err
 	}
 	d.ID = id
+	d.PHPAutoSwitch = true // matches the column's insert value above
 	d.CreatedAt = parseTime(ts)
 	return nil
 }
@@ -114,9 +116,9 @@ func (s *Store) UpdateDomain(ctx context.Context, d *Domain) error {
 		phpPaths = []byte("{}")
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE domains SET document_root=?, php_version=?, webserver=?,
-		ssl_enabled=?, ssl_cert_path=?, ssl_key_path=?, ssl_provider=?, ssl_auto_renew=?, php_settings=?, perf_settings=?, php_paths=? WHERE id=?`,
+		ssl_enabled=?, ssl_cert_path=?, ssl_key_path=?, ssl_provider=?, ssl_auto_renew=?, php_settings=?, perf_settings=?, php_paths=?, php_autoswitch=? WHERE id=?`,
 		d.DocumentRoot, d.PHPVersion, d.WebServer, d.SSLEnabled, d.SSLCertPath, d.SSLKeyPath,
-		d.SSLProvider, d.SSLAutoRenew, string(phpSettings), string(perf), string(phpPaths), d.ID)
+		d.SSLProvider, d.SSLAutoRenew, string(phpSettings), string(perf), string(phpPaths), d.PHPAutoSwitch, d.ID)
 	return wrapErr(err)
 }
 

@@ -193,13 +193,14 @@ func (s *Server) handleDomainsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateDomainReq struct {
-	PHPVersion   *string             `json:"php_version"`
-	WebServer    *string             `json:"webserver"`
-	DocumentRoot *string             `json:"document_root"`
-	SSLAutoRenew *bool               `json:"ssl_auto_renew"`
-	PHPSettings  *map[string]string  `json:"php_settings"`
-	Perf         *store.PerfSettings `json:"perf"`
-	PHPPaths     *map[string]string  `json:"php_paths"`
+	PHPVersion    *string             `json:"php_version"`
+	WebServer     *string             `json:"webserver"`
+	DocumentRoot  *string             `json:"document_root"`
+	SSLAutoRenew  *bool               `json:"ssl_auto_renew"`
+	PHPSettings   *map[string]string  `json:"php_settings"`
+	Perf          *store.PerfSettings `json:"perf"`
+	PHPPaths      *map[string]string  `json:"php_paths"`
+	PHPAutoSwitch *bool               `json:"php_autoswitch"`
 }
 
 func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +256,13 @@ func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dom.PHPPaths = paths
+	}
+	if req.PHPAutoSwitch != nil {
+		if *req.PHPAutoSwitch && s.Web.Active() != "go" {
+			writeErr(w, http.StatusBadRequest, "automatic PHP switching needs the built-in web server")
+			return
+		}
+		dom.PHPAutoSwitch = *req.PHPAutoSwitch
 	}
 	if req.Perf != nil {
 		perf, err := svc.ValidatePerf(*req.Perf)

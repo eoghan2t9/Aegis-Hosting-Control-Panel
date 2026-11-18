@@ -256,6 +256,7 @@ function openDetail(id, onChanged) {
             <div style="height:14px"></div>
             <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--text-3)">PHP version per folder</b>
             <p class="small dim" style="margin:6px 0 0">Run a sub-folder on another PHP version than the site's (for example an app that needs PHP 8 on a PHP 7.4 site).</p>
+            <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="dd-pp-auto" ${dom.php_autoswitch ? "checked" : ""} style="margin-top:3px"><span>Switch a folder to a newer PHP automatically when its code fails on the current one. Visitors see a short "updating PHP" page that reloads itself, and the change is listed in your activity log.</span></label>
             <div id="dd-pp-rows" style="margin-top:8px"></div>
             <div style="display:flex;gap:8px;margin-top:8px">
               <button class="btn btn-sm" id="dd-pp-add">${icon("plus")} Add folder</button>
@@ -335,7 +336,7 @@ function openDetail(id, onChanged) {
           paths[path] = row.querySelector(".dd-pp-ver").value;
         }
         try {
-          await api.patch("/domains/" + id, { php_paths: paths });
+          await api.patch("/domains/" + id, { php_paths: paths, php_autoswitch: document.getElementById("dd-pp-auto").checked });
           toast("Folder PHP versions saved");
           m.close(); refresh();
         } catch (ex) { toast(ex.message, "err"); }

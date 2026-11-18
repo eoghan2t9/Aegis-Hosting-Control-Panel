@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"math/big"
@@ -522,7 +523,28 @@ func (w *WebServer) serveGoRoute(rw http.ResponseWriter, r *http.Request, route 
 		http.NotFound(rw, r)
 		return
 	}
+	// Automatic PHP upgrade for a failing sub-folder. While one is being
+	// applied, skip the doomed request and show the banner straight away.
+	autoPHP := w.AutoPHP != nil && route.PHPAutoSwitch
+	var autoFolder string
+	var autoMark int64 = -1
+	if autoPHP {
+		if folder, ver := route.switchFolder(scriptName); folder != "" {
+			autoFolder = folder
+			if info := w.AutoPHP.Switching(route.Domain, folder); info != nil {
+				w.phpSwitchPage(rw, r, info)
+				return
+			}
+			autoMark = w.AutoPHP.Mark(ver)
+		}
+	}
 	status, headers, body, stderr, err := w.fcgiExec(sock, r, scriptFile, scriptName)
+	if autoFolder != "" && err == nil && status == http.StatusInternalServerError {
+		if info := w.AutoPHP.Failed(route, scriptName, autoMark, body, stderr); info != nil {
+			w.phpSwitchPage(rw, r, info)
+			return
+		}
+	}
 	if err != nil {
 		if stderr != "" {
 			// Surface php errors to the server log via headers in dev mode.
@@ -769,3 +791,48 @@ func generateSelfSignedCert(host string) (*tls.Certificate, error) {
 	}
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
+
+// phpSwitchPage answers a request that hit a folder whose PHP version is being
+// upgraded: a short banner that reloads itself until the change is live.
+// Browsers asking for a page get the banner; anything else (XHR, API clients,
+// POSTs, which are not replayed) gets a plain 503 with Retry-After. The failed
+// request is never re-run on the server, so a POST is not executed twice.
+func (w *WebServer) phpSwitchPage(rw http.ResponseWriter, r *http.Request, info *PHPSwitchInfo) {
+	h := rw.Header()
+	h.Set("Retry-After", "3")
+	h.Set("Cache-Control", "no-store")
+	wantsPage := (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		strings.Contains(r.Header.Get("Accept"), "text/html")
+	if !wantsPage {
+		http.Error(rw, "PHP is being updated for this folder, retry in a few seconds", http.StatusServiceUnavailable)
+		return
+	}
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	rw.WriteHeader(http.StatusServiceUnavailable)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = fmt.Fprintf(rw, phpSwitchHTML, html.EscapeString(info.From), html.EscapeString(info.To))
+}
+
+// phpSwitchHTML is self-contained: no external assets, no inline event
+// handlers, and no information about the server beyond the two version numbers.
+const phpSwitchHTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="3">
+<title>Updating PHP…</title>
+<style>
+html{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px/1.5 system-ui,sans-serif;background:Canvas;color:CanvasText}
+.box{max-width:30rem;margin:1rem;padding:1.5rem 1.75rem;border:1px solid color-mix(in srgb,CanvasText 20%%,transparent);border-radius:12px}
+h1{font-size:1.15rem;margin:0 0 .5rem}p{margin:.25rem 0;opacity:.85}
+.bar{height:4px;margin-top:1rem;border-radius:2px;background:color-mix(in srgb,CanvasText 12%%,transparent);overflow:hidden}
+.bar i{display:block;height:100%%;width:40%%;background:#2563eb;animation:s 1.2s ease-in-out infinite}
+@keyframes s{0%%{margin-left:-40%%}100%%{margin-left:100%%}}
+</style></head><body><div class="box" role="status">
+<h1>Updating PHP for this page</h1>
+<p>This part of the site needs a newer PHP version than it was running on. It is being switched automatically from PHP %s to PHP %s.</p>
+<p>This page will reload by itself in a moment.</p>
+<div class="bar"><i></i></div>
+</div><script>setTimeout(function(){location.reload()},2500)</script></body></html>`
